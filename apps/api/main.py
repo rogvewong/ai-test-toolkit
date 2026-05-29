@@ -12317,6 +12317,78 @@ function renderExecutiveSummary(s){
 }
 
 // 测试用例工具:把用例表 + Excel 下载做成报告主体
+function buildUiComparisonBlock(rep, runId){
+  const meta = (rep && rep.meta) || {};
+  const shots = (meta.screenshots || []).filter(s => !s.error);
+  const isDesign = (s) => s.is_design || /figma\.com/i.test(s.url||'');
+  const designShots = shots.filter(isDesign);
+  const actualShots = shots.filter(s => !isDesign(s));
+  const issues = (rep.issues || []);
+  const scOf = (s) => ({critical:'crit',high:'hi',major:'hi',medium:'med',low:'lo',minor:'lo',info:'lo',cosmetic:'lo'})[(s||'').toLowerCase()]||'med';
+  const zhOf = (s) => ({critical:'严重',high:'高',major:'高',medium:'中',low:'低',minor:'低',info:'提示',cosmetic:'细节'})[(s||'').toLowerCase()]||'中';
+  const verdict = rep.verdict || '';
+  const vsum = rep.verdict_summary || '';
+  const vCls = /不通过|reject|fail/i.test(verdict)?'bad':(/有条件|warn|conditional/i.test(verdict)?'warn':'ok');
+  const imgTag = (fn) => `<img data-screenshot-filename="${escapeHtml(fn)}" src="/api/screenshots/${encodeURIComponent(fn)}" loading="lazy">`;
+  const css = `<style>
+  .ui-cmp{margin:0 0 18px}
+  .ui-cmp-verdict{padding:14px 18px;border-radius:10px;border:1px solid var(--line,#ddd);margin-bottom:16px;font-size:14px;line-height:1.7}
+  .ui-cmp-verdict.ok{background:rgba(22,163,74,.06);border-color:rgba(22,163,74,.3)}
+  .ui-cmp-verdict.warn{background:rgba(202,138,4,.06);border-color:rgba(202,138,4,.3)}
+  .ui-cmp-verdict.bad{background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.3)}
+  .ui-cmp-pair{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;align-items:start}
+  .ui-cmp-side{border:1px solid var(--line,#ddd);border-radius:10px;overflow:hidden;background:var(--surface,#f8fafc)}
+  .ui-cmp-label{font-size:12.5px;font-weight:600;padding:8px 12px;border-bottom:1px solid var(--line,#ddd);color:var(--fg-2,#555)}
+  .ui-cmp-label.actual{color:#dc2626}
+  .ui-cmp-side img{display:block;width:100%;height:auto}
+  .ui-cmp-nodes{padding:40px 20px;text-align:center;color:var(--fg-3,#888);font-size:13px}
+  .ui-cmp-list-head{font-size:14px;font-weight:700;margin:8px 0 12px;color:var(--fg,#222)}
+  .ui-cmp-item{border:1px solid var(--line,#ddd);border-left:4px solid var(--line-2,#ccc);border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:10px;background:var(--surface,#f8fafc)}
+  .ui-cmp-item.crit{border-left-color:#dc2626}.ui-cmp-item.hi{border-left-color:#ea580c}.ui-cmp-item.med{border-left-color:#ca8a04}.ui-cmp-item.lo{border-left-color:#16a34a}
+  .ui-cmp-ih{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .ui-cmp-num{width:22px;height:22px;border-radius:50%;background:var(--fg,#222);color:#fff;display:grid;place-items:center;font-size:12px;font-weight:700;flex-shrink:0}
+  .ui-cmp-t{font-weight:700;font-size:14.5px;flex:1;color:var(--fg,#222)}
+  .ui-cmp-sev{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px}
+  .ui-cmp-sev.crit{background:rgba(220,38,38,.12);color:#dc2626}.ui-cmp-sev.hi{background:rgba(234,88,12,.12);color:#ea580c}.ui-cmp-sev.med{background:rgba(202,138,4,.12);color:#a16207}.ui-cmp-sev.lo{background:rgba(22,163,74,.12);color:#16a34a}
+  .ui-cmp-r{display:flex;gap:8px;font-size:13.5px;line-height:1.7;margin-top:3px;color:var(--fg,#222)}
+  .ui-cmp-r .l{flex-shrink:0;width:56px;font-size:10.5px;font-weight:700;color:var(--fg-3,#888);background:var(--surface-2,#eef);padding:2px 6px;border-radius:3px;height:fit-content;text-align:center}
+  .ui-cmp-r.design .l{color:#0891b2}.ui-cmp-r.actual .l{color:#dc2626}
+  @media(max-width:720px){.ui-cmp-pair{grid-template-columns:1fr}}
+  </style>`;
+  let h = css + '<div class="ui-cmp">';
+  if (verdict || vsum){
+    h += `<div class="ui-cmp-verdict ${vCls}"><b>设计符合度：${escapeHtml(verdict||'—')}</b>${vsum?' — '+escapeHtml(vsum):''}</div>`;
+  }
+  const design = designShots[0];
+  if (actualShots.length){
+    actualShots.forEach(act => {
+      const actFn = act.annotated_filename || act.filename;
+      h += `<div class="ui-cmp-pair">
+        <div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿（Figma 设计基线）</div>${design?imgTag(design.filename):'<div class="ui-cmp-nodes">本次未提供 Figma 设计稿</div>'}</div>
+        <div class="ui-cmp-side"><div class="ui-cmp-label actual">📱 实际产品 · ${escapeHtml(act.viewport||'')} · 红框=与设计不一致</div>${imgTag(actFn)}</div>
+      </div>`;
+    });
+  } else if (design){
+    h += `<div class="ui-cmp-pair"><div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿（Figma）</div>${imgTag(design.filename)}</div><div class="ui-cmp-side"><div class="ui-cmp-nodes">未捕获到实际产品截图</div></div></div>`;
+  }
+  h += `<div class="ui-cmp-list-head">不一致清单（${issues.length} 处）</div>`;
+  if (!issues.length){
+    h += '<div class="ui-cmp-nodes" style="border:1px dashed var(--line,#ddd);border-radius:8px">未发现与设计稿的明显不一致 🎉</div>';
+  } else {
+    issues.forEach((it, i) => {
+      const sc = scOf(it.severity);
+      h += `<div class="ui-cmp-item ${sc}">
+        <div class="ui-cmp-ih"><span class="ui-cmp-num">${i+1}</span><span class="ui-cmp-t">${escapeHtml(it.title||it.issue_id||'差异')}</span><span class="ui-cmp-sev ${sc}">${zhOf(it.severity)}</span></div>
+        <div class="ui-cmp-r design"><span class="l">设计要求</span><span>${escapeHtml(it.expected_behavior||it.expected||'—')}</span></div>
+        <div class="ui-cmp-r actual"><span class="l">实际</span><span>${escapeHtml(it.current_behavior||it.current||'—')}</span></div>
+        ${it.fix_suggestion?`<div class="ui-cmp-r"><span class="l">建议</span><span>${escapeHtml(it.fix_suggestion)}</span></div>`:''}
+      </div>`;
+    });
+  }
+  h += '</div>';
+  return h;
+}
+
 function buildTestCaseBlock(rep, runId, toolId){
   const cases = (rep && rep.cases) || [];
   if (!cases.length) return '';
@@ -12393,6 +12465,12 @@ function renderHtmlReport(r, opts){
   if (tool && tool.id === 'step2'){
     const tcBlock = buildTestCaseBlock(rep, r.run_id, tool.id);
     html += tcBlock || '<div class="run-empty" style="padding:48px;text-align:center">本次未生成测试用例</div>';
+    return html;
+  }
+
+  // UI 一致性比对(step5):并排「设计稿 vs 实际产品」对比图 + 一条条不一致清单
+  if (tool && tool.id === 'step5'){
+    html += buildUiComparisonBlock(rep, r.run_id);
     return html;
   }
 
@@ -16011,6 +16089,78 @@ function renderExecutiveSummary(s){
 }
 
 // 测试用例工具:用例表 + Excel 下载做成报告主体(reports 弹窗版)
+function buildUiComparisonBlock(rep, runId){
+  const meta = (rep && rep.meta) || {};
+  const shots = (meta.screenshots || []).filter(s => !s.error);
+  const isDesign = (s) => s.is_design || /figma\.com/i.test(s.url||'');
+  const designShots = shots.filter(isDesign);
+  const actualShots = shots.filter(s => !isDesign(s));
+  const issues = (rep.issues || []);
+  const scOf = (s) => ({critical:'crit',high:'hi',major:'hi',medium:'med',low:'lo',minor:'lo',info:'lo',cosmetic:'lo'})[(s||'').toLowerCase()]||'med';
+  const zhOf = (s) => ({critical:'严重',high:'高',major:'高',medium:'中',low:'低',minor:'低',info:'提示',cosmetic:'细节'})[(s||'').toLowerCase()]||'中';
+  const verdict = rep.verdict || '';
+  const vsum = rep.verdict_summary || '';
+  const vCls = /不通过|reject|fail/i.test(verdict)?'bad':(/有条件|warn|conditional/i.test(verdict)?'warn':'ok');
+  const imgTag = (fn) => `<img data-screenshot-filename="${escapeHtml(fn)}" src="/api/screenshots/${encodeURIComponent(fn)}" loading="lazy">`;
+  const css = `<style>
+  .ui-cmp{margin:0 0 18px}
+  .ui-cmp-verdict{padding:14px 18px;border-radius:10px;border:1px solid var(--line,#ddd);margin-bottom:16px;font-size:14px;line-height:1.7}
+  .ui-cmp-verdict.ok{background:rgba(22,163,74,.06);border-color:rgba(22,163,74,.3)}
+  .ui-cmp-verdict.warn{background:rgba(202,138,4,.06);border-color:rgba(202,138,4,.3)}
+  .ui-cmp-verdict.bad{background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.3)}
+  .ui-cmp-pair{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;align-items:start}
+  .ui-cmp-side{border:1px solid var(--line,#ddd);border-radius:10px;overflow:hidden;background:var(--surface,#f8fafc)}
+  .ui-cmp-label{font-size:12.5px;font-weight:600;padding:8px 12px;border-bottom:1px solid var(--line,#ddd);color:var(--fg-2,#555)}
+  .ui-cmp-label.actual{color:#dc2626}
+  .ui-cmp-side img{display:block;width:100%;height:auto}
+  .ui-cmp-nodes{padding:40px 20px;text-align:center;color:var(--fg-3,#888);font-size:13px}
+  .ui-cmp-list-head{font-size:14px;font-weight:700;margin:8px 0 12px;color:var(--fg,#222)}
+  .ui-cmp-item{border:1px solid var(--line,#ddd);border-left:4px solid var(--line-2,#ccc);border-radius:0 8px 8px 0;padding:12px 16px;margin-bottom:10px;background:var(--surface,#f8fafc)}
+  .ui-cmp-item.crit{border-left-color:#dc2626}.ui-cmp-item.hi{border-left-color:#ea580c}.ui-cmp-item.med{border-left-color:#ca8a04}.ui-cmp-item.lo{border-left-color:#16a34a}
+  .ui-cmp-ih{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .ui-cmp-num{width:22px;height:22px;border-radius:50%;background:var(--fg,#222);color:#fff;display:grid;place-items:center;font-size:12px;font-weight:700;flex-shrink:0}
+  .ui-cmp-t{font-weight:700;font-size:14.5px;flex:1;color:var(--fg,#222)}
+  .ui-cmp-sev{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px}
+  .ui-cmp-sev.crit{background:rgba(220,38,38,.12);color:#dc2626}.ui-cmp-sev.hi{background:rgba(234,88,12,.12);color:#ea580c}.ui-cmp-sev.med{background:rgba(202,138,4,.12);color:#a16207}.ui-cmp-sev.lo{background:rgba(22,163,74,.12);color:#16a34a}
+  .ui-cmp-r{display:flex;gap:8px;font-size:13.5px;line-height:1.7;margin-top:3px;color:var(--fg,#222)}
+  .ui-cmp-r .l{flex-shrink:0;width:56px;font-size:10.5px;font-weight:700;color:var(--fg-3,#888);background:var(--surface-2,#eef);padding:2px 6px;border-radius:3px;height:fit-content;text-align:center}
+  .ui-cmp-r.design .l{color:#0891b2}.ui-cmp-r.actual .l{color:#dc2626}
+  @media(max-width:720px){.ui-cmp-pair{grid-template-columns:1fr}}
+  </style>`;
+  let h = css + '<div class="ui-cmp">';
+  if (verdict || vsum){
+    h += `<div class="ui-cmp-verdict ${vCls}"><b>设计符合度：${escapeHtml(verdict||'—')}</b>${vsum?' — '+escapeHtml(vsum):''}</div>`;
+  }
+  const design = designShots[0];
+  if (actualShots.length){
+    actualShots.forEach(act => {
+      const actFn = act.annotated_filename || act.filename;
+      h += `<div class="ui-cmp-pair">
+        <div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿（Figma 设计基线）</div>${design?imgTag(design.filename):'<div class="ui-cmp-nodes">本次未提供 Figma 设计稿</div>'}</div>
+        <div class="ui-cmp-side"><div class="ui-cmp-label actual">📱 实际产品 · ${escapeHtml(act.viewport||'')} · 红框=与设计不一致</div>${imgTag(actFn)}</div>
+      </div>`;
+    });
+  } else if (design){
+    h += `<div class="ui-cmp-pair"><div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿（Figma）</div>${imgTag(design.filename)}</div><div class="ui-cmp-side"><div class="ui-cmp-nodes">未捕获到实际产品截图</div></div></div>`;
+  }
+  h += `<div class="ui-cmp-list-head">不一致清单（${issues.length} 处）</div>`;
+  if (!issues.length){
+    h += '<div class="ui-cmp-nodes" style="border:1px dashed var(--line,#ddd);border-radius:8px">未发现与设计稿的明显不一致 🎉</div>';
+  } else {
+    issues.forEach((it, i) => {
+      const sc = scOf(it.severity);
+      h += `<div class="ui-cmp-item ${sc}">
+        <div class="ui-cmp-ih"><span class="ui-cmp-num">${i+1}</span><span class="ui-cmp-t">${escapeHtml(it.title||it.issue_id||'差异')}</span><span class="ui-cmp-sev ${sc}">${zhOf(it.severity)}</span></div>
+        <div class="ui-cmp-r design"><span class="l">设计要求</span><span>${escapeHtml(it.expected_behavior||it.expected||'—')}</span></div>
+        <div class="ui-cmp-r actual"><span class="l">实际</span><span>${escapeHtml(it.current_behavior||it.current||'—')}</span></div>
+        ${it.fix_suggestion?`<div class="ui-cmp-r"><span class="l">建议</span><span>${escapeHtml(it.fix_suggestion)}</span></div>`:''}
+      </div>`;
+    });
+  }
+  h += '</div>';
+  return h;
+}
+
 function buildTestCaseBlock(rep, runId, toolId){
   const cases = (rep && rep.cases) || [];
   if (!cases.length) return '';
@@ -16088,6 +16238,12 @@ function renderHtmlReport(r, tool, opts){
   if (tool && tool.id === 'step2'){
     const tcBlock = buildTestCaseBlock(rep, r.run_id, tool.id);
     html += tcBlock || '<div class="run-empty" style="padding:48px;text-align:center">本次未生成测试用例</div>';
+    return html;
+  }
+
+  // UI 一致性比对(step5):并排「设计稿 vs 实际产品」对比图 + 一条条不一致清单
+  if (tool && tool.id === 'step5'){
+    html += buildUiComparisonBlock(rep, r.run_id);
     return html;
   }
 
