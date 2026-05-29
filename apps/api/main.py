@@ -5217,7 +5217,7 @@ button{font-family:inherit;cursor:pointer}
 .directory-group .group-label{font-family:var(--mono);font-size:10.5px;
   letter-spacing:.32em;color:var(--ink-3);text-transform:uppercase;
   margin-bottom:28px;padding-bottom:14px;border-bottom:1px solid var(--line)}
-.directory-row{display:grid;grid-template-columns:auto 1fr auto;gap:24px;
+.directory-row{display:grid;grid-template-columns:1fr auto;gap:24px;
   align-items:baseline;padding:18px 0;border-bottom:1px dashed var(--line);
   transition:padding .18s ease,background .18s ease;cursor:pointer}
 .directory-row:hover{background:linear-gradient(90deg,rgba(196,90,58,.08),transparent);
@@ -5373,7 +5373,7 @@ button{font-family:inherit;cursor:pointer}
   <h1>AI 驱动的<br>软件<em>质量裁决</em>手册</h1>
   <p class="lede">把需求拆解、用例设计、接口测试、UI 比对、H5 适配 到 SEO 审计 — 全流程交给 AI 智能体,出具可分派的裁决报告。</p>
   <div class="actions">
-    <a class="btn primary" href="#directory">开始第一章 <span class="arrow">→</span></a>
+    <a class="btn primary" href="#directory">开始 <span class="arrow">→</span></a>
     <a class="btn" href="/reports">查看报告索引</a>
   </div>
   <div class="hero-foot">
@@ -5498,10 +5498,8 @@ function renderDirectory() {
 }
 
 function rowHtml(t){
-  const ch = chapterMap[t.id] || '?';
-  const aria = `进入第 ${ch} 章 · ${t.name}`;
+  const aria = `进入 ${t.name}`;
   return `<div class="directory-row" data-tid="${t.id}" role="link" tabindex="0" aria-label="${escapeHtml(aria)}">
-    <div class="chapter">第 ${ch} 章</div>
     <div>
       <div class="name">${escapeHtml(t.name)}</div>
       <div class="desc">${escapeHtml(t.tagline || t.description || '')}</div>
@@ -5586,9 +5584,9 @@ async function loadRecent() {
                  : (status === 'running' || status === 'queued') ? 'warn'
                  : '';
       const sLabel = {succeeded:'成 功',failed:'失 败',running:'运行中',queued:'排 队',saved:'已 存'}[status] || (status || '—');
-      return `<tr onclick="location.href='/tools/${r.tool_id}?run=${r.run_id}'" tabindex="0" role="link" aria-label="第 ${ch} 章 · ${escapeHtml(chName)} · ${escapeHtml(pn)} · ${sLabel}">
+      return `<tr onclick="location.href='/tools/${r.tool_id}?run=${r.run_id}'" tabindex="0" role="link" aria-label="${escapeHtml(chName)} · ${escapeHtml(pn)} · ${sLabel}">
         <td class="date">${dd}日 ${hh}:${mm}</td>
-        <td class="chapter-cell">第 ${ch} 章 · ${escapeHtml(chName)}</td>
+        <td class="chapter-cell">${escapeHtml(chName)}</td>
         <td class="code-cell">${escapeHtml(pc)}</td>
         <td class="name-cell">${escapeHtml(pn)}</td>
         <td class="status-cell ${sCls}">${sLabel}</td>
@@ -5611,9 +5609,8 @@ async function pollRuns() {
     if (!runs.length) { fab.classList.remove('show'); return; }
     document.getElementById('task-count').textContent = runs.length;
     document.getElementById('task-list').innerHTML = runs.map(t => {
-      const ch = chapterMap[t.tool_id] || '?';
       return `<a class="row" href="/tools/${t.tool_id}?run=${t.run_id}">
-        <div class="title">第 ${ch} 章 · ${escapeHtml(t.tool_name)}</div>
+        <div class="title">${escapeHtml(t.tool_name)}</div>
         <div class="progress">${escapeHtml(t.progress || t.status)}</div>
       </a>`;
     }).join('');
@@ -5651,7 +5648,7 @@ function openCmd(){ cmdOverlay.classList.add('open'); cmdInput.value=''; cmdInpu
 function closeCmd(){ cmdOverlay.classList.remove('open'); }
 function cmdItems(){
   return [
-    ...tools.map(t => ({name:`第 ${chapterMap[t.id]||'?'} 章 · ${t.name}`, hint:t.id, href:`/tools/${t.id}`})),
+    ...tools.map(t => ({name:`${t.name}`, hint:t.id, href:`/tools/${t.id}`})),
     {name:'报告索引', hint:'reports', href:'/reports'},
     {name:'设置', hint:'settings', href:'/settings'},
   ];
@@ -10239,21 +10236,15 @@ async function load(){
     fetch('/api/tools').then(r=>r.json()).catch(()=>({tools:[]})),
   ]);
   tool = t; claudeInfo = ci;
-  // 顶部跟目录(/tools)显示的"第 X 章"完全一致 — 不再用 STEP4/5/6,
-  // 因为目录给 step4 分配的是第三章,详情页却写 STEP4,Codex AI-FE-006 报告了这个矛盾。
-  const allTools = (cat && cat.tools) || [];
-  const CN_CH = ['一','二','三','四','五','六','七','八','九','十'];
-  const idx = allTools.findIndex(x => x.id === tool.id);
-  const chapterLabel = (idx >= 0) ? ('第 ' + (CN_CH[idx] || String(idx+1)) + ' 章') : (tool.step || tool.id).toUpperCase();
   document.title = tool.name + ' — 天枢·裁决';
   document.getElementById('tb-icon').textContent = tool.icon;
   document.getElementById('tb-name').textContent = tool.name;
   document.getElementById('hero-icon').textContent = tool.icon;
-  // 顶部 meta:章节(与目录一致) · 负责方 · 子步骤数
-  document.getElementById('hero-step').textContent = chapterLabel;
+  // 顶部 meta:负责方 · 子步骤数(不再显示"第 X 章")
+  document.getElementById('hero-step').textContent = (tool.responsible || '');
   document.getElementById('hero-step').title = (tool.step || tool.id).toUpperCase() + ' · 内部步骤标识';
-  document.getElementById('hero-resp').textContent = '· ' + (tool.responsible || '');
-  document.getElementById('hero-prompts').textContent = '· ' + tool.prompts.length + ' 子步骤';
+  document.getElementById('hero-resp').textContent = '· ' + tool.prompts.length + ' 子步骤';
+  document.getElementById('hero-prompts').textContent = '';
   document.getElementById('hero-name').textContent = tool.name;
   document.getElementById('hero-tag').textContent = tool.description;
   // 取消 hero-pills(已合并到 meta 一行)
