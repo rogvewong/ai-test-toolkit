@@ -3493,6 +3493,165 @@ async def _execute_apis_agentic(ctx: Any, state: dict[str, Any]) -> dict[str, An
     return res
 
 
+async def _run_browser_agent(
+    ctx: Any, state: dict[str, Any], prompt_rel: str, name_prefix: str,
+    shots_out: list[dict[str, Any]], with_http: bool = False, with_network: bool = False,
+    max_steps: int = 16,
+) -> dict[str, Any] | None:
+    """通用浏览器 agentic 执行 — AI 真驱动 Playwright(导航/抽信号/点击/截图/视口/断网),
+    服务 SEO / H5 / step6 / 弱网。真实执行记录注入 documents。
+    """
+    docs = (ctx.inputs or {}).get("documents") or ""
+    if not isinstance(docs, str) or not _re.search(r"https?://", docs):
+        state.setdefault("logs", []).append({"ts": _time.time(), "event": "browser.agent.skip", "reason": "材料无 URL"})
+        return None
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return None
+    from packages.core.agent import agent_loop
+    import httpx as _httpx
+    import asyncio
+    sc_dir = Path(settings.evidence_output_dir) / "screenshots"
+    sc_dir.mkdir(parents=True, exist_ok=True)
+    cap_idx = [0]
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+
+        async def navigate(a):
+            url = a.get("url")
+            if not url:
+                return "缺少 url"
+            try:
+                r = await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                await asyncio.sleep(1.5)
+                return f"已打开 {page.url} | HTTP {r.status if r else '?'} | 标题: {await page.title()}"
+            except Exception as e:
+                return f"打开失败: {type(e).__name__}: {str(e)[:150]}"
+
+        async def inspect(a):
+            try:
+                sig = await page.evaluate(
+                    "() => ({title:document.title,"
+                    "metaDesc:(document.querySelector('meta[name=description]')||{}).content||'',"
+                    "h1:[...document.querySelectorAll('h1')].map(e=>e.innerText.trim()).slice(0,6),"
+                    "h1Count:document.querySelectorAll('h1').length,"
+                    "viewportMeta:(document.querySelector('meta[name=viewport]')||{}).content||'',"
+                    "lang:document.documentElement.lang||'',"
+                    "canonical:(document.querySelector('link[rel=canonical]')||{}).href||'',"
+                    "imgTotal:document.querySelectorAll('img').length,"
+                    "imgNoAlt:[...document.querySelectorAll('img')].filter(i=>!i.getAttribute('alt')).length,"
+                    "links:document.querySelectorAll('a[href]').length,"
+                    "docWidth:document.documentElement.scrollWidth,winWidth:window.innerWidth,"
+                    "bodyText:(document.body.innerText||'').slice(0,700)})")
+                return _json.dumps(sig, ensure_ascii=False)[:2200]
+            except Exception as e:
+                return f"抽取失败: {str(e)[:150]}"
+
+        async def click(a):
+            try:
+                if a.get("text"):
+                    await page.get_by_text(a["text"], exact=False).first.click(timeout=8000)
+                elif a.get("selector"):
+                    await page.click(a["selector"], timeout=8000)
+                else:
+                    return "需提供 text 或 selector"
+                await asyncio.sleep(1.5)
+                return f"已点击 | 当前 {page.url} | 标题: {await page.title()}"
+            except Exception as e:
+                return f"点击失败: {str(e)[:150]}"
+
+        async def screenshot(a):
+            cap_idx[0] += 1
+            fn = f"{name_prefix}_{cap_idx[0]}.png"
+            try:
+                await page.screenshot(path=str(sc_dir / fn), full_page=bool(a.get("full_page")))
+                shots_out.append({"url": page.url, "viewport": a.get("label") or f"页面{cap_idx[0]}",
+                                  "width": "", "height": "", "filename": fn})
+                return f"已截图 {fn}({a.get('label','')})"
+            except Exception as e:
+                return f"截图失败: {str(e)[:120]}"
+
+        async def set_viewport(a):
+            try:
+                w, h = int(a.get("width", 375)), int(a.get("height", 812))
+                await page.set_viewport_size({"width": w, "height": h})
+                await asyncio.sleep(1.0)
+                return f"已切视口 {w}x{h}"
+            except Exception as e:
+                return f"切视口失败: {str(e)[:120]}"
+
+        handlers: dict[str, Any] = {"navigate": navigate, "inspect": inspect,
+                                    "click": click, "screenshot": screenshot, "set_viewport": set_viewport}
+
+        if with_network:
+            async def set_network(a):
+                mode = (a.get("mode") or "").lower()
+                try:
+                    if mode in ("offline", "断网"):
+                        await page.context.set_offline(True); return "已切断网络(offline)"
+                    if mode in ("online", "恢复"):
+                        await page.context.set_offline(False); return "已恢复网络(online)"
+                    if mode in ("slow", "弱网", "3g"):
+                        cdp = await page.context.new_cdp_session(page)
+                        await cdp.send("Network.enable")
+                        await cdp.send("Network.emulateNetworkConditions", {
+                            "offline": False, "latency": 400,
+                            "downloadThroughput": 50 * 1024, "uploadThroughput": 20 * 1024})
+                        return "已切弱网(慢 3G:50KB/s,400ms 延迟)"
+                    return f"未知 mode={mode}(用 offline/online/slow)"
+                except Exception as e:
+                    return f"切网络失败: {str(e)[:120]}"
+            handlers["set_network"] = set_network
+
+        if with_http:
+            async def send_request(a):
+                method = (a.get("method") or "GET").upper()
+                url = a.get("url")
+                if not url:
+                    return "缺少 url"
+                try:
+                    async with _httpx.AsyncClient(timeout=25.0, follow_redirects=True) as cli:
+                        kw = {}
+                        b = a.get("body")
+                        if isinstance(b, (dict, list)):
+                            kw["json"] = b
+                        elif isinstance(b, str) and b:
+                            kw["content"] = b
+                        r = await cli.request(method, url, headers=a.get("headers") or {}, **kw)
+                    return f"HTTP {r.status_code} | body(前1200): {r.text[:1200]}"
+                except Exception as e:
+                    return f"请求失败: {str(e)[:150]}"
+            handlers["send_request"] = send_request
+
+        try:
+            ex_md = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / prompt_rel
+            sysp = ex_md.read_text(encoding="utf-8")
+        except Exception:
+            sysp = "你真实驱动浏览器测试。每轮输出 JSON{thought, <动作字段:navigate/inspect/click/screenshot/set_viewport...>, finding, done}。系统真实执行并回灌结果。"
+        task = f"目标与材料:\n{docs[:5000]}\n\n现在开始,输出第一步动作 JSON。"
+        state["progress"] = "AI 真实驱动浏览器中…"
+        res = await agent_loop(
+            ctx.llm, sysp, task, handlers, max_steps=max_steps,
+            on_step=lambda r: state.update({"progress": f"浏览器执行 第{r.get('step')}步: {r.get('action')}"}))
+        try:
+            await browser.close()
+        except Exception:
+            pass
+    lines = ["", "", "## 真实浏览器执行记录(AI 实测,结论须基于此)"]
+    for t in res.get("transcript", []):
+        lines.append(f"- [{t.get('step')}] {t.get('action')} {_json.dumps(t.get('args') or {}, ensure_ascii=False)[:160]} → {str(t.get('result',''))[:260]}")
+    if res.get("findings"):
+        lines.append("\nAI 实测标记的问题:")
+        for f in res["findings"]:
+            lines.append(f"- {_json.dumps(f, ensure_ascii=False)[:280]}")
+    ctx.inputs["documents"] = docs + "\n".join(lines)
+    state.setdefault("logs", []).append({"ts": _time.time(), "event": "browser.agent",
+                                          "steps": res.get("steps"), "findings": len(res.get("findings") or [])})
+    return res
+
+
 async def _capture_screenshots_for_tool(
     tool_id: str,
     ctx: Any,
@@ -4958,14 +5117,34 @@ async def _run_tool_async(
             "seo_audit": SeoAuditOrchestrator,
             "h5_adapt": H5AdaptOrchestrator,
         }[tool["id"]]
-        # step4 接口测试:先让 AI 真实调用接口(agentic),把真实 req/resp 注入材料,
-        # 后续 substep 分析就是基于真实执行结果,而不是纸上设计。
+        # ── 各工具的「AI 真执行」前置阶段(全 agentic,把真实执行结果注入材料)──
+        _browser_cfg = {
+            "seo_audit":          {"prompt": "seo_audit/_execute.md",          "http": False, "net": False},
+            "h5_adapt":           {"prompt": "h5_adapt/_execute.md",           "http": False, "net": False},
+            "step6":              {"prompt": "step6_agent/_execute.md",        "http": True,  "net": False},
+            "network_resilience": {"prompt": "network_resilience/_execute.md", "http": False, "net": True},
+        }
         if tool["id"] == "step4":
+            # AI 真发 HTTP 请求看真实响应
             try:
                 await _execute_apis_agentic(ctx, state)
             except Exception as exc:
                 state.setdefault("logs", []).append({
                     "ts": _time.time(), "event": "api.execute.failed", "error": str(exc)[:200]})
+        elif tool["id"] in _browser_cfg:
+            # AI 真驱动浏览器(SEO 爬站 / H5 多视口 / step6 端到端 / 弱网容错)
+            cfg = _browser_cfg[tool["id"]]
+            try:
+                _bshots: list[dict[str, Any]] = []
+                await _run_browser_agent(
+                    ctx, state, cfg["prompt"], f"{tool['id']}_{ctx.run_id[:8]}",
+                    _bshots, with_http=cfg["http"], with_network=cfg["net"], max_steps=16)
+                if _bshots:
+                    state["screenshots"] = (state.get("screenshots") or []) + _bshots
+                    ctx.screenshots = (getattr(ctx, "screenshots", None) or []) + _bshots
+            except Exception as exc:
+                state.setdefault("logs", []).append({
+                    "ts": _time.time(), "event": "browser.agent.failed", "error": str(exc)[:200]})
         # For UI-related tools, capture page screenshots before LLM analysis.
         # Attaches PNG paths to ctx so run_substep can pass them as image
         # content blocks (Claude will then actually SEE the page).

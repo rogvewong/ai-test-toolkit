@@ -48,15 +48,27 @@ async def agent_loop(
         for f in (decision.get("findings") or ([decision["finding"]] if decision.get("finding") else [])):
             findings.append(f)
 
-        # 动作派发:不用"tool"措辞(会撞 LLM client 的"禁止 tool_use"注入)。
-        # 约定:decision 里出现哪个 handler 名作为字段(值为 dict)就执行哪个。
+        # 动作派发(三种写法都兼容,避免"tool"措辞撞 LLM client 的 no-tool 注入):
+        #  ① {"action":"inspect","args":{...}}  ② {"inspect":{...}}(handler 名作字段)
+        #  允许空参动作(如 inspect:{}) — 用"键是否存在"判断,而非值真假。
         action_name = None
         action_args: dict[str, Any] = {}
-        for name in handlers:
-            v = decision.get(name)
-            if isinstance(v, dict) and v:
-                action_name, action_args = name, v
-                break
+        a = decision.get("action")
+        if isinstance(a, str) and a in handlers:
+            action_name = a
+            action_args = decision.get("args") if isinstance(decision.get("args"), dict) else {}
+        else:
+            # 先挑有非空参数的 handler 字段
+            for name in handlers:
+                if isinstance(decision.get(name), dict) and decision[name]:
+                    action_name, action_args = name, decision[name]
+                    break
+            # 再兜底:存在该 handler 字段(即便空 dict,如 inspect:{})
+            if action_name is None:
+                for name in handlers:
+                    if name in decision and isinstance(decision[name], dict):
+                        action_name, action_args = name, decision[name]
+                        break
         done = bool(decision.get("done")) or (action_name is None)
 
         rec: dict[str, Any] = {"step": step, "thought": thought, "action": action_name, "args": action_args}
