@@ -70,8 +70,12 @@ RUN python -m playwright install --with-deps chromium
 FROM browser AS claude-cli
 # Anthropic 官方 CLI,装到 /usr/local/bin/claude
 # (Anthropic 推荐的安装脚本)
-RUN curl -fsSL https://claude.ai/install.sh | bash || \
-    npm install -g @anthropic-ai/claude-code || true
+# CLAUDE_CLI_BUST: 改这个值 (或 --build-arg CLAUDE_CLI_BUST=<新值>) 强制重新拉取最新 CLI。
+# 用途: Claude 出新模型(如 4.8)后,让镜像里的 CLI 跟上,使 opus/sonnet/haiku 别名解析到新版本。
+ARG CLAUDE_CLI_BUST=20260529-1
+RUN echo "claude-cli cache-bust=$CLAUDE_CLI_BUST" && \
+    (curl -fsSL https://claude.ai/install.sh | bash || \
+     npm install -g @anthropic-ai/claude-code || true)
 
 
 # ---------- Stage 4: 运行镜像 ----------
