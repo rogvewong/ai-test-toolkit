@@ -3480,12 +3480,39 @@ async def _capture_screenshots_for_tool(
             state.setdefault("logs", []).append({
                 "ts": _time.time(), "event": "app.run.failed", "error": str(exc)[:200]})
 
-    if not urls and not app_shots:
+    # Figma 设计图(P3):扫物料里的 figma 链接 → API 取节点 PNG 作"设计基线"
+    figma_shots: list[dict[str, Any]] = []
+    try:
+        from packages.core.device.figma import parse_figma_links, fetch_figma_image
+        from packages.core.auth_config import get_figma_token
+        links = parse_figma_links(docs)
+        if links:
+            token = get_figma_token()
+            sc_dir = Path(settings.evidence_output_dir) / "screenshots"
+            sc_dir.mkdir(parents=True, exist_ok=True)
+            for i, lk in enumerate(links[:3]):
+                state["progress"] = f"拉取 Figma 设计图 {lk['file_key'][:8]}…"
+                fname = f"{tool_id}_{ctx.run_id[:8]}_figma_{i+1}.png"
+                res = await fetch_figma_image(lk["file_key"], lk["node_id"],
+                                              token or "", str(sc_dir / fname))
+                state.setdefault("logs", []).append({
+                    "ts": _time.time(), "event": "figma.fetch",
+                    "ok": res.get("ok"), "error": res.get("error"), "node": lk["node_id"]})
+                if res.get("ok"):
+                    figma_shots.append({
+                        "url": lk["url"], "viewport": "设计基线(Figma)",
+                        "width": "", "height": "", "filename": fname, "is_design": True})
+    except Exception as exc:
+        state.setdefault("logs", []).append({
+            "ts": _time.time(), "event": "figma.fetch.failed", "error": str(exc)[:200]})
+
+    extra_shots = figma_shots + app_shots
+    if not urls and not extra_shots:
         return None
 
-    # 没有 URL,只有 APP 截图 → 直接返回 APP 截图,不启动浏览器
+    # 没有 URL,只有 APP / Figma 图 → 直接返回,不启动浏览器
     if not urls:
-        return app_shots or None
+        return extra_shots or None
 
     try:
         from playwright.async_api import async_playwright  # type: ignore
@@ -3494,13 +3521,13 @@ async def _capture_screenshots_for_tool(
             "ts": _time.time(), "event": "screenshot.skip",
             "reason": "playwright not installed",
         })
-        return app_shots or None
+        return extra_shots or None
 
     out_dir = Path(settings.evidence_output_dir) / "screenshots"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     state["progress"] = f"截图准备：{len(urls)} URL × {len(viewports)} 视口…"
-    captured: list[dict[str, Any]] = list(app_shots)  # APP 实拍图打头
+    captured: list[dict[str, Any]] = list(extra_shots)  # 设计基线 + APP 实拍图打头
     try:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
@@ -7910,6 +7937,25 @@ async def api_settings_auth_put(req: AuthModeReq, request: Request) -> dict[str,
         raise HTTPException(500, f"保存失败：{e}")
     # 立即回查一遍状态返回 — 前端可直接 refresh
     return await api_settings_auth()
+
+
+@app.get("/api/settings/figma-token")
+async def api_get_figma_token(request: Request) -> dict[str, Any]:
+    """查询是否已配置 Figma token(不回传明文)。需登录。"""
+    require_user(request)
+    from packages.core.auth_config import get_figma_token
+    tok = get_figma_token()
+    return {"configured": bool(tok), "masked": (tok[:6] + "…" + tok[-4:]) if tok else None}
+
+
+@app.post("/api/settings/figma-token")
+async def api_set_figma_token(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+    """保存/清空 Figma PAT。需登录。UI 比对拉取设计图用。"""
+    require_user(request)
+    from packages.core.auth_config import set_figma_token, get_figma_token
+    set_figma_token((body or {}).get("token"))
+    tok = get_figma_token()
+    return {"ok": True, "configured": bool(tok)}
 
 
 @app.get("/api/claude/account")
@@ -12875,6 +12921,30 @@ SETTINGS_HTML = r"""<!doctype html>
 
   <div class="sec">
     <div class="sec-head">
+      <span class="dot" id="figma-dot"></span>
+      <h3>Figma 设计图接入（UI 比对用）</h3>
+    </div>
+    <div class="sec-body" style="padding:14px 18px">
+      <p style="font-size:12.5px;color:var(--fg-2);line-height:1.7;margin:0 0 10px">
+        UI 一致性比对(step5)上传 APK + 粘贴 Figma 链接时,用此令牌拉取设计图做对比。
+        到 <a href="https://www.figma.com/settings" target="_blank" style="color:var(--ac-2)">figma.com/settings</a>
+        → Personal access tokens 生成(勾选 <b>File content: Read</b>)。仅本机明文保存。
+      </p>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="figma-token-input" type="password" placeholder="figd_... 粘贴 Figma PAT"
+          style="flex:1;min-width:260px;padding:8px 12px;border:1px solid var(--line-2);border-radius:6px;
+            font-family:var(--mono);font-size:12.5px;background:var(--surface);color:var(--fg)">
+        <label style="font-size:11.5px;color:var(--fg-3);display:inline-flex;align-items:center;gap:4px">
+          <input id="figma-token-show" type="checkbox">明文</label>
+        <button id="figma-token-save" style="background:var(--ac);color:#fff;border:none;padding:8px 16px;
+          border-radius:6px;font-size:12.5px;cursor:pointer">保存</button>
+      </div>
+      <div id="figma-token-status" style="font-size:11.5px;color:var(--fg-3);margin-top:8px;font-family:var(--mono)"></div>
+    </div>
+  </div>
+
+  <div class="sec">
+    <div class="sec-head">
       <span class="dot ok"></span>
       <h3>每个工具的环境需求</h3>
       <button id="env-refresh" style="margin-left:auto;background:transparent;border:1px solid var(--line-2);color:var(--fg-2);padding:4px 12px;border-radius:5px;font-family:var(--mono);font-size:11px;cursor:pointer">↻ 重新检测</button>
@@ -12930,6 +13000,35 @@ function fmtDate(s){
   const d = new Date(s);
   return d.toLocaleString('zh-CN', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
 }
+
+// ── Figma token ──
+async function loadFigmaToken(){
+  try{
+    const d = await fetch('/api/settings/figma-token').then(r=>r.json());
+    const dot = document.getElementById('figma-dot');
+    const st = document.getElementById('figma-token-status');
+    if (d.configured){ dot.className='dot ok'; st.textContent = '已配置 · ' + (d.masked||''); }
+    else { dot.className='dot warn'; st.textContent = '未配置 — 比对时拉不到 Figma 设计图'; }
+  }catch(e){}
+}
+(function initFigmaToken(){
+  const inp=document.getElementById('figma-token-input');
+  const show=document.getElementById('figma-token-show');
+  const btn=document.getElementById('figma-token-save');
+  if(!inp||!btn) return;
+  show && show.addEventListener('change', ()=>{ inp.type = show.checked?'text':'password'; });
+  btn.addEventListener('click', async ()=>{
+    btn.disabled=true; const orig=btn.textContent; btn.textContent='保存中…';
+    try{
+      const r=await fetch('/api/settings/figma-token',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({token: inp.value})}).then(r=>r.json());
+      btn.textContent = r.configured?'✓ 已保存':'✓ 已清空'; inp.value='';
+      await loadFigmaToken();
+    }catch(e){ btn.textContent='保存失败'; }
+    setTimeout(()=>{btn.textContent=orig;btn.disabled=false;},1600);
+  });
+  loadFigmaToken();
+})();
 
 async function load(){
   const ci = await fetch('/api/claude/info').then(r=>r.json());

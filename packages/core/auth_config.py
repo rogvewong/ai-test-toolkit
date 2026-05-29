@@ -112,6 +112,27 @@ def get_api_key() -> str | None:
     return None
 
 
+def get_figma_token() -> str | None:
+    """返回已保存的 Figma 个人访问令牌(PAT)。用于 UI 比对时拉取设计图。"""
+    d = _read()
+    t = d.get("figma_token")
+    if isinstance(t, str) and t.strip():
+        return t.strip()
+    # 兜底:环境变量
+    env = os.environ.get("FIGMA_TOKEN") or os.environ.get("AITK_FIGMA_TOKEN")
+    return env.strip() if env and env.strip() else None
+
+
+def set_figma_token(token: str | None) -> None:
+    """写入/清空 Figma PAT。"""
+    d = _read()
+    if token and token.strip():
+        d["figma_token"] = token.strip()
+    else:
+        d.pop("figma_token", None)
+    _write(d)
+
+
 def set_auth_mode(mode: AuthMode, api_key: str | None = None) -> None:
     """更新认证模式 + 可选写入 API key。
 
