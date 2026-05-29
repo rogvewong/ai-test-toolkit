@@ -9712,6 +9712,7 @@ TOOL_DETAIL_HTML = r"""<!doctype html>
   .sec-body{padding:20px 22px}
 
   /* Section 1: Inputs (single textarea + upload + drag-drop) */
+  @keyframes aitk-spin{to{transform:rotate(360deg)}}
   .input-zone{position:relative;border-radius:8px;transition:all .15s}
   .input-zone.dragging{outline:2px dashed var(--ac);outline-offset:4px}
   .input-zone .drop-overlay{
@@ -10401,7 +10402,19 @@ TOOL_DETAIL_HTML = r"""<!doctype html>
           <div id="import-list" style="max-height:240px;overflow-y:auto;
             display:flex;flex-direction:column;gap:4px"></div>
         </div>
-        <textarea id="doc-input" placeholder="粘贴 PRD / 接口定义 / 页面信息&#10;&#10;或拖一个 .md / .pdf / .docx / 截图 进来"></textarea>
+        <div id="upload-progress" style="display:none;margin:8px 0;padding:10px 14px;
+          background:var(--surface-2);border:1px solid var(--line);border-radius:6px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="display:inline-block;width:13px;height:13px;border:2px solid var(--ac);
+              border-top-color:transparent;border-radius:50%;animation:aitk-spin .7s linear infinite"></span>
+            <span id="upload-progress-label" style="font-size:12.5px;color:var(--fg-2)">上传中…</span>
+            <span id="upload-progress-pct" style="margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--ac)"></span>
+          </div>
+          <div style="height:6px;background:var(--surface-3,#e5e5e5);border-radius:3px;margin-top:8px;overflow:hidden">
+            <div id="upload-progress-bar" style="height:100%;width:0%;background:var(--ac);transition:width .15s"></div>
+          </div>
+        </div>
+        <textarea id="doc-input" placeholder="粘贴 PRD / 接口定义 / 页面信息&#10;&#10;或拖一个 .md / .pdf / .docx / 截图 / .apk 进来"></textarea>
         <div class="drop-overlay">
           <div class="drop-overlay-inner">
             <div class="drop-icon">⤓</div>
@@ -10608,22 +10621,40 @@ function wireInputToolbar(){
     return i >= 0 ? name.slice(i+1).toLowerCase() : '';
   }
 
-  async function readFileAsText(f){
+  // 用 XHR 上传(fetch 拿不到上传进度)— 大文件(APK 等)显示真实上传 %
+  function uploadViaServer(f, onProgress){
+    return new Promise((resolve, reject) => {
+      const fd = new FormData(); fd.append('file', f, f.name);
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/extract-file');
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded, e.total); };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300){
+          try { resolve(JSON.parse(xhr.responseText)); }
+          catch(err){ reject(new Error('返回解析失败')); }
+        } else {
+          let msg = 'HTTP ' + xhr.status;
+          try { const d = JSON.parse(xhr.responseText); if (d.detail) msg = d.detail; } catch(_){}
+          reject(new Error(msg));
+        }
+      };
+      xhr.onerror = () => reject(new Error('网络错误'));
+      xhr.send(fd);
+    });
+  }
+
+  async function readFileAsText(f, onProgress){
     // Decide: local text read vs server-side extraction
     const ext = fileExt(f.name);
     const ct = (f.type || '').toLowerCase();
     const looksBinary = BINARY_EXTS.has(ext) || ct.startsWith('image/') || ct === 'application/pdf' ||
-      ct.includes('officedocument') || ct === 'application/msword';
+      ct.includes('officedocument') || ct === 'application/msword' || ext === 'apk' || ext === 'ipa';
     if (TEXT_EXTS.has(ext) && !looksBinary){
       try { return await f.text(); }
       catch(_){ /* fall through to server */ }
     }
-    // Send to server for extraction
-    const fd = new FormData();
-    fd.append('file', f, f.name);
-    const r = await fetch('/api/extract-file', { method: 'POST', body: fd });
-    if (!r.ok) throw new Error('extract failed: HTTP ' + r.status);
-    const data = await r.json();
+    // Send to server for extraction(带上传进度)
+    const data = await uploadViaServer(f, onProgress);
     return data.text;
   }
 
@@ -10633,19 +10664,37 @@ function wireInputToolbar(){
     const parts = [];
     let skipped = 0;
     let failed = 0;
+    const prog = document.getElementById('upload-progress');
+    const bar = document.getElementById('upload-progress-bar');
+    const lbl = document.getElementById('upload-progress-label');
+    const pctEl = document.getElementById('upload-progress-pct');
+    const mb = (n) => (n/1024/1024).toFixed(1);
     for (const f of files){
       // Skip directories (dragged folders show up as 0-byte type-empty entries)
       if (f.size === 0 && !f.type){
         skipped++;
         continue;
       }
+      // 大文件(>1MB,典型如 APK)显示上传进度;远程上传尤其需要
+      const showProg = prog && f.size > 1024 * 1024;
+      if (showProg){
+        prog.style.display = 'block';
+        bar.style.width = '0%'; pctEl.textContent = '0%';
+        lbl.textContent = `上传 ${f.name}（${mb(f.size)}MB）…`;
+      }
       let text;
       try {
-        text = await readFileAsText(f);
+        text = await readFileAsText(f, (loaded, total) => {
+          if (!showProg) return;
+          const pct = Math.round(loaded / total * 100);
+          bar.style.width = pct + '%'; pctEl.textContent = pct + '%';
+          if (pct >= 100){ lbl.textContent = `服务端处理中…（${f.name}）`; pctEl.textContent = '处理中'; }
+        });
       } catch(err){
         text = `(读取失败：${err.message || err})`;
         failed++;
       }
+      if (showProg){ prog.style.display = 'none'; }
       parts.push(`--- file: ${f.name} (${f.type || 'text/plain'}, ${f.size}B) ---\n${text}`);
     }
     if (parts.length){
