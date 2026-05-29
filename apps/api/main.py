@@ -3450,9 +3450,42 @@ async def _capture_screenshots_for_tool(
         return None
     urls = list(dict.fromkeys(m.group(0).rstrip(".,;:!?)」")
                               for m in _URL_RE.finditer(docs)))
-    if not urls:
-        return None
     urls = urls[:5]  # cap so we don't run for hours
+
+    # APP 上传:从物料里解析 app_ref=<id> → 在宿主模拟器装→启动→截图(P2b)
+    app_refs = list(dict.fromkeys(_re.findall(r"app_ref=([0-9a-f]{6,32})", docs)))
+    app_shots: list[dict[str, Any]] = []
+    if app_refs:
+        apps_dir = settings.report_output_dir.parent.parent / "uploads" / "apps"
+        try:
+            from packages.core.device import run_app_and_capture
+            sc_dir = Path(settings.evidence_output_dir) / "screenshots"
+            for ref in app_refs[:2]:  # 最多跑 2 个 APP,防跑太久
+                apk = apps_dir / f"{ref}.apk"
+                if not apk.exists():
+                    continue
+                state["progress"] = f"模拟器运行 APP {ref}…装包/启动/截图"
+                res = await run_app_and_capture(
+                    apk_path=str(apk), out_dir=str(sc_dir),
+                    name_prefix=f"{tool_id}_{ctx.run_id[:8]}_{ref}", screens=2,
+                )
+                state.setdefault("logs", []).append({
+                    "ts": _time.time(), "event": "app.run",
+                    "ok": res.get("ok"), "steps": res.get("steps"),
+                    "error": res.get("error"),
+                })
+                if res.get("ok"):
+                    app_shots.extend(res.get("screenshots") or [])
+        except Exception as exc:
+            state.setdefault("logs", []).append({
+                "ts": _time.time(), "event": "app.run.failed", "error": str(exc)[:200]})
+
+    if not urls and not app_shots:
+        return None
+
+    # 没有 URL,只有 APP 截图 → 直接返回 APP 截图,不启动浏览器
+    if not urls:
+        return app_shots or None
 
     try:
         from playwright.async_api import async_playwright  # type: ignore
@@ -3461,13 +3494,13 @@ async def _capture_screenshots_for_tool(
             "ts": _time.time(), "event": "screenshot.skip",
             "reason": "playwright not installed",
         })
-        return None
+        return app_shots or None
 
     out_dir = Path(settings.evidence_output_dir) / "screenshots"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     state["progress"] = f"截图准备：{len(urls)} URL × {len(viewports)} 视口…"
-    captured: list[dict[str, Any]] = []
+    captured: list[dict[str, Any]] = list(app_shots)  # APP 实拍图打头
     try:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
@@ -9142,9 +9175,9 @@ async def api_extract_file(file: UploadFile = File(...)) -> dict[str, Any]:
             "size": len(blob), "kind": "app", "platform": "android", "runnable": True,
             "app_id": app_id, "app_path": str(app_path),
             "package": pkg, "launch_activity": launch_activity,
-            "text": f"[Android APP：{name}（{len(blob)//1024//1024}MB）"
+            "text": f"[待运行 Android APP：{name}（{len(blob)//1024//1024}MB）"
                     + (f"，包名 {pkg}" if pkg else "")
-                    + "。已识别为待运行安装包，运行工具时将在模拟器中安装并启动以做 UI 比对。]",
+                    + f"。运行工具时将在模拟器中安装并启动以做 UI 比对。app_ref={app_id}]",
         }
     if ext == "pdf" or ct == "application/pdf":
         text = _extract_pdf(blob)
