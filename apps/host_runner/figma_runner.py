@@ -69,16 +69,24 @@ def _login_worker():
                 pass
             deadline = time.time() + 300
             ok = False
+            clear_streak = 0
             while time.time() < deadline:
                 time.sleep(5)
                 try:
+                    url_now = page.url.lower()
                     cur = (page.inner_text("body") or "")[:200].lower()
                 except Exception:
-                    cur = ""
-                if not any(k in cur for k in ("log in", "sign up", "continue with")):
-                    if _page_logged_in(page):
+                    url_now, cur = "", ""
+                # 登录成功标志:已不在 login/google 登录页,且页面无登录墙文案
+                on_login = ("/login" in url_now or "accounts.google" in url_now
+                            or any(k in cur for k in ("sign up", "continue with email")))
+                if not on_login:
+                    clear_streak += 1
+                    if clear_streak >= 2:  # 连续两次都不在登录页 → 判定登录成功
                         ok = True
                         break
+                else:
+                    clear_streak = 0
             if ok:
                 _MARKER.parent.mkdir(parents=True, exist_ok=True)
                 _MARKER.write_text(str(int(time.time())))
@@ -108,6 +116,12 @@ def shot(url: str) -> dict:
                 pass
             time.sleep(4)
             png = page.screenshot(full_page=False)
+            # 成功读到设计图 = 一定是登录态 → 自愈写 marker
+            try:
+                _MARKER.parent.mkdir(parents=True, exist_ok=True)
+                _MARKER.write_text(str(int(time.time())))
+            except Exception:
+                pass
             return {"ok": True, "png_b64": base64.b64encode(png).decode("ascii"), "error": None}
         except Exception as exc:
             return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
