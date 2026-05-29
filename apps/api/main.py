@@ -3450,6 +3450,8 @@ async def _capture_screenshots_for_tool(
         return None
     urls = list(dict.fromkeys(m.group(0).rstrip(".,;:!?)」")
                               for m in _URL_RE.finditer(docs)))
+    # figma 链接只走宿主助手读设计图,不让 Playwright 当普通页面截(容器访问 figma 是登录墙/403,产生垃圾图)
+    urls = [u for u in urls if "figma.com" not in u.lower()]
     urls = urls[:5]  # cap so we don't run for hours
 
     # APP 上传:从物料里解析 app_ref=<id> → 在宿主模拟器装→启动→截图(P2b)
@@ -4103,6 +4105,16 @@ def _build_html_report(r: dict[str, Any], tool: dict[str, Any], report: dict[str
         groups: dict[str, list[dict[str, Any]]] = {}
         for s in valid_shots:
             groups.setdefault(s.get("url", ""), []).append(s)
+        def _shot_label(u: str) -> str:
+            def _e(x: str) -> str:
+                return x.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            if not u:
+                return "截图"
+            if u.startswith("app://"):
+                return "📱 APP 实拍(模拟器)· " + _e(u.replace("app://", ""))
+            if "figma.com" in u.lower():
+                return "🎨 设计基线(Figma)"
+            return "🌐 " + _e(u)
         for url, arr in groups.items():
             cells = []
             for s in arr:
@@ -4126,7 +4138,7 @@ def _build_html_report(r: dict[str, Any], tool: dict[str, Any], report: dict[str
                 )
             if cells:
                 rows.append(
-                    f'<div class="shot-group"><div class="shot-url"><code>{url}</code></div>'
+                    f'<div class="shot-group"><div class="shot-url">{_shot_label(url)}</div>'
                     f'<div class="shot-grid">{"".join(cells)}</div></div>'
                 )
         if rows:
@@ -11682,11 +11694,14 @@ function bindTabClicks(r){
         'application/json'
       );
     } else if (action === 'download-html'){
-      btn.onclick = () => downloadBlob(
-        buildStandaloneHtml(r),
-        `${tool.id}_${r.run_id.slice(0,8)}.html`,
-        'text/html;charset=utf-8'
-      );
+      btn.onclick = async () => {
+        const o=btn.textContent; btn.disabled=true; btn.textContent='打包图片中…';
+        try{
+          const html = await inlineScreenshotsInHtml(buildStandaloneHtml(r));
+          downloadBlob(html, `${tool.id}_${r.run_id.slice(0,8)}.html`, 'text/html;charset=utf-8');
+        }catch(e){ toast('导出失败:'+e.message); }
+        btn.textContent=o; btn.disabled=false;
+      };
     } else if (action === 'download-md'){
       btn.onclick = () => downloadBlob(
         buildMarkdownReport(r),
@@ -11732,6 +11747,22 @@ function downloadBlob(content, filename, mime){
   document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   toast(`已下载 ${filename}`);
+}
+
+// 把 HTML 里所有 /api/screenshots/<fn> 抓成 base64 data URI 内嵌 —
+// 这样下载的 HTML 离线(file://)打开图片也不会挂。
+async function inlineScreenshotsInHtml(html){
+  const fns = [...new Set([...html.matchAll(/\/api\/screenshots\/([^"'\s)]+)/g)].map(m=>m[1]))];
+  for (const fn of fns){
+    try{
+      const resp = await fetch('/api/screenshots/' + fn, {credentials:'same-origin'});
+      if(!resp.ok) continue;
+      const blob = await resp.blob();
+      const dataUri = await new Promise(res=>{const fr=new FileReader();fr.onloadend=()=>res(fr.result);fr.readAsDataURL(blob);});
+      html = html.split('/api/screenshots/'+fn).join(dataUri);
+    }catch(e){}
+  }
+  return html;
 }
 
 function bindReportInteractions(){
@@ -12329,10 +12360,16 @@ function renderHtmlReport(r, opts){
     const groupedByUrl = {};
     shots.forEach(s => {(groupedByUrl[s.url] = groupedByUrl[s.url] || []).push(s);});
     const imgMap = (opts && opts.imgMap) || {};
+    const _shotGroupLabel = (u) => {
+      if(!u) return '截图';
+      if(u.indexOf('app://')===0) return '📱 APP 实拍(模拟器)· ' + u.replace('app://','');
+      if(/figma\.com/i.test(u)) return '🎨 设计基线(Figma)';
+      return '🌐 ' + u;
+    };
     let shotsHtml = '<div class="report-screenshots">';
-    shotsHtml += '<div class="screenshots-head">页面截图证据 <span class="screenshots-hint">（已嵌入报告，无本地文件依赖）</span></div>';
+    shotsHtml += '<div class="screenshots-head">截图证据 · 设计基线 vs 实拍对照 <span class="screenshots-hint">（已嵌入报告，无本地文件依赖）</span></div>';
     Object.entries(groupedByUrl).forEach(([url, arr]) => {
-      shotsHtml += `<div class="shot-group"><div class="shot-url"><code>${escapeHtml(url)}</code></div>`;
+      shotsHtml += `<div class="shot-group"><div class="shot-url">${escapeHtml(_shotGroupLabel(url))}</div>`;
       shotsHtml += '<div class="shot-grid">';
       arr.forEach(s => {
         const annotated = s.annotated_filename;
@@ -12341,9 +12378,10 @@ function renderHtmlReport(r, opts){
         const initialSrc = imgMap[fnPrimary] || `/api/screenshots/${encodeURIComponent(fnPrimary)}`;
         const issueBadge = s.issue_count
           ? `<span class="issue-badge">${s.issue_count} 个问题</span>` : '';
-        shotsHtml += `<div class="shot-cell" title="${escapeHtml(s.viewport)} · ${s.width}×${s.height}${annotated?' · 已标注':''}">
+        const dim = (s.width && s.height) ? ` · ${s.width}×${s.height}` : '';
+        shotsHtml += `<div class="shot-cell" title="${escapeHtml(s.viewport)}${dim}${annotated?' · 已标注':''}">
           <img src="${initialSrc}" data-screenshot-filename="${escapeHtml(fnPrimary)}" alt="${escapeHtml(s.viewport)}" loading="lazy">
-          <div class="shot-cap">${escapeHtml(s.viewport)} · ${s.width}×${s.height}${issueBadge}</div>
+          <div class="shot-cap">${escapeHtml(s.viewport)}${dim}${issueBadge}</div>
         </div>`;
       });
       shotsHtml += '</div></div>';
@@ -16014,10 +16052,16 @@ function renderHtmlReport(r, tool, opts){
     const groupedByUrl = {};
     shots.forEach(s => {(groupedByUrl[s.url] = groupedByUrl[s.url] || []).push(s);});
     const imgMap = (opts && opts.imgMap) || {};
+    const _shotGroupLabel = (u) => {
+      if(!u) return '截图';
+      if(u.indexOf('app://')===0) return '📱 APP 实拍(模拟器)· ' + u.replace('app://','');
+      if(/figma\.com/i.test(u)) return '🎨 设计基线(Figma)';
+      return '🌐 ' + u;
+    };
     let shotsHtml = '<div class="report-screenshots">';
-    shotsHtml += '<div class="screenshots-head">页面截图证据 <span class="screenshots-hint">（已嵌入报告，无本地文件依赖）</span></div>';
+    shotsHtml += '<div class="screenshots-head">截图证据 · 设计基线 vs 实拍对照 <span class="screenshots-hint">（已嵌入报告，无本地文件依赖）</span></div>';
     Object.entries(groupedByUrl).forEach(([url, arr]) => {
-      shotsHtml += `<div class="shot-group"><div class="shot-url"><code>${escapeHtml(url)}</code></div>`;
+      shotsHtml += `<div class="shot-group"><div class="shot-url">${escapeHtml(_shotGroupLabel(url))}</div>`;
       shotsHtml += '<div class="shot-grid">';
       arr.forEach(s => {
         const annotated = s.annotated_filename;
@@ -16026,9 +16070,10 @@ function renderHtmlReport(r, tool, opts){
         const initialSrc = imgMap[fnPrimary] || `/api/screenshots/${encodeURIComponent(fnPrimary)}`;
         const issueBadge = s.issue_count
           ? `<span class="issue-badge">${s.issue_count} 个问题</span>` : '';
-        shotsHtml += `<div class="shot-cell" title="${escapeHtml(s.viewport)} · ${s.width}×${s.height}${annotated?' · 已标注':''}">
+        const dim = (s.width && s.height) ? ` · ${s.width}×${s.height}` : '';
+        shotsHtml += `<div class="shot-cell" title="${escapeHtml(s.viewport)}${dim}${annotated?' · 已标注':''}">
           <img src="${initialSrc}" data-screenshot-filename="${escapeHtml(fnPrimary)}" alt="${escapeHtml(s.viewport)}" loading="lazy">
-          <div class="shot-cap">${escapeHtml(s.viewport)} · ${s.width}×${s.height}${issueBadge}</div>
+          <div class="shot-cap">${escapeHtml(s.viewport)}${dim}${issueBadge}</div>
         </div>`;
       });
       shotsHtml += '</div></div>';
