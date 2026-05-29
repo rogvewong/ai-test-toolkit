@@ -5137,19 +5137,17 @@ button{font-family:inherit;cursor:pointer}
 .topbar{position:sticky;top:0;background:rgba(255,255,255,.94);
   backdrop-filter:saturate(140%) blur(10px);-webkit-backdrop-filter:saturate(140%) blur(10px);
   border-bottom:1px solid var(--line);z-index:50;
-  display:flex;align-items:center;padding:16px 48px;height:56px}
+  display:flex;align-items:center;gap:12px;padding:0 24px;height:56px}
 .topbar .brand{font-family:var(--serif);font-size:16px;font-weight:500;
   letter-spacing:.1em;color:var(--ink)}
 .topbar .brand .sep{margin:0 6px;color:var(--ink-3)}
-.topbar nav{margin-left:auto;display:flex;gap:36px}
-.topbar nav a{font-size:13px;color:var(--ink-2);letter-spacing:.06em;
-  font-family:var(--sans);font-weight:400;padding:4px 0;
-  transition:color .15s}
-.topbar nav a:hover,.topbar nav a.active{color:var(--ink)}
-.topbar nav a.active{position:relative}
-.topbar nav a.active::after{content:"";position:absolute;left:0;right:0;bottom:-6px;
-  height:1px;background:var(--accent)}
-.topbar .kbd-hint{margin-left:36px;font-family:var(--mono);font-size:11px;color:var(--ink-3);
+.topbar nav{display:flex;gap:2px;margin-left:24px;margin-right:auto}
+.topbar nav a{font-size:13px;color:var(--ink-2);letter-spacing:.04em;
+  font-family:var(--sans);font-weight:400;padding:6px 12px;border-radius:6px;
+  text-decoration:none;transition:all .15s}
+.topbar nav a:hover{background:var(--paper-2);color:var(--ink)}
+.topbar nav a.active{background:var(--accent-soft,rgba(168,64,31,.12));color:var(--accent)}
+.topbar .kbd-hint{margin-left:12px;font-family:var(--mono);font-size:11px;color:var(--ink-3);
   cursor:pointer}
 .topbar .kbd-hint:hover{color:var(--accent)}
 .topbar .kbd-hint kbd{background:var(--paper-2);border:1px solid var(--line);
@@ -5351,7 +5349,7 @@ button{font-family:inherit;cursor:pointer}
 <body>
 
 <header class="topbar">
-  <a class="brand-link" href="/tools" style="display:inline-flex;align-items:center;gap:12px;text-decoration:none;color:inherit;padding:6px 0"><svg class="brand-mark" viewBox="0 0 24 24" fill="currentColor" width="28" height="28" aria-hidden="true" style="color:var(--accent);opacity:1;filter:drop-shadow(0 1px 3px rgba(212,103,74,.3))"><path d="M12 1.5L13.4 10.6L22.5 12L13.4 13.4L12 22.5L10.6 13.4L1.5 12L10.6 10.6Z"/></svg><span class="brand" style="font-family:'Noto Serif SC',Georgia,serif;font-size:21px;font-weight:600;letter-spacing:.18em;color:var(--ink)">天枢<span class="sep" style="color:var(--accent);margin:0 8px;font-weight:400">·</span>裁决</span></a>
+  <a class="brand-link" href="/tools" style="display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:inherit;margin-right:24px;padding:6px 0"><svg class="brand-mark" viewBox="0 0 24 24" fill="currentColor" width="24" height="24" aria-hidden="true" style="color:var(--accent);opacity:1;filter:drop-shadow(0 1px 3px rgba(212,103,74,.3))"><path d="M12 1.5L13.4 10.6L22.5 12L13.4 13.4L12 22.5L10.6 13.4L1.5 12L10.6 10.6Z"/></svg><span class="brand" style="font-family:'Noto Serif SC',Georgia,serif;font-size:19px;font-weight:600;letter-spacing:.18em;color:var(--ink)">天枢<span class="sep" style="color:var(--accent);margin:0 6px;font-weight:400">·</span>裁决</span></a>
   <nav>
     <a href="/tools" class="active">工具</a>
     <a href="/reports">报告</a>
@@ -13271,20 +13269,24 @@ html,body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sa
 a{color:inherit;text-decoration:none}
 button{font-family:inherit;cursor:pointer}
 
-.topbar{display:flex;align-items:center;gap:24px;padding:18px 48px;
+.topbar{display:flex;align-items:center;gap:12px;padding:0 24px;height:56px;
   border-bottom:1px solid var(--line);background:#fff;position:sticky;top:0;z-index:10}
-.brand-link{display:inline-flex;align-items:center;gap:12px}
-.brand-link svg{color:var(--accent)}
-.brand{font-family:var(--serif);font-size:20px;font-weight:600;letter-spacing:.18em}
-.brand .sep{color:var(--accent);margin:0 8px;font-weight:400}
-.topbar nav{display:flex;gap:24px;font-family:var(--sans);font-size:13.5px;color:var(--ink-2)}
-.topbar nav a.active{color:var(--accent);font-weight:500}
-.topbar nav a:hover{color:var(--accent)}
-.spacer{flex:1}
-.user-chip{font-family:var(--mono);font-size:12px;color:var(--ink-2);display:flex;align-items:center;gap:8px}
-.user-chip .admin-tag{color:var(--accent);font-size:10px;letter-spacing:.18em}
+.brand-link{display:inline-flex;align-items:center;gap:10px;margin-right:24px;text-decoration:none;color:inherit}
+.brand-link svg{color:var(--accent);width:24px;height:24px}
+.brand{font-family:var(--serif);font-size:19px;font-weight:600;letter-spacing:.18em;color:var(--ink)}
+.brand .sep{color:var(--accent);margin:0 6px;font-weight:400}
+.topbar nav{display:flex;gap:2px;margin-left:24px;margin-right:auto;font-family:var(--sans)}
+.topbar nav a{font-size:13px;color:var(--ink-2);padding:6px 12px;border-radius:6px;
+  text-decoration:none;letter-spacing:.04em;transition:all .15s}
+.topbar nav a:hover{background:var(--paper-2,#ebebeb);color:var(--ink)}
+.topbar nav a.active{background:var(--accent-soft,rgba(168,64,31,.12));color:var(--accent);font-weight:500}
+.spacer{display:none}
+.user-chip{font-family:var(--sans);font-size:12.5px;color:var(--ink-2);display:inline-flex;
+  align-items:center;gap:8px;font-weight:600}
+.user-chip .admin-tag{color:var(--accent);font-size:10.5px;letter-spacing:.18em;font-weight:600}
 .logout-btn{background:none;border:1px solid var(--line);color:var(--ink-3);
-  padding:4px 12px;border-radius:3px;font-family:var(--mono);font-size:11px;letter-spacing:.06em}
+  padding:4px 14px;border-radius:999px;font-family:var(--sans);font-size:11.5px;letter-spacing:.04em;
+  margin-left:4px;transition:all .15s}
 .logout-btn:hover{border-color:var(--accent);color:var(--accent)}
 
 .shell{max-width:1080px;margin:0 auto;padding:48px 48px}
