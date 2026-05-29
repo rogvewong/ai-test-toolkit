@@ -92,17 +92,17 @@ import os as _os
 HOST_RUNNER_URL = _os.environ.get("AITK_FIGMA_RUNNER_URL", "http://host.docker.internal:8077")
 
 
-async def fetch_figma_via_host_runner(url: str, out_path: str) -> dict[str, object]:
-    """走宿主 Figma 读图助手(真实 Chrome + 持久 Google 登录)拿设计图。
+async def fetch_figma_via_host_runner(url: str, out_path: str, user: object = "default") -> dict[str, object]:
+    """走宿主 Figma 读图助手(真实 Chrome + 按用户持久登录)拿设计图。
 
-    宿主助手见 apps/host_runner/figma_runner.py。容器调它 → 它在宿主用已登录的
+    宿主助手见 apps/host_runner/figma_runner.py。容器调它 → 它在宿主用该用户已登录的
     Chrome 打开 Figma 链接截图 → 返回 PNG。返回 {ok, path, error}。
     """
     import base64
     import httpx
     try:
         async with httpx.AsyncClient(timeout=90.0) as cli:
-            r = await cli.post(f"{HOST_RUNNER_URL}/shot", json={"url": url})
+            r = await cli.post(f"{HOST_RUNNER_URL}/shot", json={"url": url, "user": str(user)})
         if r.status_code != 200:
             return {"ok": False, "error": f"宿主助手 HTTP {r.status_code}"}
         data = r.json()
@@ -114,6 +114,20 @@ async def fetch_figma_via_host_runner(url: str, out_path: str) -> dict[str, obje
         return {"ok": True, "path": out_path, "size": len(png), "error": None}
     except Exception as exc:
         return {"ok": False, "error": f"连不上宿主助手({HOST_RUNNER_URL}): {type(exc).__name__}"}
+
+
+async def host_runner_call(method: str, path: str, user: object = "default", **kw) -> dict[str, object]:
+    """调宿主助手的 status/login/logout(带 user)。返回 JSON 或 {runner_up:False}。"""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            if method == "GET":
+                r = await cli.get(f"{HOST_RUNNER_URL}{path}", params={"user": str(user)})
+            else:
+                r = await cli.post(f"{HOST_RUNNER_URL}{path}", json={"user": str(user)})
+        return {"runner_up": True, **r.json()}
+    except Exception:
+        return {"runner_up": False, "logged_in": False, "login_running": False}
 
 
 async def fetch_figma_via_browser(

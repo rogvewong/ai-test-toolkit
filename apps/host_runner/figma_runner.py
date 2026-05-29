@@ -1,67 +1,74 @@
 #!/usr/bin/env python3
-"""宿主 Figma 读图助手 — 跑在用户 Mac 上,用真实 Chrome + 持久 profile。
+"""宿主 Figma 读图助手 — 跑在用户 Mac 上,用真实 Chrome + 按用户隔离的持久 profile。
 
 为什么需要它:
   容器里的浏览器是全新 profile + 数据中心 IP,无法继承用户的 Google SSO 登录。
-  本助手跑在宿主,用真实 Chrome(channel=chrome)+ 持久 profile。
-  用户在 step5 点「登录」→ 弹出真实 Chrome → 用 Google 一键登录(秒通)→ 会话
-  持久保存,以后直接读图。容器通过 HTTP 调它。
+  本助手跑在宿主,用真实 Chrome(channel=chrome)+ 每个用户独立的持久 profile。
+  用户在 step5 点「登录」→ 弹真实 Chrome → Google 一键登录 → 会话持久保存(按用户),
+  以后该用户免登录;不同用户各自登录;可「退出登录」清除。
 
-交互模型(避免 profile 锁冲突,用 marker 文件记录登录态):
-  POST /login   → 后台弹出真实 Chrome 让用户登录;登录成功写 marker 并关闭
-  GET  /status  → {logged_in, login_running}(读 marker,不抢 profile)
-  POST /shot {url} → 持久登录态下打开 Figma 链接截图(登录窗口须先关闭)
-  GET  /health  → {ok}
+按用户隔离:
+  profile 目录 = <base>/u<user_id>;每个用户独立 marker。所有接口带 user 参数。
+
+接口:
+  POST /login   {user}      → 后台弹真实 Chrome 让该用户登录;成功写 marker
+  GET  /status?user=        → {logged_in, login_running}
+  POST /shot    {url, user} → 该用户登录态下打开 Figma 链接截图(base64)
+  POST /logout  {user}      → 清除该用户登录(删 profile)
+  GET  /health              → {ok}
 """
 from __future__ import annotations
 
 import base64
 import json
 import os
-import sys
+import re
+import shutil
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-PROFILE_DIR = os.environ.get("AITK_FIGMA_PROFILE") or str(Path.home() / ".aitk-figma-profile")
+PROFILE_BASE = os.environ.get("AITK_FIGMA_PROFILE_BASE") or str(Path.home() / ".aitk-figma-profiles")
 PORT = int(os.environ.get("AITK_FIGMA_RUNNER_PORT", "8077"))
 CHROME_CHANNEL = "chrome"
 _REAL_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 _LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled"]
 _IGNORE_ARGS = ["--enable-automation"]
-_MARKER = Path(PROFILE_DIR) / ".figma_logged_in"
 
 _login_lock = threading.Lock()
-_login_running = False
+_login_running: dict[str, bool] = {}   # user → 是否有登录窗口在跑
 
 
-def _new_context(pw, headless: bool):
+def _uid(user) -> str:
+    s = re.sub(r"[^A-Za-z0-9_-]", "", str(user or "default"))
+    return s or "default"
+
+
+def _profile_dir(user) -> str:
+    return str(Path(PROFILE_BASE) / f"u{_uid(user)}")
+
+
+def _marker(user) -> Path:
+    return Path(_profile_dir(user)) / ".figma_logged_in"
+
+
+def _new_context(pw, headless: bool, user):
+    d = _profile_dir(user)
+    Path(d).mkdir(parents=True, exist_ok=True)
     return pw.chromium.launch_persistent_context(
-        PROFILE_DIR, channel=CHROME_CHANNEL, headless=headless,
+        d, channel=CHROME_CHANNEL, headless=headless,
         user_agent=_REAL_UA, viewport={"width": 1600, "height": 1000},
         locale="zh-CN", args=_LAUNCH_ARGS, ignore_default_args=_IGNORE_ARGS,
     )
 
 
-def _page_logged_in(page) -> bool:
-    try:
-        page.goto("https://www.figma.com/files/recent", timeout=40000, wait_until="domcontentloaded")
-        time.sleep(4)
-        txt = (page.inner_text("body") or "")[:300].lower()
-        return not any(k in txt for k in ("log in", "sign up", "continue with"))
-    except Exception:
-        return False
-
-
-def _login_worker():
-    """后台:弹出真实 Chrome 让用户登录,成功后写 marker 并关闭。"""
-    global _login_running
+def _login_worker(user):
     from playwright.sync_api import sync_playwright
     try:
         with sync_playwright() as pw:
-            ctx = _new_context(pw, headless=False)  # 头显,用户能操作
+            ctx = _new_context(pw, headless=False, user=user)
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
                 page.goto("https://www.figma.com/login", wait_until="domcontentloaded")
@@ -77,32 +84,31 @@ def _login_worker():
                     cur = (page.inner_text("body") or "")[:200].lower()
                 except Exception:
                     url_now, cur = "", ""
-                # 登录成功标志:已不在 login/google 登录页,且页面无登录墙文案
                 on_login = ("/login" in url_now or "accounts.google" in url_now
                             or any(k in cur for k in ("sign up", "continue with email")))
                 if not on_login:
                     clear_streak += 1
-                    if clear_streak >= 2:  # 连续两次都不在登录页 → 判定登录成功
+                    if clear_streak >= 2:
                         ok = True
                         break
                 else:
                     clear_streak = 0
             if ok:
-                _MARKER.parent.mkdir(parents=True, exist_ok=True)
-                _MARKER.write_text(str(int(time.time())))
+                m = _marker(user); m.parent.mkdir(parents=True, exist_ok=True)
+                m.write_text(str(int(time.time())))
             ctx.close()
     except Exception:
         pass
     finally:
-        _login_running = False
+        _login_running[_uid(user)] = False
 
 
-def shot(url: str) -> dict:
+def shot(url: str, user) -> dict:
     from playwright.sync_api import sync_playwright
-    if _login_running:
+    if _login_running.get(_uid(user)):
         return {"ok": False, "error": "登录窗口未关闭,请先完成登录"}
     with sync_playwright() as pw:
-        ctx = _new_context(pw, headless=True)
+        ctx = _new_context(pw, headless=True, user=user)
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             page.goto(url, timeout=45000, wait_until="domcontentloaded")
@@ -116,10 +122,9 @@ def shot(url: str) -> dict:
                 pass
             time.sleep(4)
             png = page.screenshot(full_page=False)
-            # 成功读到设计图 = 一定是登录态 → 自愈写 marker
             try:
-                _MARKER.parent.mkdir(parents=True, exist_ok=True)
-                _MARKER.write_text(str(int(time.time())))
+                m = _marker(user); m.parent.mkdir(parents=True, exist_ok=True)
+                m.write_text(str(int(time.time())))
             except Exception:
                 pass
             return {"ok": True, "png_b64": base64.b64encode(png).decode("ascii"), "error": None}
@@ -141,44 +146,50 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _body(self) -> dict:
+        try:
+            n = int(self.headers.get("content-length") or 0)
+            return json.loads(self.rfile.read(n) or b"{}")
+        except Exception:
+            return {}
+
     def do_GET(self):
         if self.path == "/health":
-            self._send(200, {"ok": True})
-        elif self.path == "/status":
-            self._send(200, {"ok": True, "logged_in": _MARKER.exists(),
-                             "login_running": _login_running})
-        else:
-            self._send(404, {"ok": False, "error": "not found"})
+            self._send(200, {"ok": True}); return
+        if self.path.startswith("/status"):
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query)
+            user = (q.get("user") or ["default"])[0]
+            self._send(200, {"ok": True, "logged_in": _marker(user).exists(),
+                             "login_running": bool(_login_running.get(_uid(user)))})
+            return
+        self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
+        data = self._body()
+        user = data.get("user", "default")
         if self.path == "/login":
-            global _login_running
             with _login_lock:
-                if not _login_running:
-                    _login_running = True
-                    threading.Thread(target=_login_worker, daemon=True).start()
-            self._send(200, {"ok": True, "started": True, "login_running": _login_running})
+                if not _login_running.get(_uid(user)):
+                    _login_running[_uid(user)] = True
+                    threading.Thread(target=_login_worker, args=(user,), daemon=True).start()
+            self._send(200, {"ok": True, "started": True, "login_running": True})
         elif self.path == "/logout":
             try:
-                _MARKER.unlink()
+                shutil.rmtree(_profile_dir(user), ignore_errors=True)
             except Exception:
                 pass
-            self._send(200, {"ok": True})
+            self._send(200, {"ok": True, "logged_in": False})
         elif self.path == "/shot":
-            try:
-                n = int(self.headers.get("content-length") or 0)
-                data = json.loads(self.rfile.read(n) or b"{}")
-            except Exception:
-                self._send(400, {"ok": False, "error": "bad json"}); return
             if not data.get("url"):
                 self._send(400, {"ok": False, "error": "missing url"}); return
-            self._send(200, shot(data["url"]))
+            self._send(200, shot(data["url"], user))
         else:
             self._send(404, {"ok": False, "error": "not found"})
 
 
 def cmd_serve() -> None:
-    print(f"[serve] Figma 读图助手 0.0.0.0:{PORT} | profile={PROFILE_DIR} | logged_in={_MARKER.exists()}")
+    print(f"[serve] Figma 读图助手(按用户)0.0.0.0:{PORT} | base={PROFILE_BASE}")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 
