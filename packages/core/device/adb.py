@@ -371,3 +371,97 @@ async def run_app_and_capture(
         except AdbError:
             steps.append("卸载失败(忽略)")
     return {"ok": True, "serial": serial, "package": pkg, "screenshots": shots, "steps": steps, "error": None}
+
+
+async def run_app_agentic(
+    apk_path: str,
+    out_dir: str,
+    name_prefix: str,
+    decide,                      # async (screenshot_path:str, clickables:list[dict]) -> decision dict
+    max_steps: int = 12,
+    settle_seconds: float = 6.0,
+    package: str | None = None,
+    component: str | None = None,
+) -> dict[str, object]:
+    """AI 驱动探索:装 → 启动 → 每轮(截图+可点元素)交给 decide 决策 → 执行动作 → 循环 → 卸载。
+
+    decide(screenshot_path, clickables) 返回:
+      {action: tap|back|swipe_up|done, target_index:int, capture:bool, page_label:str, done:bool, ...}
+    动作与是否截图全由 decide(LLM)决定;本函数只当"手脚"执行。
+    """
+    from pathlib import Path as _P
+    import shutil as _sh
+    steps: list[str] = []
+    serial = await _first_online_serial()
+    if not serial:
+        return {"ok": False, "error": "无在线模拟器设备", "steps": steps, "screenshots": []}
+    new_pkgs: set[str] = set()
+    try:
+        new_pkgs = await install_apk(serial, apk_path)
+        steps.append(f"安装成功: {sorted(new_pkgs) or '(已装过)'}")
+    except AdbError as exc:
+        return {"ok": False, "serial": serial, "error": f"安装失败: {exc}", "steps": steps, "screenshots": []}
+    pkg = package or (sorted(new_pkgs)[0] if new_pkgs else None)
+    if not pkg:
+        return {"ok": False, "serial": serial, "error": "无法确定包名", "steps": steps, "screenshots": []}
+    comp = component or await resolve_launch_component(serial, pkg)
+    shots: list[dict[str, object]] = []
+    cap_idx = [0]
+    _P(out_dir).mkdir(parents=True, exist_ok=True)
+    try:
+        await launch_app(serial, pkg, comp)
+        steps.append(f"已启动 {pkg}")
+        await asyncio.sleep(settle_seconds)
+        for step in range(max_steps):
+            tmp = str(_P(out_dir) / f"{name_prefix}_step{step}.png")
+            try:
+                await screencap(serial, tmp)
+            except AdbError:
+                break
+            clickables = _parse_clickables(await ui_dump(serial))
+            ctx_info = {"captured": [str(s["viewport"]) for s in shots],
+                        "recent": steps[-4:]}
+            try:
+                decision = await decide(tmp, clickables, ctx_info) or {}
+            except Exception as exc:
+                steps.append(f"step{step} 决策异常: {str(exc)[:80]}")
+                break
+            act = str(decision.get("action") or "")
+            label = str(decision.get("page_label") or "")
+            steps.append(f"step{step}: {act} {label} | {str(decision.get('thought',''))[:50]}")
+            captured_labels = {str(s["viewport"]) for s in shots}
+            # 去重:同名页面不重复截
+            if decision.get("capture") and label and label not in captured_labels:
+                cap_idx[0] += 1
+                fn = f"{name_prefix}_app_{cap_idx[0]}.png"
+                try:
+                    _sh.copyfile(tmp, str(_P(out_dir) / fn))
+                    shots.append({"url": f"app://{pkg}",
+                                  "viewport": label or f"页面{cap_idx[0]}",
+                                  "width": "", "height": "", "filename": fn})
+                except Exception:
+                    pass
+            try:
+                _P(tmp).unlink()
+            except Exception:
+                pass
+            if decision.get("done") or act == "done":
+                steps.append("AI 判定探索完成")
+                break
+            if act == "tap":
+                ti = decision.get("target_index")
+                if isinstance(ti, int) and 0 <= ti < len(clickables):
+                    c = clickables[ti]
+                    await tap(serial, int(c["cx"]), int(c["cy"]))
+            elif act == "back":
+                await _run_adb("-s", serial, "shell", "input", "keyevent", "4", timeout=15.0)
+            elif act == "swipe_up":
+                await _run_adb("-s", serial, "shell", "input", "swipe", "540", "1500", "540", "600", "300", timeout=15.0)
+            await asyncio.sleep(2.0)
+    finally:
+        try:
+            await uninstall(serial, pkg)
+            steps.append("已卸载 APP")
+        except AdbError:
+            pass
+    return {"ok": True, "serial": serial, "package": pkg, "screenshots": shots, "steps": steps, "error": None}

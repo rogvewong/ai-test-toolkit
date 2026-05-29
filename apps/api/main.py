@@ -3454,30 +3454,67 @@ async def _capture_screenshots_for_tool(
     urls = [u for u in urls if "figma.com" not in u.lower()]
     urls = urls[:5]  # cap so we don't run for hours
 
-    # APP 上传:从物料里解析 app_ref=<id> → 在宿主模拟器装→启动→截图(P2b)
+    # APP 上传:解析 app_ref → AI 驱动探索(LLM 看屏决定跳弹窗/翻页/截图),Python 只执行
     app_refs = list(dict.fromkeys(_re.findall(r"app_ref=([0-9a-f]{6,32})", docs)))
     app_shots: list[dict[str, Any]] = []
     if app_refs:
         apps_dir = settings.report_output_dir.parent.parent / "uploads" / "apps"
         try:
-            from packages.core.device import run_app_and_capture
+            from packages.core.device import run_app_agentic, run_app_and_capture
             sc_dir = Path(settings.evidence_output_dir) / "screenshots"
-            for ref in app_refs[:2]:  # 最多跑 2 个 APP,防跑太久
+            # 探索决策提示词(AI 行为写在 prompt 里,可编辑)
+            _explore_md = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "step5_ui" / "_explore.md"
+            try:
+                explore_sys = _explore_md.read_text(encoding="utf-8")
+            except Exception:
+                explore_sys = "你在探索一个 APP,每轮给你截图+可点元素,输出 JSON{action:tap|back|swipe_up|done,target_index,capture,page_label,done}。先跳过弹窗,再走遍主要界面,每个正式界面 capture=true。"
+
+            def _make_decider():
+                async def decide(shot_path: str, clickables: list[dict[str, Any]], context: dict[str, Any] | None = None) -> dict[str, Any]:
+                    context = context or {}
+                    captured = context.get("captured") or []
+                    recent = context.get("recent") or []
+                    lines = [f'[{i}] text="{c.get("text","")}" pos=({c.get("cx")},{c.get("cy")})'
+                             for i, c in enumerate(clickables[:40])]
+                    user = (
+                        f"【已截图页面（不要重复截、不要重复进入）】：{captured or '(还没有)'}\n"
+                        f"【最近动作】：\n" + ("\n".join("  " + str(s) for s in recent) if recent else "  (无)") + "\n\n"
+                        "【当前屏可点元素】：\n" + ("\n".join(lines) if lines else "(无可点元素;可 back 或 done)")
+                        + "\n\n请选一个**还没截过/没去过**的界面继续;主要界面都覆盖了就 done。按规则输出下一步动作 JSON。")
+                    resp = await ctx.llm.complete(
+                        system=explore_sys,
+                        messages=[{"role": "user", "content": user}],
+                        images=[{"path": Path(shot_path), "mime": "image/png", "caption": "当前 APP 屏幕(实拍)"}],
+                        max_tokens=600, allow_degrade=False,
+                    )
+                    try:
+                        return resp.json()
+                    except Exception:
+                        return {"action": "done", "done": True, "thought": "决策解析失败,结束探索"}
+                return decide
+
+            for ref in app_refs[:1]:  # agentic 较慢,一次跑 1 个 APP
                 apk = apps_dir / f"{ref}.apk"
                 if not apk.exists():
                     continue
-                state["progress"] = f"模拟器运行 APP {ref}…装包/启动/截图"
-                res = await run_app_and_capture(
+                state["progress"] = f"AI 探索 APP {ref}…(跳弹窗 + 翻页截图)"
+                res = await run_app_agentic(
                     apk_path=str(apk), out_dir=str(sc_dir),
-                    name_prefix=f"{tool_id}_{ctx.run_id[:8]}_{ref}", screens=2,
+                    name_prefix=f"{tool_id}_{ctx.run_id[:8]}_{ref}",
+                    decide=_make_decider(), max_steps=14,
                 )
                 state.setdefault("logs", []).append({
-                    "ts": _time.time(), "event": "app.run",
-                    "ok": res.get("ok"), "steps": res.get("steps"),
-                    "error": res.get("error"),
-                })
-                if res.get("ok"):
-                    app_shots.extend(res.get("screenshots") or [])
+                    "ts": _time.time(), "event": "app.explore",
+                    "ok": res.get("ok"), "steps": res.get("steps"), "error": res.get("error")})
+                shots_got = res.get("screenshots") or []
+                # 兜底:AI 一张都没截到(决策异常等)→ 退回确定式跑一遍
+                if res.get("ok") and not shots_got:
+                    fb = await run_app_and_capture(
+                        apk_path=str(apk), out_dir=str(sc_dir),
+                        name_prefix=f"{tool_id}_{ctx.run_id[:8]}_{ref}", explore=True, max_pages=3)
+                    shots_got = fb.get("screenshots") or []
+                    state.setdefault("logs", []).append({"ts": _time.time(), "event": "app.explore.fallback", "n": len(shots_got)})
+                app_shots.extend(shots_got)
         except Exception as exc:
             state.setdefault("logs", []).append({
                 "ts": _time.time(), "event": "app.run.failed", "error": str(exc)[:200]})
