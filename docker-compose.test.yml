@@ -1,0 +1,28 @@
+services:
+  tianshu-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tianshu-test:latest
+    container_name: tianshu-test
+    restart: unless-stopped
+    ports:
+      # 测试环境用 8085(正式是 8084)
+      - "8085:8084"
+    environment:
+      AITK_DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: "8084"
+      # 管理员账号走运行时环境变量注入,不在文件里硬编码密码
+      AITK_ADMIN_USER: ${AITK_ADMIN_USER:-}
+      AITK_ADMIN_PASSWORD: ${AITK_ADMIN_PASSWORD:-}
+      AITK_ADMIN_DISPLAY_NAME: ${AITK_ADMIN_DISPLAY_NAME:-}
+    volumes:
+      # 测试环境独立数据目录,与正式 ./data 完全隔离
+      - ./data-test:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8084/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
