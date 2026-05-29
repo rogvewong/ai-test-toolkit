@@ -3431,6 +3431,68 @@ _TOOL_VIEWPORTS = {
 }
 
 
+async def _execute_apis_agentic(ctx: Any, state: dict[str, Any]) -> dict[str, Any] | None:
+    """step4:AI 真实调用接口的 agentic 循环 — LLM 决定发什么请求,httpx 真发,
+    AI 看真实响应找 bug。真实 req/resp 记录注入 documents,供后续 substep 分析。
+    """
+    docs = (ctx.inputs or {}).get("documents") or ""
+    if not isinstance(docs, str) or not _re.search(r"https?://", docs):
+        state.setdefault("logs", []).append({
+            "ts": _time.time(), "event": "api.execute.skip", "reason": "材料里没有可调用的 URL"})
+        return None
+    import httpx
+    from packages.core.agent import agent_loop
+
+    async def http_request(args: dict[str, Any]) -> str:
+        method = (args.get("method") or "GET").upper()
+        url = args.get("url")
+        if not url:
+            return "缺少 url"
+        headers = args.get("headers") or {}
+        body = args.get("body")
+        try:
+            async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as cli:
+                kw: dict[str, Any] = {}
+                if isinstance(body, (dict, list)):
+                    kw["json"] = body
+                elif isinstance(body, str) and body:
+                    kw["content"] = body
+                r = await cli.request(method, url, headers=headers, **kw)
+            hdrs = dict(list(r.headers.items())[:10])
+            return f"HTTP {r.status_code} {r.reason_phrase}\nresp-headers: {hdrs}\nbody(前1500字符):\n{r.text[:1500]}"
+        except Exception as exc:
+            return f"请求失败: {type(exc).__name__}: {str(exc)[:200]}"
+
+    ex_md = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "step4_api" / "_execute.md"
+    try:
+        sysp = ex_md.read_text(encoding="utf-8")
+    except Exception:
+        sysp = ("你真实测试 HTTP 接口。每轮输出 JSON {thought, tool:'http_request', "
+                "args:{method,url,headers,body}, finding, done}。真发请求看响应找 bug,覆盖正常/必填/边界/鉴权/契约。")
+    task = (f"接口资料如下,请真实调用并测试:\n\n{docs[:6000]}\n\n"
+            f"现在开始,输出第一步动作的 JSON。")
+    state["progress"] = "AI 真实调用接口中…"
+    res = await agent_loop(
+        ctx.llm, sysp, task, {"send_request": http_request}, max_steps=18,
+        on_step=lambda r: state.update({"progress": f"接口测试 第{r.get('step')}步: {(r.get('args') or {}).get('method','')} {(r.get('args') or {}).get('url','')[:50]}"}),
+    )
+    # 把真实调用记录注入 documents,供 5 个 substep 基于真实结果分析
+    lines = ["", "", "## 真实接口调用记录(AI 实测,以下结论须基于这些真实 req/resp)"]
+    for t in res.get("transcript", []):
+        a = t.get("args") or {}
+        lines.append(f"- [{t.get('step')}] {(a.get('method') or '').upper()} {a.get('url','')} "
+                     f"→ {str(t.get('result',''))[:300]}")
+    if res.get("findings"):
+        lines.append("\nAI 实测中已标记的问题:")
+        for f in res["findings"]:
+            lines.append(f"- {_json.dumps(f, ensure_ascii=False)[:300]}")
+    ctx.inputs["documents"] = docs + "\n".join(lines)
+    state.setdefault("logs", []).append({
+        "ts": _time.time(), "event": "api.execute",
+        "steps": res.get("steps"), "findings": len(res.get("findings") or [])})
+    return res
+
+
 async def _capture_screenshots_for_tool(
     tool_id: str,
     ctx: Any,
@@ -4896,6 +4958,14 @@ async def _run_tool_async(
             "seo_audit": SeoAuditOrchestrator,
             "h5_adapt": H5AdaptOrchestrator,
         }[tool["id"]]
+        # step4 接口测试:先让 AI 真实调用接口(agentic),把真实 req/resp 注入材料,
+        # 后续 substep 分析就是基于真实执行结果,而不是纸上设计。
+        if tool["id"] == "step4":
+            try:
+                await _execute_apis_agentic(ctx, state)
+            except Exception as exc:
+                state.setdefault("logs", []).append({
+                    "ts": _time.time(), "event": "api.execute.failed", "error": str(exc)[:200]})
         # For UI-related tools, capture page screenshots before LLM analysis.
         # Attaches PNG paths to ctx so run_substep can pass them as image
         # content blocks (Claude will then actually SEE the page).
