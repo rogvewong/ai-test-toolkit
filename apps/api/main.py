@@ -10362,7 +10362,7 @@ TOOL_DETAIL_HTML = r"""<!doctype html>
           <span class="drag-hint">支持拖拽文件到此处</span>
           <span class="size-hint" id="size-hint" style="margin-left:auto">0 B</span>
         </div>
-        <!-- step5 专属:Figma 设计稿 链接 + 登录 + 预览 -->
+        <!-- step5 专属:Figma 设计稿 链接 + 读取 + 登录切换 -->
         <div id="figma-bar" style="display:none;margin:8px 0 0;padding:10px 12px;
           background:var(--surface-2);border:1px solid var(--line);border-radius:6px">
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -10370,14 +10370,14 @@ TOOL_DETAIL_HTML = r"""<!doctype html>
             <input type="text" id="figma-url" placeholder="粘贴 Figma 链接(.../design/...?node-id=...)"
               style="flex:1;min-width:240px;padding:6px 10px;border:1px solid var(--line-2);border-radius:6px;
                 font-family:var(--mono);font-size:12px;background:var(--surface);color:var(--fg)">
-            <button type="button" id="figma-login-btn" style="background:var(--ac);color:#fff;border:none;
-              padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer">登录 Figma</button>
-            <button type="button" id="figma-logout-btn" style="display:none;background:transparent;color:var(--bad);
-              border:1px solid var(--line-2);padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer">退出登录</button>
-            <button type="button" id="figma-preview-btn" style="background:transparent;color:var(--fg-2);
-              border:1px solid var(--line-2);padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer">读取预览</button>
+            <button type="button" id="figma-read-btn" style="background:var(--ac);color:#fff;border:none;
+              padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap">读取预览</button>
           </div>
-          <div id="figma-status" style="font-size:11.5px;color:var(--fg-3);margin-top:6px;font-family:var(--mono)">检查登录态…</div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+            <span id="figma-status" style="flex:1;font-size:11.5px;color:var(--fg-3);font-family:var(--mono)">检查登录态…</span>
+            <button type="button" id="figma-auth-btn" style="background:transparent;color:var(--fg-2);
+              border:1px solid var(--line-2);padding:5px 14px;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap">登录 Figma</button>
+          </div>
           <img id="figma-preview-img" style="display:none;max-width:300px;margin-top:8px;border:1px solid var(--line);border-radius:6px"/>
         </div>
         <div id="import-panel" style="display:none;margin:8px 0 0;padding:10px 12px;
@@ -11183,91 +11183,77 @@ function buildModelControls(){
   }
 }
 
-// === Figma 设计稿登录条(step5 / h5_adapt)===
+// === Figma 设计稿条(step5 / h5_adapt)===
 let _figmaPollTimer = null;
-let _figmaLoginInProgress = false;   // 仅本次点了登录才在完成时锁输入框
-function _lockFigmaInput(){
-  const u=document.getElementById('figma-url'), b=document.getElementById('figma-login-btn');
-  if(u){ u.disabled=true; u.style.opacity='.7'; u.title='登录完成后已锁定 — 刷新页面可重新编辑'; }
-  if(b){ b.disabled=true; b.textContent='已登录'; b.style.opacity='.7'; }
-}
+let _figmaLoginInProgress = false;
 async function refreshFigmaStatus(){
-  const st = document.getElementById('figma-status');
-  if (!st) return;
+  const st=document.getElementById('figma-status');
+  const auth=document.getElementById('figma-auth-btn');
+  if(!st) return;
   try{
-    const d = await fetch('/api/figma/status').then(r=>r.json());
-    if (!d.runner_up){ st.textContent='⚠ 宿主读图助手未运行(请在 Mac 上启动 figma_runner)'; st.style.color='var(--warn)'; return; }
-    if (d.login_running){ st.textContent='⏳ 登录窗口已弹出 — 请在 Chrome 里用 Google 登录…'; st.style.color='var(--warn)'; return; }
-    const loginBtn=document.getElementById('figma-login-btn');
-    const logoutBtn=document.getElementById('figma-logout-btn');
-    if (d.logged_in){
+    const d=await fetch('/api/figma/status').then(r=>r.json());
+    if(!d.runner_up){ st.textContent='⚠ 宿主读图助手未运行(请在 Mac 上启动 figma_runner)'; st.style.color='var(--warn)';
+      if(auth){auth.disabled=false;auth.textContent='登录 Figma';auth.dataset.mode='login';auth.style.color='var(--fg-2)';} return; }
+    if(d.login_running){ st.textContent='⏳ 登录窗口已弹出 — 请在 Chrome 用 Google 登录…'; st.style.color='var(--warn)';
+      if(auth){auth.disabled=true;auth.textContent='登录中…';} return; }
+    if(d.logged_in){
       st.textContent='✓ Figma 已登录(当前用户)— 运行时自动读取设计图'; st.style.color='var(--ok)';
       if(_figmaPollTimer){clearInterval(_figmaPollTimer);_figmaPollTimer=null;}
-      if(loginBtn){ loginBtn.disabled=true; loginBtn.textContent='已登录'; loginBtn.style.opacity='.7'; }
-      if(logoutBtn) logoutBtn.style.display='';
-      // 只有"本次刚点登录完成"才锁定输入框(刷新进来不锁,保持可编辑)
-      if(_figmaLoginInProgress){ _figmaLoginInProgress=false; const u=document.getElementById('figma-url'); if(u){u.disabled=true;u.style.opacity='.7';u.title='登录完成已锁定 — 刷新可重新编辑';} }
-    }
-    else {
-      if(logoutBtn) logoutBtn.style.display='none';
-      // 登录窗口已关但仍未登录 = 本次登录失败/取消 → 恢复按钮可重试
+      _figmaLoginInProgress=false;
+      if(auth){auth.disabled=false;auth.textContent='退出登录';auth.dataset.mode='logout';auth.style.color='var(--bad)';}
+    } else {
       if(_figmaLoginInProgress && !d.login_running){
         _figmaLoginInProgress=false;
         if(_figmaPollTimer){clearInterval(_figmaPollTimer);_figmaPollTimer=null;}
-        if(loginBtn){ loginBtn.disabled=false; loginBtn.textContent='登录 Figma'; loginBtn.style.opacity='1'; }
         st.textContent='✕ 未检测到登录 — 请重试「登录 Figma」'; st.style.color='var(--bad)';
       } else {
-        if(loginBtn){ loginBtn.disabled=false; loginBtn.textContent='登录 Figma'; loginBtn.style.opacity='1'; }
         st.textContent='○ 未登录 — 点「登录 Figma」一次(以后免登录)'; st.style.color='var(--fg-3)';
       }
+      if(auth){auth.disabled=false;auth.textContent='登录 Figma';auth.dataset.mode='login';auth.style.color='var(--fg-2)';}
     }
   }catch(e){ st.textContent='状态查询失败'; }
 }
 function initFigmaBar(){
   const bar=document.getElementById('figma-bar'); if(!bar) return;
   bar.style.display='block';
-  const loginBtn=document.getElementById('figma-login-btn');
-  const prevBtn=document.getElementById('figma-preview-btn');
+  const auth=document.getElementById('figma-auth-btn');
+  const readBtn=document.getElementById('figma-read-btn');
   const urlInp=document.getElementById('figma-url');
   const img=document.getElementById('figma-preview-img');
   const st=document.getElementById('figma-status');
-  // 刷新清空:每次进页面输入框置空 + 恢复可编辑
-  urlInp.value=''; urlInp.disabled=false; urlInp.style.opacity='1';
-  loginBtn.disabled=false; loginBtn.style.opacity='1';
-  // 退出登录:清当前用户的 Figma 会话
-  const logoutBtn=document.getElementById('figma-logout-btn');
-  if(logoutBtn) logoutBtn.onclick=async()=>{
-    logoutBtn.disabled=true; const o=logoutBtn.textContent; logoutBtn.textContent='退出中…';
-    try{
-      await fetch('/api/figma/logout',{method:'POST'});
-      urlInp.disabled=false; urlInp.style.opacity='1'; urlInp.value='';
-      st.textContent='已退出 Figma 登录 — 需重新登录'; st.style.color='var(--fg-3)';
-      await refreshFigmaStatus();
-    }catch(e){ st.textContent='退出失败'; }
-    logoutBtn.textContent=o; logoutBtn.disabled=false;
-  };
-  loginBtn.onclick=async()=>{
-    loginBtn.disabled=true; loginBtn.textContent='登录中…';
+  // 刷新清空(输入框永不禁用)
+  urlInp.value=''; urlInp.disabled=false;
+  // 换链接 → 「读取完成」还原为「读取预览」
+  urlInp.oninput=()=>{ if(readBtn.textContent==='读取完成'){ readBtn.textContent='读取预览'; img.style.display='none'; } };
+  // 登录/退出 切换按钮(在状态右侧)
+  auth.onclick=async()=>{
+    const mode=auth.dataset.mode||'login';
+    if(mode==='logout'){
+      auth.disabled=true; auth.textContent='退出中…';
+      try{ await fetch('/api/figma/logout',{method:'POST'}); st.textContent='已退出 Figma 登录 — 需重新登录'; st.style.color='var(--fg-3)'; }
+      catch(e){ st.textContent='退出失败'; }
+      await refreshFigmaStatus(); return;
+    }
+    auth.disabled=true; auth.textContent='登录中…';
     try{
       await fetch('/api/figma/login',{method:'POST'});
-      st.textContent='⏳ Chrome 已弹出 — 用 Google 登录,完成后这里自动变绿并锁定'; st.style.color='var(--warn)';
-      _figmaLoginInProgress=true;  // 标记:这次登录完成后要锁输入框
+      st.textContent='⏳ Chrome 已弹出 — 用 Google 登录,完成后自动变绿'; st.style.color='var(--warn)';
+      _figmaLoginInProgress=true;
       if(_figmaPollTimer) clearInterval(_figmaPollTimer);
       _figmaPollTimer=setInterval(refreshFigmaStatus, 4000);
-    }catch(e){
-      st.textContent='✕ 启动登录失败(宿主助手未运行?)'; st.style.color='var(--bad)';
-      loginBtn.textContent='登录 Figma'; loginBtn.disabled=false;
-    }
+    }catch(e){ st.textContent='✕ 启动登录失败(宿主助手未运行?)'; st.style.color='var(--bad)'; auth.disabled=false; auth.textContent='登录 Figma'; }
   };
-  prevBtn.onclick=async()=>{
-    const u=(urlInp.value||'').trim(); if(!u){ st.textContent='先粘贴 Figma 链接'; return; }
-    prevBtn.disabled=true; const o=prevBtn.textContent; prevBtn.textContent='读取中…';
+  // 读取 figma 内容(在输入框右侧):成功→「读取完成」;失败→说明原因
+  readBtn.onclick=async()=>{
+    const u=(urlInp.value||'').trim();
+    if(!u){ st.textContent='先粘贴 Figma 链接'; st.style.color='var(--warn)'; return; }
+    readBtn.disabled=true; readBtn.textContent='读取中…';
     try{
       const r=await fetch('/api/figma/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u})}).then(r=>r.json());
-      if(r.ok){ img.src=r.image_url; img.style.display='block'; st.textContent='✓ 设计图读取成功'; st.style.color='var(--ok)'; }
-      else { st.textContent='✕ 读取失败: '+(r.error||''); st.style.color='var(--bad)'; }
-    }catch(e){ st.textContent='✕ 读取失败'; st.style.color='var(--bad)'; }
-    setTimeout(()=>{prevBtn.textContent=o;prevBtn.disabled=false;},1200);
+      if(r.ok){ img.src=r.image_url; img.style.display='block'; readBtn.textContent='读取完成'; st.textContent='✓ 设计图读取成功'; st.style.color='var(--ok)'; }
+      else { readBtn.textContent='读取预览'; st.textContent='✕ 读取失败:'+(r.error||'未知原因'); st.style.color='var(--bad)'; }
+    }catch(e){ readBtn.textContent='读取预览'; st.textContent='✕ 读取失败:网络错误'; st.style.color='var(--bad)'; }
+    readBtn.disabled=false;
   };
   refreshFigmaStatus();
 }
