@@ -178,15 +178,22 @@ class StepOrchestrator(ABC):
                     continue
                 p = cand / s["filename"]
                 if p.exists():
-                    # caption 包含完整 filename — 这样 LLM 在 issue.viewport_filename 中
-                    # 能精确引用,后端 _annotate_screenshots 才能正确画框。
+                    # caption 标清角色:设计稿(Figma 基线) vs 实拍(APP/Web 实际界面)。
+                    # step5 据此做「实拍 vs 设计稿」对照,只在实拍图上标偏差。
+                    _u = s.get("url", "") or ""
+                    if s.get("is_design") or "figma.com" in _u.lower():
+                        _role = "设计稿(Figma 设计基线 — 目标设计,勿在此图上标问题)"
+                    elif _u.startswith("app://"):
+                        _role = "实拍(APP 真机实际界面 — 在此图对照设计稿标偏差)"
+                    else:
+                        _role = "实拍(Web 实际页面 — 在此图对照设计稿标偏差)"
                     images.append({
                         "path": p,
                         "mime": "image/png",
                         "caption": (
-                            f"viewport_filename={s['filename']} | "
+                            f"role={_role} | viewport_filename={s['filename']} | "
                             f"viewport={s.get('viewport','?')} ({s.get('width','?')}×{s.get('height','?')}) | "
-                            f"url={s.get('url','')}"
+                            f"url={_u}"
                         ),
                     })
             if not images:
