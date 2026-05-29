@@ -133,6 +133,23 @@ def set_figma_token(token: str | None) -> None:
     _write(d)
 
 
+def get_figma_login() -> dict[str, str]:
+    """返回 Figma 账号密码(浏览器登录态读图用)。{email, password} 或空。"""
+    d = _read()
+    fl = d.get("figma_login") or {}
+    return {"email": fl.get("email", ""), "password": fl.get("password", "")}
+
+
+def set_figma_login(email: str | None, password: str | None) -> None:
+    """写入/清空 Figma 账号密码(本机明文,供持久化浏览器自动登录)。"""
+    d = _read()
+    if email and email.strip():
+        d["figma_login"] = {"email": email.strip(), "password": (password or "").strip()}
+    else:
+        d.pop("figma_login", None)
+    _write(d)
+
+
 def set_auth_mode(mode: AuthMode, api_key: str | None = None) -> None:
     """更新认证模式 + 可选写入 API key。
 

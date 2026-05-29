@@ -83,3 +83,100 @@ async def fetch_figma_image(
                     "size": len(img.content)}
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+
+_REAL_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+
+
+async def fetch_figma_via_browser(
+    url: str,
+    out_path: str,
+    email: str = "",
+    password: str = "",
+    profile_dir: str = "/data/figma_profile",
+    timeout_ms: int = 45000,
+) -> dict[str, object]:
+    """走前端(浏览器)阅读 Figma:持久化登录态 → 打开设计链接 → 截图。
+
+    - 持久化 profile_dir(不用无痕)→ 登录一次后长期保留。
+    - 私有文件首次会撞登录墙 → 用 email/password 自动登录。
+    - 渲染后整页截图作设计基线(画布里就是设计帧)。
+    返回 {ok, path, error, logged_in}。
+    """
+    from pathlib import Path as _P
+    try:
+        from playwright.async_api import async_playwright  # type: ignore
+    except ImportError:
+        return {"ok": False, "error": "playwright 未安装"}
+    _P(profile_dir).mkdir(parents=True, exist_ok=True)
+
+    async def _is_login_wall(pg) -> bool:
+        try:
+            txt = (await pg.inner_text("body"))[:400].lower()
+        except Exception:
+            return False
+        return any(k in txt for k in ("log in", "sign up", "continue with email", "登录")) \
+            and await pg.query_selector("canvas") is None
+
+    try:
+        async with async_playwright() as pw:
+            ctx = await pw.chromium.launch_persistent_context(
+                profile_dir, headless=True, user_agent=_REAL_UA,
+                viewport={"width": 1600, "height": 1000}, locale="zh-CN",
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            try:
+                pg = ctx.pages[0] if ctx.pages else await ctx.new_page()
+                await pg.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                import asyncio as _aio
+                await _aio.sleep(5)
+
+                logged_in = True
+                if await _is_login_wall(pg):
+                    logged_in = False
+                    if not email:
+                        return {"ok": False, "error": "Figma 需要登录但未配置账号(设置页填 Figma 账号密码)",
+                                "logged_in": False}
+                    # 自动登录
+                    await pg.goto("https://www.figma.com/login", timeout=timeout_ms, wait_until="domcontentloaded")
+                    await _aio.sleep(2)
+                    try:
+                        # 有些版本先要点"Continue with email"
+                        btn = await pg.query_selector("text=Continue with email")
+                        if btn:
+                            await btn.click(); await _aio.sleep(1)
+                        await pg.fill("input[name=email], input[type=email]", email, timeout=8000)
+                        await pg.fill("input[name=password], input[type=password]", password, timeout=8000)
+                        # 提交
+                        sub = await pg.query_selector("button[type=submit]") or await pg.query_selector("text=Log in")
+                        if sub:
+                            await sub.click()
+                        else:
+                            await pg.keyboard.press("Enter")
+                        await _aio.sleep(6)
+                    except Exception as exc:
+                        return {"ok": False, "error": f"自动登录失败(可能 SSO/二次验证): {str(exc)[:120]}",
+                                "logged_in": False}
+                    # 登录后重开设计页
+                    await pg.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+                    await _aio.sleep(6)
+                    if await _is_login_wall(pg):
+                        return {"ok": False, "error": "登录后仍是登录墙(账号密码错 / 需邮箱验证码 / SSO)",
+                                "logged_in": False}
+                    logged_in = True
+
+                # 等画布渲染
+                try:
+                    await pg.wait_for_selector("canvas", timeout=15000)
+                except Exception:
+                    pass
+                await _aio.sleep(4)
+                await pg.screenshot(path=out_path, full_page=False)
+                size = _P(out_path).stat().st_size if _P(out_path).exists() else 0
+                return {"ok": size > 0, "path": out_path, "size": size,
+                        "logged_in": logged_in, "error": None if size > 0 else "截图为空"}
+            finally:
+                await ctx.close()
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
