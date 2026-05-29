@@ -65,9 +65,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_base_url: str = "https://api.anthropic.com"
 
-    model_opus: str = "claude-opus-4-7"
-    model_sonnet: str = "claude-sonnet-4-6"
-    model_haiku: str = "claude-haiku-4-5-20251001"
+    # 档位别名 — 不写死版本号,由 Claude CLI 自动解析到账号最新版本(4.8/4.9…)
+    model_opus: str = "opus"
+    model_sonnet: str = "sonnet"
+    model_haiku: str = "haiku"
 
     database_url: str = "sqlite+aiosqlite:///./toolkit.db"
 

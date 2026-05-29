@@ -6902,12 +6902,13 @@ def _read_json_safe(p: Path) -> dict[str, Any]:
         return {}
 
 
-# Single source of truth for Claude model registry — mirrors what Claude
-# desktop's model picker exposes. Update this when Anthropic ships new versions.
+# Single source of truth for Claude model registry. 档位化设计:每项的 model
+# 字段用档位别名(opus/sonnet/haiku),由 Claude CLI 自动解析到账号最新版本
+# (4.8/4.9…),无需随 Anthropic 发版手动改版本号。真实版本在探测后读回展示。
 # Each entry:
 #   key:                 stable identifier used in API requests / localStorage
-#   model:               actual SDK model ID
-#   label:               UI display label, includes the version
+#   model:               档位别名 (opus/sonnet/haiku) — 自动解析最新版本
+#   label:               UI display label (不含版本号,版本由探测动态补)
 #   version_badge:       small badge text (1M / Legacy / null)
 #   tag:                 short Chinese capability descriptor
 #   default:             True for the model with the ✓ in desktop
@@ -6917,9 +6918,9 @@ def _read_json_safe(p: Path) -> dict[str, Any]:
 #   supported_efforts / supported_thinking:  per-model allowed lists
 CLAUDE_MODELS: list[dict[str, Any]] = [
     {
-        "key": "opus-4-7",
-        "model": "claude-opus-4-7",
-        "label": "Opus 4.7",
+        "key": "opus",
+        "model": "opus",  # 档位别名 → Claude CLI 自动解析账号最新 Opus(4.8/4.9…)
+        "label": "Opus",
         "version_badge": None,
         "tag": "最强推理 · 慢",
         "default": True,
@@ -6931,9 +6932,9 @@ CLAUDE_MODELS: list[dict[str, Any]] = [
         "supported_thinking": ["disabled", "adaptive", "enabled"],
     },
     {
-        "key": "opus-4-7-1m",
-        "model": "claude-opus-4-7",
-        "label": "Opus 4.7",
+        "key": "opus-1m",
+        "model": "opus",
+        "label": "Opus",
         "version_badge": "1M",
         "tag": "100 万上下文 · 适合超长输入",
         "default": False,
@@ -6945,9 +6946,9 @@ CLAUDE_MODELS: list[dict[str, Any]] = [
         "supported_thinking": ["disabled", "adaptive", "enabled"],
     },
     {
-        "key": "sonnet-4-6",
-        "model": "claude-sonnet-4-6",
-        "label": "Sonnet 4.6",
+        "key": "sonnet",
+        "model": "sonnet",
+        "label": "Sonnet",
         "version_badge": None,
         "tag": "平衡 · 默认推荐",
         "default": False,
@@ -6959,39 +6960,36 @@ CLAUDE_MODELS: list[dict[str, Any]] = [
         "supported_thinking": ["disabled", "adaptive", "enabled"],
     },
     {
-        "key": "haiku-4-5",
-        "model": "claude-haiku-4-5-20251001",
-        "label": "Haiku 4.5",
-        "version_badge": "实验",
-        "tag": "最快 · 简单任务（需账号开通 Haiku 4.5；未开通时调用会失败）",
+        "key": "haiku",
+        "model": "haiku",
+        "label": "Haiku",
+        "version_badge": None,
+        "tag": "最快 · 简单任务",
         "default": False,
         "legacy": False,
-        "experimental": True,
         "betas": [],
         "supports_effort": False,
         "supports_thinking": False,
         "supported_efforts": [],
         "supported_thinking": [],
     },
-    {
-        "key": "opus-4-6",
-        "model": "claude-opus-4-6",
-        "label": "Opus 4.6",
-        "version_badge": "Legacy",
-        "tag": "上一代 Opus",
-        "default": False,
-        "legacy": True,
-        "betas": [],
-        "supports_effort": True,
-        "supports_thinking": True,
-        "supported_efforts": ["low", "medium", "high", "xhigh", "max"],
-        "supported_thinking": ["disabled", "adaptive", "enabled"],
-    },
 ]
 
 
 def _model_by_key(key: str) -> dict[str, Any] | None:
-    return next((m for m in CLAUDE_MODELS if m["key"] == key), None)
+    hit = next((m for m in CLAUDE_MODELS if m["key"] == key), None)
+    if hit:
+        return hit
+    # 兼容旧的本地保存键(档位化前写死版本的 key,如 opus-4-7 / sonnet-4-6 / haiku-4-5):
+    # 按"是否带 1M"+ 档位词收敛到新键,避免老用户下拉选项失效。
+    k = (key or "").lower()
+    if "opus" in k:
+        return _model_by_key("opus-1m" if "1m" in k else "opus")
+    if "haiku" in k:
+        return next((m for m in CLAUDE_MODELS if m["key"] == "haiku"), None)
+    if "sonnet" in k:
+        return next((m for m in CLAUDE_MODELS if m["key"] == "sonnet"), None)
+    return None
 
 
 # ----- 模型可用性探测 -----
@@ -7080,6 +7078,8 @@ async def _probe_model(model_key: str) -> dict[str, Any]:
         result = {
             "ok": True,
             "model": entry["model"],
+            # 探测时别名解析出的真实版本号(如 claude-opus-4-8-…)— 用于 UI 动态显示版本
+            "resolved_model": getattr(resp, "model_id", None) or entry["model"],
             "model_key": model_key,
             "checked_at": now,
             "sample_text": sample[:120],
@@ -7239,6 +7239,8 @@ async def api_claude_info() -> dict[str, Any]:
             "unavailable_reason": unavail_reason,
             "last_probe_status": last_probe_status,
             "last_probed_at": (probe or {}).get("checked_at"),
+            # 探测读回的真实版本号(无探测时为 None,UI 退回只显示档位名)
+            "resolved_model": (probe or {}).get("resolved_model"),
         })
 
     return {
@@ -10571,6 +10573,9 @@ function buildModelControls(){
   claudeInfo.available_models.forEach(m => {
     const sel = m.key === defaultModel ? 'selected' : '';
     const badge = m.version_badge ? ` ${m.version_badge}` : '';
+    // 探测读回的真实版本号 → 动态附在档位名后(如 "Opus · 4.8");未探测则只显示档位名
+    const _vm = (m.resolved_model || '').match(/([0-9]+)[.-]([0-9]+)/);
+    const ver = _vm ? ` · ${_vm[1]}.${_vm[2]}` : '';
     const classes = [];
     if (m.legacy) classes.push('legacy');
     if (m.available === false) classes.push('unavailable');
@@ -10580,7 +10585,7 @@ function buildModelControls(){
     const prefix = m.available === false ? '✕ ' : (m.experimental ? '⚠ ' : '');
     const tail = m.available === false ? '（账号未开通 / 已下线）' : '';
     ms.insertAdjacentHTML('beforeend',
-      `<option value="${m.key}" ${sel} ${disabled} class="${classes.join(' ')}">${prefix}${m.label}${badge} — ${m.tag}${tail}</option>`);
+      `<option value="${m.key}" ${sel} ${disabled} class="${classes.join(' ')}">${prefix}${m.label}${ver}${badge} — ${m.tag}${tail}</option>`);
   });
   const defaultLabel = (claudeInfo.available_models.find(m => m.key === desktopDefault) || {}).label || 'Opus';
   document.getElementById('model-hint').textContent = '· 所有子步骤统一使用此模型';

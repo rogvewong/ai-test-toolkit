@@ -109,6 +109,27 @@ _TIER_ALIAS: dict[ModelTier, str] = {
     ModelTier.HAIKU: "haiku",
 }
 
+
+def _normalize_to_alias(m: str | None) -> str | None:
+    """把任意模型标识收敛到档位别名(opus/sonnet/haiku),始终解析到账号最新版本。
+
+    避免把请求钉死在写死的旧版本(如 claude-opus-4-7)—— 该版本下线后会直接失败。
+    Claude CLI/SDK 接受 opus/sonnet/haiku 别名并自动选当前最新版(4.8、4.9…)。
+    已是别名则原样返回;完全识别不出档位的整串保留(留给传特殊 ID 的余地)。
+    """
+    if not m:
+        return m
+    ml = m.lower().strip()
+    if ml in ("opus", "sonnet", "haiku"):
+        return ml
+    if "opus" in ml:
+        return "opus"
+    if "haiku" in ml:
+        return "haiku"
+    if "sonnet" in ml:
+        return "sonnet"
+    return m
+
 # Per-process.yaml degradation chain. Triggers only on SDK-side failures
 # (auth, server overload, etc.).
 DEGRADATION_ORDER: list[ModelTier] = [ModelTier.OPUS, ModelTier.SONNET, ModelTier.HAIKU]
@@ -354,7 +375,8 @@ class LlmClient:
         images: list[dict[str, Any]] | None = None,
     ) -> LlmResponse:
         # User-side model override beats the per-substep tier.
-        model_alias = self.model_override or _TIER_ALIAS[tier]
+        # 收敛到档位别名 → 永远解析到账号最新版本,不钉死旧版本号。
+        model_alias = _normalize_to_alias(self.model_override) or _TIER_ALIAS[tier]
         system_text = _flatten_system(system)
         user_text = _flatten_messages(messages)
 
