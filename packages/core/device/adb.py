@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 
 DEFAULT_ADB_TARGETS = "host.docker.internal:16384"
@@ -204,6 +205,85 @@ async def adb_status() -> dict[str, object]:
     }
 
 
+# ── UI 自动化:跳过弹窗 + 翻页(uiautomator + input tap)──
+_BOUNDS_RE = re.compile(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"')
+# 可点掉/可前进的按钮文案(年龄确认、协议、保存提示、引导页等);
+# 不含 取消/退出/删除/卸载/拒绝/不同意 等危险词。
+_DISMISS_KW = [
+    "跳过", "同意并继续", "我已年满", "已满18", "已满 18", "年满18", "我已阅读并同意",
+    "同意", "我知道了", "知道了", "稍后", "下次再说", "暂不", "继续", "下一步",
+    "立即体验", "开始体验", "开始使用", "进入应用", "进入", "确定", "好的", "允许", "我已18",
+    "skip", "agree", "continue", "next", "accept", "got it", "enter", "confirm", "allow", "i agree", "ok",
+]
+
+
+async def tap(serial: str, x: int, y: int) -> None:
+    await _run_adb("-s", serial, "shell", "input", "tap", str(int(x)), str(int(y)), timeout=15.0)
+
+
+async def ui_dump(serial: str) -> str:
+    """dump 当前界面的 UI 层级 XML(uiautomator)。"""
+    try:
+        await adb_shell(serial, "uiautomator", "dump", "/sdcard/aitk_ui.xml", timeout=20.0)
+        return await adb_shell(serial, "cat", "/sdcard/aitk_ui.xml", timeout=15.0)
+    except AdbError:
+        return ""
+
+
+def _parse_clickables(xml: str) -> list[dict[str, object]]:
+    out: list[dict[str, object]] = []
+    for m in re.finditer(r"<node\b[^>]*>", xml or ""):
+        tag = m.group(0)
+        if 'clickable="true"' not in tag:
+            continue
+        tm = re.search(r'text="([^"]*)"', tag)
+        dm = re.search(r'content-desc="([^"]*)"', tag)
+        text = (tm.group(1) if tm else "") or (dm.group(1) if dm else "")
+        bm = _BOUNDS_RE.search(tag)
+        if not bm:
+            continue
+        x1, y1, x2, y2 = map(int, bm.groups())
+        if x2 <= x1 or y2 <= y1:
+            continue
+        out.append({"text": text, "cx": (x1 + x2) // 2, "cy": (y1 + y2) // 2, "y2": y2})
+    return out
+
+
+def _is_dismiss(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if not t or len(t) > 16:
+        return False
+    return any(k.lower() in t for k in _DISMISS_KW)
+
+
+async def dismiss_popups(serial: str, max_rounds: int = 6) -> list[str]:
+    """循环找"跳过/同意/确认/我知道了/年满18"等按钮点掉,直到没有弹窗按钮。"""
+    dismissed: list[str] = []
+    for _ in range(max_rounds):
+        xml = await ui_dump(serial)
+        if not xml:
+            break
+        cands = [c for c in _parse_clickables(xml) if _is_dismiss(str(c["text"]))]
+        if not cands:
+            break
+        c = cands[0]
+        await tap(serial, int(c["cx"]), int(c["cy"]))
+        dismissed.append(str(c["text"]))
+        await asyncio.sleep(2.0)
+    return dismissed
+
+
+async def _screen_size(serial: str) -> tuple[int, int]:
+    try:
+        out = await adb_shell(serial, "wm", "size")
+        m = re.search(r"(\d+)x(\d+)", out)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    except AdbError:
+        pass
+    return 1080, 1920
+
+
 async def run_app_and_capture(
     apk_path: str,
     out_dir: str,
@@ -212,11 +292,13 @@ async def run_app_and_capture(
     component: str | None = None,
     screens: int = 1,
     settle_seconds: float = 6.0,
+    explore: bool = True,
+    max_pages: int = 3,
 ) -> dict[str, object]:
-    """完整闭环:连模拟器 → 装 APK → 启动 → 截图(若干屏)→ 卸载。
+    """完整闭环:连模拟器 → 装 APK → 启动 → 跳过弹窗 → 截首页 → 翻内部页逐页截 → 卸载。
 
     返回 {ok, serial, package, screenshots:[{filename,...}], steps:[...], error}。
-    screenshots 的形状与 _capture_screenshots_for_tool 一致,可直接喂给 ctx.screenshots。
+    screenshots 形状与 _capture_screenshots_for_tool 一致,可直接喂 ctx.screenshots。
     """
     from pathlib import Path as _P
     steps: list[str] = []
@@ -238,19 +320,51 @@ async def run_app_and_capture(
     comp = component or await resolve_launch_component(serial, pkg)
     steps.append(f"包名: {pkg} | 启动组件: {comp or '(用 monkey 兜底)'}")
     shots: list[dict[str, object]] = []
+    _idx = [0]
+
+    async def _cap(label: str) -> None:
+        _idx[0] += 1
+        fname = f"{name_prefix}_app_{_idx[0]}.png"
+        await screencap(serial, str(_P(out_dir) / fname))
+        shots.append({"url": f"app://{pkg}", "viewport": label,
+                      "width": "", "height": "", "filename": fname})
+        steps.append(f"截图: {fname}({label})")
+
     try:
         await launch_app(serial, pkg, comp)
         steps.append("已启动 APP")
         _P(out_dir).mkdir(parents=True, exist_ok=True)
-        for i in range(max(1, screens)):
-            await asyncio.sleep(settle_seconds if i == 0 else 2.0)
-            fname = f"{name_prefix}_app_{i+1}.png"
-            await screencap(serial, str(_P(out_dir) / fname))
-            shots.append({"url": f"app://{pkg}", "viewport": f"屏{i+1}",
-                          "width": "", "height": "", "filename": fname})
-            steps.append(f"截图: {fname}")
+        await asyncio.sleep(settle_seconds)
+        # 跳过启动弹窗(年龄确认 / 协议 / 保存二维码提示 / 引导页等)
+        dm = await dismiss_popups(serial)
+        if dm:
+            steps.append("跳过弹窗: " + ", ".join(dm[:8]))
+        await asyncio.sleep(1.5)
+        await _cap("首页")
+        if explore:
+            # 翻内部页:点底部导航栏(屏幕底部 ~18% 内的可点元素)
+            W, H = await _screen_size(serial)
+            xml = await ui_dump(serial)
+            navs = [c for c in _parse_clickables(xml) if int(c["cy"]) > H * 0.82]
+            seen: set[int] = set()
+            uniq: list[dict[str, object]] = []
+            for c in navs:
+                bucket = int(c["cx"]) // max(1, W // 8)  # 按横向位置去重
+                if bucket in seen:
+                    continue
+                seen.add(bucket)
+                uniq.append(c)
+            steps.append(f"底部导航候选: {len(uniq)} 个")
+            for c in uniq[:max_pages]:
+                try:
+                    await tap(serial, int(c["cx"]), int(c["cy"]))
+                    await asyncio.sleep(2.0)
+                    await dismiss_popups(serial, 2)
+                    label = (str(c["text"]).strip() or "内部页")[:8]
+                    await _cap(f"页面·{label}")
+                except Exception:
+                    continue
     finally:
-        # 跑完强制卸载,避免模拟器堆积
         try:
             await uninstall(serial, pkg)
             steps.append("已卸载 APP")
