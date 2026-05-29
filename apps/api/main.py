@@ -11184,6 +11184,12 @@ function buildModelControls(){
 
 // === Figma 设计稿登录条(step5 / h5_adapt)===
 let _figmaPollTimer = null;
+let _figmaLoginInProgress = false;   // 仅本次点了登录才在完成时锁输入框
+function _lockFigmaInput(){
+  const u=document.getElementById('figma-url'), b=document.getElementById('figma-login-btn');
+  if(u){ u.disabled=true; u.style.opacity='.7'; u.title='登录完成后已锁定 — 刷新页面可重新编辑'; }
+  if(b){ b.disabled=true; b.textContent='已登录'; b.style.opacity='.7'; }
+}
 async function refreshFigmaStatus(){
   const st = document.getElementById('figma-status');
   if (!st) return;
@@ -11191,8 +11197,24 @@ async function refreshFigmaStatus(){
     const d = await fetch('/api/figma/status').then(r=>r.json());
     if (!d.runner_up){ st.textContent='⚠ 宿主读图助手未运行(请在 Mac 上启动 figma_runner)'; st.style.color='var(--warn)'; return; }
     if (d.login_running){ st.textContent='⏳ 登录窗口已弹出 — 请在 Chrome 里用 Google 登录…'; st.style.color='var(--warn)'; return; }
-    if (d.logged_in){ st.textContent='✓ Figma 已登录 — 运行时自动读取设计图'; st.style.color='var(--ok)'; if(_figmaPollTimer){clearInterval(_figmaPollTimer);_figmaPollTimer=null;} }
-    else { st.textContent='○ 未登录 — 点「登录 Figma」一次(以后免登录)'; st.style.color='var(--fg-3)'; }
+    if (d.logged_in){
+      st.textContent='✓ Figma 已登录 — 运行时自动读取设计图'; st.style.color='var(--ok)';
+      if(_figmaPollTimer){clearInterval(_figmaPollTimer);_figmaPollTimer=null;}
+      // 只有"本次刚点登录完成"才锁定输入框(刷新进来不锁,保持可编辑)
+      if(_figmaLoginInProgress){ _figmaLoginInProgress=false; _lockFigmaInput(); }
+    }
+    else {
+      // 登录窗口已关但仍未登录 = 本次登录失败/取消 → 恢复按钮可重试
+      if(_figmaLoginInProgress && !d.login_running){
+        _figmaLoginInProgress=false;
+        if(_figmaPollTimer){clearInterval(_figmaPollTimer);_figmaPollTimer=null;}
+        const b=document.getElementById('figma-login-btn');
+        if(b){ b.disabled=false; b.textContent='登录 Figma'; b.style.opacity='1'; }
+        st.textContent='✕ 未检测到登录 — 请重试「登录 Figma」'; st.style.color='var(--bad)';
+      } else {
+        st.textContent='○ 未登录 — 点「登录 Figma」一次(以后免登录)'; st.style.color='var(--fg-3)';
+      }
+    }
   }catch(e){ st.textContent='状态查询失败'; }
 }
 function initFigmaBar(){
@@ -11203,15 +11225,21 @@ function initFigmaBar(){
   const urlInp=document.getElementById('figma-url');
   const img=document.getElementById('figma-preview-img');
   const st=document.getElementById('figma-status');
+  // 刷新清空:每次进页面输入框置空 + 恢复可编辑
+  urlInp.value=''; urlInp.disabled=false; urlInp.style.opacity='1';
+  loginBtn.disabled=false; loginBtn.style.opacity='1';
   loginBtn.onclick=async()=>{
-    loginBtn.disabled=true; const o=loginBtn.textContent; loginBtn.textContent='调起登录…';
+    loginBtn.disabled=true; loginBtn.textContent='登录中…';
     try{
       await fetch('/api/figma/login',{method:'POST'});
-      st.textContent='⏳ Chrome 已弹出 — 用 Google 登录,完成后这里自动变绿'; st.style.color='var(--warn)';
+      st.textContent='⏳ Chrome 已弹出 — 用 Google 登录,完成后这里自动变绿并锁定'; st.style.color='var(--warn)';
+      _figmaLoginInProgress=true;  // 标记:这次登录完成后要锁输入框
       if(_figmaPollTimer) clearInterval(_figmaPollTimer);
       _figmaPollTimer=setInterval(refreshFigmaStatus, 4000);
-    }catch(e){ st.textContent='✕ 启动登录失败(宿主助手未运行?)'; st.style.color='var(--bad)'; }
-    setTimeout(()=>{loginBtn.textContent=o;loginBtn.disabled=false;},1500);
+    }catch(e){
+      st.textContent='✕ 启动登录失败(宿主助手未运行?)'; st.style.color='var(--bad)';
+      loginBtn.textContent='登录 Figma'; loginBtn.disabled=false;
+    }
   };
   prevBtn.onclick=async()=>{
     const u=(urlInp.value||'').trim(); if(!u){ st.textContent='先粘贴 Figma 链接'; return; }
