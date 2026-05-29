@@ -6992,6 +6992,114 @@ def _model_by_key(key: str) -> dict[str, Any] | None:
     return None
 
 
+# ---- 实时模型列表:直接读 Anthropic /v1/models(版本/精度/上下文,全部实时,不写死)----
+_LIVE_MODELS_CACHE: dict[str, Any] = {"at": 0.0, "models": None}
+_ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models"
+_LIVE_MODELS_TTL = 60.0  # 秒;/v1/models 是轻量元数据接口,不耗推理 token
+
+
+def _tier_word(model_id: str) -> str | None:
+    ml = (model_id or "").lower()
+    if "opus" in ml:
+        return "opus"
+    if "haiku" in ml:
+        return "haiku"
+    if "sonnet" in ml:
+        return "sonnet"
+    return None
+
+
+async def _fetch_live_models() -> list[dict[str, Any]] | None:
+    """实时从 Anthropic /v1/models 拉账号可用模型(版本 / 精度能力 / 上下文)。
+
+    返回与 CLAUDE_MODELS 同构的列表(前端无需改);失败返回 None,调用方回退静态表。
+    结果缓存 _LIVE_MODELS_TTL 秒。
+    """
+    now = _time.time()
+    cache = _LIVE_MODELS_CACHE
+    if cache.get("models") is not None and (now - cache.get("at", 0)) < _LIVE_MODELS_TTL:
+        return cache["models"]
+    try:
+        await ensure_fresh_oauth_token()
+    except Exception:
+        pass
+    headers = {"anthropic-version": "2023-06-01"}
+    try:
+        from packages.core.auth_config import get_api_key, get_oauth_access_token
+    except Exception:
+        return None
+    token = None
+    try:
+        token = get_oauth_access_token()
+    except Exception:
+        token = None
+    if token:
+        headers["authorization"] = f"Bearer {token}"
+        headers["anthropic-beta"] = "oauth-2025-04-20"
+    else:
+        try:
+            key = get_api_key()
+        except Exception:
+            key = None
+        if not key:
+            return None
+        headers["x-api-key"] = key
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as cli:
+            resp = await cli.get(_ANTHROPIC_MODELS_URL, headers=headers, params={"limit": 100})
+        if resp.status_code != 200:
+            return None
+        data = resp.json().get("data", []) or []
+    except Exception:
+        return None
+    effort_order = ["low", "medium", "high", "xhigh", "max"]
+    out: list[dict[str, Any]] = []
+    for m in data:
+        mid = m.get("id")
+        if not mid:
+            continue
+        cap = m.get("capabilities", {}) or {}
+        eff = cap.get("effort", {}) or {}
+        efforts = [e for e in effort_order if isinstance(eff.get(e), dict) and eff[e].get("supported")]
+        think = cap.get("extended_thinking") or cap.get("thinking") or {}
+        supports_think = bool(think.get("supported")) if isinstance(think, dict) else False
+        ctx = m.get("max_input_tokens") or 0
+        tag = {"opus": "最强推理 · 慢", "sonnet": "平衡 · 默认推荐",
+               "haiku": "最快 · 简单任务"}.get(_tier_word(mid) or "", "")
+        out.append({
+            "key": mid,
+            "model": mid,  # 全 ID → 选哪个版本就跑哪个版本
+            "label": m.get("display_name") or mid,
+            "version_badge": "1M" if ctx and ctx >= 1_000_000 else None,
+            "tag": tag,
+            "default": False,
+            "legacy": False,
+            "betas": [],
+            "supports_effort": bool(efforts),
+            "supports_thinking": supports_think,
+            "supported_efforts": efforts,
+            "supported_thinking": (["disabled", "adaptive", "enabled"] if supports_think else []),
+            "context": ctx,
+        })
+    if not out:
+        return None
+    # 排序:同 tier 内版本号新→旧(id 倒序),再把 opus>sonnet>haiku 排前
+    out.sort(key=lambda x: x["model"], reverse=True)
+    rank = {"opus": 0, "sonnet": 1, "haiku": 2}
+    out.sort(key=lambda x: rank.get(_tier_word(x["model"]) or "", 9))
+    # 默认 = 排序后第一个 opus(即最新 opus)
+    for x in out:
+        if _tier_word(x["model"]) == "opus":
+            x["default"] = True
+            break
+    else:
+        out[0]["default"] = True
+    cache["models"] = out
+    cache["at"] = now
+    return out
+
+
 # ----- 模型可用性探测 -----
 # 用最小 token 调一次,把不可用的模型(账号未开通 / 区域限制 / 模型已下线)
 # 在前端 disable 掉。降级到运行报告里的"失败"已经在 _run_tool_async 里有兜底,
@@ -7048,6 +7156,9 @@ async def _probe_model(model_key: str) -> dict[str, Any]:
     if cached and (now - cached.get("checked_at", 0)) < 600:
         return cached
     entry = _model_by_key(model_key)
+    if not entry and _tier_word(model_key):
+        # 实时列表里的全 ID 键(如 claude-opus-4-7)直接当模型 ID 探测
+        entry = {"model": model_key}
     if not entry:
         result = {"ok": False, "model": model_key, "error": "unknown model key",
                   "model_specific": True, "checked_at": now}
@@ -7211,11 +7322,15 @@ async def api_claude_info() -> dict[str, Any]:
     first_start = state.get("firstStartTime")
     first_token = state.get("claudeCodeFirstTokenDate")
 
-    # available_models 是 UI 下拉的源头（Opus 4.7 / Sonnet 4.6 / Haiku 4.5 等）
+    # available_models 是 UI 下拉的源头。
+    # 优先用 /v1/models 实时列表(账号当前全部可用模型 + 版本 + 精度能力);
+    # 拉取失败(无 token / 网络)回退到内置档位静态表。
     # 只在"模型本身明确不可用"时才 disable(model_specific 失败,或运行时黑名单);
     # 通用 SDK 失败(CLI 整个挂、网络抖动)只在 dropdown 显示警告,不禁用。
+    source_models = await _fetch_live_models() or CLAUDE_MODELS
+    models_live = source_models is not CLAUDE_MODELS
     models_with_avail: list[dict[str, Any]] = []
-    for m in CLAUDE_MODELS:
+    for m in source_models:
         key = m["key"]
         probe = _MODEL_PROBE_CACHE.get(key)
         blacklisted = _MODEL_RUNTIME_BLACKLIST.get(key)
@@ -7254,6 +7369,7 @@ async def api_claude_info() -> dict[str, Any]:
         "account": account,
         "settings_effort_level": effort,
         "available_models": models_with_avail,
+        "models_live": models_live,  # True=来自 /v1/models 实时列表;False=内置静态回退
         "available_efforts": [
             {"key": "low", "label": "Low", "tag": "最快"},
             {"key": "medium", "label": "Medium", "tag": "默认"},
