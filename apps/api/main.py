@@ -3485,7 +3485,8 @@ async def _capture_screenshots_for_tool(
     figma_shots: list[dict[str, Any]] = []
     try:
         from packages.core.device.figma import (
-            parse_figma_links, fetch_figma_image, fetch_figma_via_browser)
+            parse_figma_links, fetch_figma_image, fetch_figma_via_browser,
+            fetch_figma_via_host_runner)
         from packages.core.auth_config import get_figma_token, get_figma_login
         links = parse_figma_links(docs)
         if links:
@@ -3498,16 +3499,20 @@ async def _capture_screenshots_for_tool(
                 state["progress"] = f"读取 Figma 设计图 {lk['file_key'][:8]}…"
                 fname = f"{tool_id}_{ctx.run_id[:8]}_figma_{i+1}.png"
                 fpath = str(sc_dir / fname)
-                # 优先浏览器(持久登录态);否则 API token
-                if login.get("email"):
-                    res = await fetch_figma_via_browser(
-                        lk["url"], fpath, email=login["email"],
-                        password=login["password"], profile_dir=profile_dir)
-                    mode = "browser"
-                else:
-                    res = await fetch_figma_image(lk["file_key"], lk["node_id"],
-                                                  token or "", fpath)
-                    mode = "api"
+                # 优先级:① 宿主读图助手(真实 Chrome + Google 登录,推荐)
+                #         ② 容器内浏览器(账号密码) ③ API token
+                res = await fetch_figma_via_host_runner(lk["url"], fpath)
+                mode = "host_runner"
+                if not res.get("ok"):
+                    if login.get("email"):
+                        res = await fetch_figma_via_browser(
+                            lk["url"], fpath, email=login["email"],
+                            password=login["password"], profile_dir=profile_dir)
+                        mode = "container_browser"
+                    elif token:
+                        res = await fetch_figma_image(lk["file_key"], lk["node_id"],
+                                                      token, fpath)
+                        mode = "api"
                 state.setdefault("logs", []).append({
                     "ts": _time.time(), "event": "figma.fetch", "mode": mode,
                     "ok": res.get("ok"), "error": res.get("error"), "node": lk["node_id"]})

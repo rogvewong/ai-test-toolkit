@@ -88,6 +88,33 @@ async def fetch_figma_image(
 _REAL_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
+import os as _os
+HOST_RUNNER_URL = _os.environ.get("AITK_FIGMA_RUNNER_URL", "http://host.docker.internal:8077")
+
+
+async def fetch_figma_via_host_runner(url: str, out_path: str) -> dict[str, object]:
+    """走宿主 Figma 读图助手(真实 Chrome + 持久 Google 登录)拿设计图。
+
+    宿主助手见 apps/host_runner/figma_runner.py。容器调它 → 它在宿主用已登录的
+    Chrome 打开 Figma 链接截图 → 返回 PNG。返回 {ok, path, error}。
+    """
+    import base64
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as cli:
+            r = await cli.post(f"{HOST_RUNNER_URL}/shot", json={"url": url})
+        if r.status_code != 200:
+            return {"ok": False, "error": f"宿主助手 HTTP {r.status_code}"}
+        data = r.json()
+        if not data.get("ok"):
+            return {"ok": False, "error": f"宿主助手: {data.get('error')}"}
+        png = base64.b64decode(data["png_b64"])
+        from pathlib import Path as _P
+        _P(out_path).write_bytes(png)
+        return {"ok": True, "path": out_path, "size": len(png), "error": None}
+    except Exception as exc:
+        return {"ok": False, "error": f"连不上宿主助手({HOST_RUNNER_URL}): {type(exc).__name__}"}
+
 
 async def fetch_figma_via_browser(
     url: str,
