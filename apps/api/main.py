@@ -7233,6 +7233,17 @@ async def api_claude_probe_model(body: dict[str, Any]) -> dict[str, Any]:
     return await _probe_model(str(key))
 
 
+@app.get("/api/device/status")
+async def api_device_status(request: Request) -> dict[str, Any]:
+    """设备自检 — 连接宿主机 Android 模拟器并列出在线设备。
+
+    用于「APP 上传 → 模拟器运行」功能的连通性检查。需登录。
+    """
+    require_user(request)
+    from packages.core.device import adb_status
+    return await adb_status()
+
+
 @app.get("/api/claude/info")
 async def api_claude_info() -> dict[str, Any]:
     """探测本地 Claude Code 的接入状态、版本、登录账户、默认 effort/model。
@@ -9045,7 +9056,11 @@ async def api_extract_file(file: UploadFile = File(...)) -> dict[str, Any]:
     # 按类型决定上限
     is_pdf_or_doc = ext in ("pdf", "docx", "xlsx", "xlsm") or "officedocument" in ct or ct == "application/pdf"
     is_image = ct.startswith("image/") or ext in ("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg")
-    if is_pdf_or_doc:
+    # APP 安装包(APK/IPA):不读内容,识别为"待运行物料",给大上限
+    is_app = ext in ("apk", "ipa") or ct in ("application/vnd.android.package-archive",)
+    if is_app:
+        max_bytes, kind = 500 * 1024 * 1024, "APP 安装包"
+    elif is_pdf_or_doc:
         max_bytes, kind = 50 * 1024 * 1024, "PDF/DOCX/XLSX"
     elif is_image:
         max_bytes, kind = 20 * 1024 * 1024, "图片"
@@ -9075,6 +9090,41 @@ async def api_extract_file(file: UploadFile = File(...)) -> dict[str, Any]:
     blob = b"".join(chunks)
 
     # Decide handler
+    # APP 安装包:不读内容 — APP 上传 = "要把它跑起来",不是读文本。
+    if is_app:
+        if ext == "ipa":
+            # iOS 包跑不了安卓模拟器
+            return {
+                "filename": name, "content_type": ct or "application/octet-stream",
+                "size": len(blob), "kind": "app", "platform": "ios", "runnable": False,
+                "text": f"[iOS 安装包 {name}（{len(blob)//1024//1024}MB）— 安卓模拟器无法运行 .ipa，"
+                        f"暂不支持运行 iOS 包]",
+            }
+        # APK:存盘供后续在模拟器运行(P2 用),返回 app 标记
+        import uuid as _uuid
+        apps_dir = settings.report_output_dir.parent.parent / "uploads" / "apps"
+        apps_dir.mkdir(parents=True, exist_ok=True)
+        app_id = _uuid.uuid4().hex[:12]
+        app_path = apps_dir / f"{app_id}.apk"
+        app_path.write_bytes(blob)
+        # 尝试解析包名/启动 Activity(androguard 可选,缺失则留空,装包后再从设备拿)
+        pkg = launch_activity = None
+        try:
+            from androguard.core.apk import APK as _APK  # type: ignore
+            _ap = _APK(str(app_path))
+            pkg = _ap.get_package()
+            launch_activity = _ap.get_main_activity()
+        except Exception:
+            pass
+        return {
+            "filename": name, "content_type": "application/vnd.android.package-archive",
+            "size": len(blob), "kind": "app", "platform": "android", "runnable": True,
+            "app_id": app_id, "app_path": str(app_path),
+            "package": pkg, "launch_activity": launch_activity,
+            "text": f"[Android APP：{name}（{len(blob)//1024//1024}MB）"
+                    + (f"，包名 {pkg}" if pkg else "")
+                    + "。已识别为待运行安装包，运行工具时将在模拟器中安装并启动以做 UI 比对。]",
+        }
     if ext == "pdf" or ct == "application/pdf":
         text = _extract_pdf(blob)
     elif ext == "docx" or ct in ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",):

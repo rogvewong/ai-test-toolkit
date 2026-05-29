@@ -33,6 +33,8 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates git \
         nodejs npm \
+        # adb:驱动宿主机 Android 模拟器(装 APK / 启动 / 截图)
+        adb \
         # Playwright Chromium 运行需要的系统 lib
         libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
         libdbus-1-3 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
