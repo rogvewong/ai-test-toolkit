@@ -1,0 +1,23 @@
+module: client_perf
+name: 客户端性能测试
+priority_matrix:
+  P0:
+    - fps_jank
+    - launch_cold_warm
+    - memory_pss_uss_leak
+    - cpu_gpu_usage
+    - launch_path_method_trace
+    - h5_miniprogram_web_vitals
+  P1:
+    - battery
+    - package_size_resources
+    - render_overdraw_hierarchy
+    - io_mainthread
+tech_stack:
+  android: [perfetto, adb, matrix, btrace, leakcanary, mat]
+  ios: [instruments, xctrace]
+  h5: [lighthouse]
+ai_value_points:
+  - "卡顿帧 → 对应代码位置定位"
+  - "hprof → 泄漏路径"
+  - "Web Vitals 语义解读"

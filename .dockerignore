@@ -1,0 +1,28 @@
+# 不需要进镜像的本地东西
+.git
+.gitignore
+.venv
+.env
+.env.local
+.env.docker
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+output/         # 本地报告产物 — 应该走 volume
+dist/
+build/
+*.egg-info
+.DS_Store
+
+# 文档/示例不进镜像
+docs/
+examples/
+tests/
+
+# 已构建过的 .app 包
+*.app
+*.dmg

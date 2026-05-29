@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>天枢·质量 — 阶段性总结与后续计划</title>
+<style>
+:root {
+  --brand-400:#34d399; --brand-500:#10b981; --brand-700:#047857;
+  --bg:#fafbfc; --card:#ffffff;
+  --line:#e6eaf0; --line-2:#cdd5e0;
+  --fg:#1f2937; --fg-2:#4b5563; --fg-3:#6b7280; --fg-4:#9ca3af;
+  --ok:#059669; --warn:#d97706; --bad:#dc2626; --info:#2563eb;
+  --ac-bg:rgba(16,185,129,.08); --ac-line:rgba(16,185,129,.32);
+  --font-sans:-apple-system, BlinkMacSystemFont, "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono:"SF Mono", ui-monospace, Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-sans);
+  font-size: 15px; line-height: 1.7; -webkit-font-smoothing: antialiased; }
+
+.container { max-width: 920px; margin: 0 auto; padding: 56px 32px 96px; }
+
+/* === Hero === */
+.hero {
+  background: linear-gradient(135deg, var(--brand-400), var(--brand-700));
+  color: #001f1a;
+  padding: 48px 40px; border-radius: 20px; margin-bottom: 32px;
+  box-shadow: 0 14px 40px rgba(16,185,129,.18);
+  position: relative; overflow: hidden;
+}
+.hero::before {
+  content: ""; position: absolute; top: -40%; right: -10%; width: 60%; height: 200%;
+  background: radial-gradient(circle, rgba(255,255,255,.18), transparent 60%);
+  pointer-events: none;
+}
+.hero-eyebrow {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,.18); color: #001f1a;
+  font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em;
+  padding: 6px 14px; border-radius: 999px; margin-bottom: 16px;
+}
+.hero-eyebrow::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #001f1a; }
+.hero h1 { font-size: 36px; font-weight: 700; letter-spacing: -.02em; margin: 0 0 16px; line-height: 1.15; }
+.hero p { font-size: 16px; margin: 0; max-width: 680px; opacity: .92; }
+.hero .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 28px; }
+.stat-card {
+  background: rgba(255,255,255,.16); border: 1px solid rgba(255,255,255,.24);
+  border-radius: 12px; padding: 18px 16px;
+}
+.stat-card .num { font-size: 28px; font-weight: 700; letter-spacing: -.02em; line-height: 1; }
+.stat-card .lbl { font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em;
+  margin-top: 8px; font-weight: 600; opacity: .82; }
+
+/* === Sections === */
+section { background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+  padding: 32px 36px; margin-bottom: 24px;
+  box-shadow: 0 1px 3px rgba(15,23,42,.04); }
+h2 { font-size: 22px; font-weight: 600; letter-spacing: -.015em; margin: 0 0 6px;
+  display: flex; align-items: center; gap: 10px; }
+h2 .num {
+  display: inline-grid; place-items: center;
+  width: 28px; height: 28px; border-radius: 8px;
+  background: var(--ac-bg); color: var(--brand-700); font-size: 13px; font-weight: 700;
+  border: 1px solid var(--ac-line);
+}
+h2 + .desc { color: var(--fg-3); font-size: 14px; margin-bottom: 20px; }
+h3 { font-size: 16px; font-weight: 600; margin: 24px 0 10px; color: var(--fg); }
+
+/* === Tables === */
+table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+th { background: var(--ac-bg); color: var(--brand-700); font-weight: 600;
+  padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--ac-line); font-size: 12.5px;
+  text-transform: uppercase; letter-spacing: .04em; }
+td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:hover td { background: rgba(16,185,129,.03); }
+td:first-child { font-weight: 500; }
+.text-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg-2); }
+.text-bad { color: var(--bad); font-weight: 600; }
+.text-ok { color: var(--ok); font-weight: 600; }
+.text-warn { color: var(--warn); font-weight: 600; }
+.row-total td { background: rgba(16,185,129,.08); font-weight: 700; color: var(--brand-700); border-top: 2px solid var(--ac-line); }
+
+/* === Badges === */
+.badge {
+  display: inline-flex; align-items: center;
+  padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+  letter-spacing: .02em;
+}
+.badge.done { background: rgba(5,150,105,.10); color: var(--ok); border: 1px solid rgba(5,150,105,.32); }
+.badge.wip { background: rgba(217,119,6,.10); color: var(--warn); border: 1px solid rgba(217,119,6,.32); }
+.badge.todo { background: var(--line); color: var(--fg-3); border: 1px solid var(--line-2); }
+
+/* === Lists === */
+ul.clean { list-style: none; padding: 0; margin: 0; }
+ul.clean li {
+  padding: 10px 0 10px 28px; border-bottom: 1px solid var(--line);
+  position: relative;
+}
+ul.clean li:last-child { border-bottom: none; }
+ul.clean li::before {
+  content: ""; position: absolute; left: 4px; top: 18px;
+  width: 6px; height: 6px; border-radius: 50%; background: var(--brand-500);
+}
+ul.clean li strong { color: var(--fg); font-weight: 600; }
+
+/* === Workflow timeline === */
+.timeline {
+  background: var(--ac-bg); border: 1px solid var(--ac-line); border-radius: 12px;
+  padding: 20px 24px; font-family: var(--font-mono); font-size: 13.5px;
+  white-space: pre-wrap; line-height: 1.85; color: var(--fg-2);
+  overflow-x: auto;
+}
+
+/* === Roadmap === */
+.roadmap { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; }
+.milestone {
+  display: grid; grid-template-columns: 80px 100px 1fr; gap: 16px; align-items: center;
+  padding: 14px 18px; border: 1px solid var(--line); border-radius: 10px; background: #fff;
+}
+.milestone.done { border-color: rgba(5,150,105,.3); background: rgba(5,150,105,.04); }
+.milestone.wip { border-color: rgba(217,119,6,.3); background: rgba(217,119,6,.04); }
+.milestone .ver { font-family: var(--font-mono); font-weight: 700; font-size: 14px; color: var(--brand-700); }
+.milestone .when { font-size: 12.5px; color: var(--fg-3); }
+.milestone .what strong { display: block; margin-bottom: 2px; font-size: 14.5px; }
+.milestone .what span { font-size: 13px; color: var(--fg-2); }
+
+/* === KPI box === */
+.kpi-box {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+  margin: 20px 0;
+}
+.kpi-cell {
+  border: 1px solid var(--line); border-radius: 12px; padding: 18px; background: #fff;
+  text-align: left;
+}
+.kpi-cell .lbl { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--fg-3); font-weight: 600; }
+.kpi-cell .num { font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 6px 0 4px; color: var(--fg); }
+.kpi-cell .num.green { color: var(--ok); }
+.kpi-cell .num.red { color: var(--bad); }
+.kpi-cell .sub { font-size: 12.5px; color: var(--fg-3); }
+
+/* === Code === */
+code { background: var(--line); padding: 1px 6px; border-radius: 4px;
+  font-family: var(--font-mono); font-size: 12.5px; color: var(--brand-700); }
+
+/* === Footer === */
+.footer {
+  margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--line);
+  font-size: 12.5px; color: var(--fg-3); text-align: center;
+}
+
+@media (max-width: 720px) {
+  .container { padding: 24px 18px 60px; }
+  .hero { padding: 32px 24px; border-radius: 14px; }
+  .hero h1 { font-size: 28px; }
+  .hero .stats { grid-template-columns: repeat(2, 1fr); }
+  section { padding: 24px 20px; border-radius: 12px; }
+  .kpi-box { grid-template-columns: 1fr; }
+  .milestone { grid-template-columns: 1fr; gap: 6px; }
+  table { font-size: 13px; }
+  th, td { padding: 8px 10px; }
+}
+
+@media print {
+  body { background: #fff; }
+  .container { padding: 0; max-width: 100%; }
+  .hero { background: #f1f5f9; color: #0f172a; box-shadow: none; }
+  .hero-eyebrow { background: rgba(0,0,0,.06); }
+  section { box-shadow: none; page-break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+<!-- Hero -->
+<div class="hero">
+  <span class="hero-eyebrow">阶段性总结 · 2026</span>
+  <h1>天枢·质量<br>面向测试团队的本地 AI Agent 套件</h1>
+  <p>8 个 Agent 全部跑通，整体进度约 90%；剩余 10% 集中在报告对开发/产品的可读性优化。预计单工程师双周节省 64 工时，团队产能放大 3-4 倍。</p>
+  <div class="stats">
+    <div class="stat-card"><div class="num">8</div><div class="lbl">Agent 上线</div></div>
+    <div class="stat-card"><div class="num">90%</div><div class="lbl">整体进度</div></div>
+    <div class="stat-card"><div class="num">64h</div><div class="lbl">单工程师双周节省</div></div>
+    <div class="stat-card"><div class="num">3-4×</div><div class="lbl">团队产能放大</div></div>
+  </div>
+</div>
+
+<!-- 1. 阶段性总结 -->
+<section>
+  <h2><span class="num">1</span>阶段性总结</h2>
+  <p class="desc">8 个 Agent 全部端到端跑通，工程能力（安装包、依赖、报告管理）全链路闭环。</p>
+
+  <h3>1.1 已完成（约 90%）</h3>
+  <table>
+    <thead><tr><th style="width:60px">#</th><th>Agent</th><th style="width:90px">状态</th><th>实测验证</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>需求评审</td><td><span class="badge done">已完成</span></td><td>电商 H5 PRD 完整跑通</td></tr>
+      <tr><td>2</td><td>测试用例设计</td><td><span class="badge done">已完成</span></td><td>实测产出 187 条用例（P0-P3 4 个等级齐全）</td></tr>
+      <tr><td>3</td><td>接口测试</td><td><span class="badge done">已完成</span></td><td>30 接口 6.4 分钟跑完</td></tr>
+      <tr><td>4</td><td>UI 一致性</td><td><span class="badge done">已完成</span></td><td>飞书 vs 钉钉 双站点截图 + Vision 对比</td></tr>
+      <tr><td>5</td><td>Agent 自动化执行</td><td><span class="badge done">已完成</span></td><td>自动化方案 + 失败归因</td></tr>
+      <tr><td>6</td><td>弱网/断网</td><td><span class="badge done">已完成</span></td><td>7 维度容错审计</td></tr>
+      <tr><td>7</td><td>H5 适配</td><td><span class="badge done">已完成</span></td><td>飞书首页 6 视口实测产出 31 条带 bbox 问题</td></tr>
+      <tr><td>8</td><td>SEO 深度审计</td><td><span class="badge done">已完成</span></td><td>整改清单按 ROI 排序</td></tr>
+    </tbody>
+  </table>
+
+  <h3>1.2 工程能力</h3>
+  <ul class="clean">
+    <li><strong>macOS 单 DMG 安装包（79 MB）</strong>，启动 PATH 自动修复，绕开 Finder 沙化坑</li>
+    <li><strong>启动自动检测 + 一键装依赖</strong>：claude_cli / claude_login / playwright_browsers 全自动</li>
+    <li><strong>三阶段闭环</strong>：Playwright 截图 → Claude Vision 像素分析 → PIL 红框标注</li>
+    <li><strong>报告管理</strong>：列表 / KPI / 筛选 / 单条下载（HTML/MD/JSON）/ 全部 ZIP / 删除</li>
+    <li><strong>统一设计语言</strong>：⌘K 命令面板、浮动「运行中」气泡、所有页面同色板与字号节奏</li>
+  </ul>
+
+  <h3>1.3 提效预估</h3>
+  <table>
+    <thead><tr><th>工作项</th><th>人工基线</th><th>接入后</th><th>节省</th></tr></thead>
+    <tbody>
+      <tr><td>需求评审</td><td class="text-num">8 h</td><td class="text-num">2 h</td><td class="text-ok">6 h</td></tr>
+      <tr><td>用例设计</td><td class="text-num">24 h</td><td class="text-num">4 h</td><td class="text-ok">20 h</td></tr>
+      <tr><td>接口测试</td><td class="text-num">8 h</td><td class="text-num">2 h</td><td class="text-ok">6 h</td></tr>
+      <tr><td>UI 一致性</td><td class="text-num">16 h</td><td class="text-num">3 h</td><td class="text-ok">13 h</td></tr>
+      <tr><td>自动化方案</td><td class="text-num">8 h</td><td class="text-num">2 h</td><td class="text-ok">6 h</td></tr>
+      <tr><td>弱网 / H5 / SEO</td><td class="text-num">16 h</td><td class="text-num">3 h</td><td class="text-ok">13 h</td></tr>
+      <tr class="row-total"><td>合计 / 双周</td><td class="text-num">80 h</td><td class="text-num">16 h</td><td>64 h</td></tr>
+    </tbody>
+  </table>
+
+  <div class="kpi-box">
+    <div class="kpi-cell">
+      <div class="lbl">单工程师双周</div>
+      <div class="num green">−64h</div>
+      <div class="sub">回吐到探索性测试 / 性能 / UX</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="lbl">团队产能</div>
+      <div class="num green">×3–4</div>
+      <div class="sub">原 1 个发版周期，现 1 小时 8 份报告</div>
+    </div>
+    <div class="kpi-cell">
+      <div class="lbl">外部成本</div>
+      <div class="num">¥0</div>
+      <div class="sub">用本机 Claude Code 订阅，不调 API</div>
+    </div>
+  </div>
+</section>
+
+<!-- 2. 已发现的问题 -->
+<section>
+  <h2><span class="num">2</span>已发现的问题</h2>
+  <p class="desc">实测过程中暴露的真实问题，部分已纳入 v0.2 计划。</p>
+  <ul class="clean">
+    <li><strong>报告对非测试同学可读性偏低</strong> — 直接渲染 JSON 字段，开发和产品阅读门槛高。<em style="color:var(--warn)">→ v0.2 重写</em></li>
+    <li><strong>Vision 模式跑测变慢</strong> — 6 张 1MB+ 截图 × 5 substep = 30 次大请求；h5_adapt 从 5 分钟变 10 分钟</li>
+    <li><strong>step5 双图未并排</strong> — 「设计稿 vs 实际页面」需要做成同视口并排呈现差异感。<em style="color:var(--warn)">→ v0.2 改</em></li>
+    <li><strong>个别 LLM 输出格式漂移</strong> — Haiku 4.5 偶发非 JSON 头文字，需在 client 加更强格式纠错</li>
+    <li><strong>跨 Agent 数据流未串联</strong> — step1 拆解结果不能自动喂 step2，仍需用户复制粘贴。<em style="color:var(--warn)">→ v0.3 做</em></li>
+    <li><strong>OAuth 登录无法 100% 自动</strong> — 已通过 osascript + 5 分钟轮询缓解，仍需用户在浏览器点确认</li>
+  </ul>
+</section>
+
+<!-- 3. 不能提效的环节 -->
+<section>
+  <h2><span class="num">3</span>不能提效的环节（边界）</h2>
+  <p class="desc">把"哪些事 AI 帮不了"明确出来，避免预期错位。</p>
+  <table>
+    <thead><tr><th>环节</th><th>为什么 AI 提不了效</th></tr></thead>
+    <tbody>
+      <tr><td>真实测试执行</td><td>Agent 给方案，但脚本编码、CI 落地、环境准备仍需工程师</td></tr>
+      <tr><td>业务决策判断</td><td>「这个需求要不要做」「优先级怎么排」属产品决策，不在测试范围</td></tr>
+      <tr><td>测试数据生成</td><td>真实账户、订单、库存等依赖测试环境，AI 给不出</td></tr>
+      <tr><td>测试管理同步</td><td>用例同步 Jira / TestRail / 禅道需要工具集成（v0.4 规划）</td></tr>
+      <tr><td>OAuth 登录</td><td>Claude Code 首次登录的浏览器 OAuth 必须用户手动</td></tr>
+      <tr><td>跨部门沟通</td><td>需求澄清、争议判断仍需人</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 4. 使用文档 -->
+<section>
+  <h2><span class="num">4</span>使用文档</h2>
+
+  <h3>4.1 安装</h3>
+  <ol style="padding-left:24px;color:var(--fg-2)">
+    <li>把 <code>天枢·质量.dmg</code>（79 MB）拷到目标 Mac</li>
+    <li>双击挂载 → 拖 <code>天枢·质量.app</code> 到 <code>Applications</code></li>
+    <li>第一次右键打开（绕 Gatekeeper）</li>
+  </ol>
+
+  <h3>4.2 启动后第一步</h3>
+  <p style="color:var(--fg-2)">应用启动后会自动检测环境。如有缺失依赖，顶部红色 banner 显示，点击「一键安装全部」即可。</p>
+  <table>
+    <thead><tr><th>依赖</th><th>用途</th><th>自动安装</th></tr></thead>
+    <tbody>
+      <tr><td><code>claude_cli</code></td><td>本地 Claude Code 二进制</td><td class="text-ok">✓ curl pipe</td></tr>
+      <tr><td><code>claude_login</code></td><td>OAuth 授权</td><td class="text-ok">✓ 弹 Terminal + 5 分钟轮询</td></tr>
+      <tr><td><code>playwright_browsers</code></td><td>浏览器自动化（仅 UI 类工具需要）</td><td class="text-ok">✓ 自动下载</td></tr>
+    </tbody>
+  </table>
+
+  <h3>4.3 跑一个 Agent</h3>
+  <ol style="padding-left:24px;color:var(--fg-2)">
+    <li>工具页选 Agent（建议从 <strong>step2 测试用例设计</strong> 开始）</li>
+    <li>左侧三块：① 需求材料粘贴 / 上传 / URL · ② 执行步骤勾选 · ③ 模型与精度</li>
+    <li>顶部点 <strong>▶ 运行</strong> 或按 <code>⌘ ↵</code></li>
+    <li>右侧实时显示进度 / 用时 / 成本</li>
+    <li>完成后弹 toast，可点「查看报告」</li>
+  </ol>
+
+  <h3>4.4 看 / 管理报告</h3>
+  <ul class="clean">
+    <li><strong>报告页</strong>：所有跑过的任务，KPI 显示总数 / 成功 / 失败 / 24h 内</li>
+    <li><strong>筛选</strong>：按工具类型横向 chips</li>
+    <li><strong>单条</strong>：点行打开 modal，左上「← 返回」，右上 HTML / MD / JSON 下载</li>
+    <li><strong>批量</strong>：右上「↓ 全部下载」打包 ZIP</li>
+    <li><strong>删除</strong>：每行最右「删除」按钮（双重确认）</li>
+  </ul>
+
+  <h3>4.5 推荐工作流</h3>
+  <div class="timeline">需求阶段：① 需求评审 → ② 测试用例设计
+                          ↓
+开发自测：              ③ 接口测试（并行）
+                          ↓
+提测后：       ④ UI 一致性 + ⑤ 自动化方案 + ⑥ 弱网/断网
+                          ↓
+上线前：               ⑦ H5 适配 + ⑧ SEO 审计</div>
+  <p style="color:var(--fg-2)">按这条路径走一遍，原本 2-3 周的纯重复性测试设计/审计工作，1 小时内拿到 8 份完整报告。</p>
+</section>
+
+<!-- 5. 版本计划 -->
+<section>
+  <h2><span class="num">5</span>后续版本计划</h2>
+  <p class="desc">从当前版本到 v1.0 稳定版的演进路径，约 3 个月落地。</p>
+  <div class="roadmap">
+    <div class="milestone done">
+      <div class="ver">v0.1</div>
+      <div class="when">已上线</div>
+      <div class="what"><strong>8 Agent 全部跑通 + macOS DMG</strong><span>当前阶段，工程能力闭环完成</span></div>
+    </div>
+    <div class="milestone wip">
+      <div class="ver">v0.2</div>
+      <div class="when">1-2 周</div>
+      <div class="what"><strong>报告体验优化（剩余 10%）</strong><span>分受众组织 / 结论先行 / 业务语言 / 红框-问题双向联动</span></div>
+    </div>
+    <div class="milestone">
+      <div class="ver">v0.3</div>
+      <div class="when">2-3 周</div>
+      <div class="what"><strong>跨 Agent 串联</strong><span>step1 → step2 → step6 自动接力，中间产物可编辑</span></div>
+    </div>
+    <div class="milestone">
+      <div class="ver">v0.4</div>
+      <div class="when">4 周</div>
+      <div class="what"><strong>多端 + CI 集成</strong><span>Windows / Linux 版本；GitLab / Jenkins webhook 触发；用例同步 Jira / TestRail / 禅道</span></div>
+    </div>
+    <div class="milestone">
+      <div class="ver">v0.5</div>
+      <div class="when">4 周</div>
+      <div class="what"><strong>团队协作</strong><span>多人共享报告 + 评论 + 任务领走 + 团队级看板</span></div>
+    </div>
+    <div class="milestone">
+      <div class="ver">v1.0</div>
+      <div class="when">~3 个月</div>
+      <div class="what"><strong>稳定版</strong><span>所有功能上线，性能达标，用户文档完整</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- 6. 风险 -->
+<section>
+  <h2><span class="num">6</span>风险与应对</h2>
+  <table>
+    <thead><tr><th style="width:30%">风险</th><th>影响</th><th>应对</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Claude API 限流或涨价</td>
+        <td>直接影响成本与可用性</td>
+        <td>已支持模型自动降级（Sonnet → Haiku → Opus 链）；用 Claude Code 订阅而非 API key，定价更稳</td>
+      </tr>
+      <tr>
+        <td>LLM 输出格式不稳定</td>
+        <td>报告解析失败</td>
+        <td>已加 JSON 修复 + 重试链；当前失败率 &lt;5%，持续监控</td>
+      </tr>
+      <tr>
+        <td>截图捕获被反爬</td>
+        <td>UI 类工具失效</td>
+        <td>报告里明示截图状态（成功/失败），LLM 在缺图时不假装分析</td>
+      </tr>
+      <tr>
+        <td>用户隐私顾虑</td>
+        <td>接入推广受阻</td>
+        <td>全程本机运行，数据不上云；订阅用户身份隔离</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<div class="footer">
+  天枢·质量项目组 · 阶段性总结 · 文档版本 v0.1
+</div>
+
+</div>
+</body>
+</html>

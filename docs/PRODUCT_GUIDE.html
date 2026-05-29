@@ -1,0 +1,760 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>天枢·质量 · 产品说明文档</title>
+<style>
+  :root{
+    --bg:#0a0b0d; --surface:#101216; --surface-2:#171b22; --surface-3:#1d222b;
+    --line:#1e242d; --line-2:#2a3140;
+    --fg:#f5f7fa; --fg-2:#a8b0bd; --fg-3:#6b7380; --fg-4:#4a5260;
+    --ac:#10b981; --ac-2:#6ee7b7; --ac-bg:rgba(16,185,129,.12); --ac-line:rgba(16,185,129,.32);
+    --warn:#fbbf24; --ok:#34d399; --bad:#f87171; --info:#60a5fa;
+    --mono:"SF Mono",ui-monospace,SFMono-Regular,"JetBrains Mono",Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;line-height:1.65}
+  body{background:
+    radial-gradient(ellipse 90% 50% at 50% -10%, rgba(16,185,129,.08), transparent 65%) fixed,
+    radial-gradient(ellipse 80% 40% at 50% 110%, rgba(96,165,250,.04), transparent 60%) fixed,
+    var(--bg);
+    min-height:100vh}
+  ::selection{background:var(--ac-bg);color:var(--ac-2)}
+
+  /* 顶部导航 */
+  .topbar{position:sticky;top:0;z-index:100;
+    backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px);
+    background:rgba(10,11,13,.80);border-bottom:1px solid var(--line);
+    padding:14px 32px;display:flex;align-items:center;gap:14px}
+  .topbar .logo-mark{width:24px;height:24px;color:var(--ac)}
+  .topbar h1{margin:0;font-size:15px;font-weight:600;letter-spacing:-.02em;
+    display:flex;align-items:baseline;gap:6px}
+  .topbar h1 .sub{font-weight:400;color:var(--fg-3);margin-left:4px;font-size:13px}
+  .topbar .meta{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--fg-3)}
+
+  /* 主容器 */
+  main{max-width:1080px;margin:0 auto;padding:48px 32px 96px}
+
+  /* Hero */
+  .hero{margin-bottom:48px;padding:36px 0}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;
+    font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.1em;
+    color:var(--ac-2);margin-bottom:20px;padding:6px 14px;border-radius:999px;
+    background:var(--ac-bg);border:1px solid var(--ac-line)}
+  .eyebrow::before{content:"";width:6px;height:6px;border-radius:50%;
+    background:var(--ac-2);box-shadow:0 0 0 2px var(--ac-bg)}
+  .hero h1.title{margin:0 0 14px;font-size:48px;letter-spacing:-.035em;line-height:1.05;
+    background:linear-gradient(135deg,var(--fg) 0%,var(--fg-2) 75%);
+    -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+    font-weight:700}
+  .hero p.lead{margin:0 0 28px;font-size:17px;color:var(--fg-2);line-height:1.6;max-width:760px}
+  .hero .key-numbers{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:32px}
+  .key-numbers .kn{padding:18px 22px;background:var(--surface);border:1px solid var(--line);
+    border-radius:12px;position:relative;overflow:hidden}
+  .key-numbers .kn .num{font-size:30px;font-weight:700;letter-spacing:-.025em;line-height:1.1;
+    color:var(--ac-2)}
+  .key-numbers .kn .lbl{font-size:11.5px;color:var(--fg-3);margin-top:6px;
+    text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+  .key-numbers .kn .hint{font-size:12px;color:var(--fg-2);margin-top:8px;line-height:1.5}
+
+  /* 章节 */
+  section{margin-bottom:60px}
+  section h2{margin:0 0 14px;font-size:30px;letter-spacing:-.025em;font-weight:600;
+    display:flex;align-items:center;gap:14px}
+  section h2 .num{display:inline-grid;place-items:center;width:36px;height:36px;
+    border-radius:10px;background:var(--ac-bg);color:var(--ac-2);
+    font-size:14px;font-weight:700;font-family:var(--mono);
+    border:1px solid var(--ac-line)}
+  section .lead{margin:0 0 28px;font-size:14.5px;color:var(--fg-2);line-height:1.65;max-width:820px}
+  section h3{margin:32px 0 14px;font-size:18px;font-weight:600;letter-spacing:-.012em;
+    color:var(--fg)}
+  section h4{margin:18px 0 8px;font-size:14px;font-weight:600;color:var(--fg-2)}
+
+  /* 工作流图 */
+  .workflow{margin:24px 0 32px;padding:24px 26px;background:var(--surface);
+    border:1px solid var(--line);border-radius:14px}
+  .workflow h4{margin-top:0;color:var(--fg-3);font-size:11.5px;text-transform:uppercase;
+    letter-spacing:.08em;font-weight:600}
+  .workflow-stages{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:14px}
+  .stage{padding:14px 12px;border-radius:10px;background:var(--surface-2);
+    border:1px solid var(--line);text-align:center;position:relative;font-size:12px}
+  .stage:not(:last-child)::after{content:"→";position:absolute;right:-7px;top:50%;
+    transform:translateY(-50%);color:var(--fg-4);font-size:14px;z-index:2;
+    background:var(--bg);padding:0 2px}
+  .stage .name{font-weight:600;color:var(--fg);font-size:13px;margin-bottom:6px}
+  .stage .tools{color:var(--ac-2);font-family:var(--mono);font-size:11px;line-height:1.6}
+  .stage .desc{color:var(--fg-3);font-size:11px;margin-top:6px;line-height:1.5}
+
+  /* 工具卡 */
+  .tool-grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:18px}
+  .tool-card{padding:22px 26px;background:var(--surface);border:1px solid var(--line);
+    border-radius:14px;position:relative;overflow:hidden}
+  .tool-card .header{display:flex;align-items:flex-start;gap:14px;margin-bottom:14px}
+  .tool-card .icon{font-size:32px;line-height:1.1;flex-shrink:0;width:50px;height:50px;
+    display:grid;place-items:center;background:var(--surface-2);border:1px solid var(--line);
+    border-radius:10px}
+  .tool-card .header-text{flex:1;min-width:0}
+  .tool-card .name{font-size:18px;font-weight:600;letter-spacing:-.012em;color:var(--fg);
+    display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .tool-card .step-tag{font-size:10.5px;font-family:var(--mono);font-weight:600;
+    padding:2px 8px;border-radius:5px;background:var(--surface-3);color:var(--fg-3);
+    border:1px solid var(--line-2);letter-spacing:.04em;text-transform:uppercase}
+  .tool-card .tagline{font-size:13.5px;color:var(--fg-2);margin-top:6px;line-height:1.5}
+  .tool-card .body{font-size:13.5px;color:var(--fg-2);line-height:1.65;margin-bottom:14px}
+  .tool-card .body strong{color:var(--fg)}
+  .tool-card .meta{display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;
+    padding-top:14px;border-top:1px solid var(--line);font-size:12.5px}
+  .tool-card .meta-row{display:flex;align-items:flex-start;gap:8px}
+  .tool-card .meta-key{color:var(--fg-3);font-size:11.5px;flex-shrink:0;
+    font-family:var(--mono);min-width:64px;text-transform:uppercase;letter-spacing:.04em}
+  .tool-card .meta-val{color:var(--fg);line-height:1.55}
+  .tool-card .gate{margin-top:10px;padding:10px 14px;border-radius:7px;
+    background:rgba(248,113,113,.06);border-left:3px solid var(--bad);font-size:12.5px;
+    color:var(--fg-2);line-height:1.55}
+  .tool-card .gate strong{color:var(--bad);font-weight:600}
+  .tool-card .savings{position:absolute;top:22px;right:26px;padding:6px 12px;
+    border-radius:999px;background:var(--ac-bg);color:var(--ac-2);
+    border:1px solid var(--ac-line);font-size:11.5px;font-weight:600;font-family:var(--mono)}
+
+  /* 节省表 */
+  table.savings-table{width:100%;border-collapse:collapse;margin:14px 0 24px;
+    font-size:13.5px;background:var(--surface);border:1px solid var(--line);
+    border-radius:10px;overflow:hidden}
+  table.savings-table th{padding:13px 16px;text-align:left;font-size:11.5px;
+    text-transform:uppercase;letter-spacing:.05em;color:var(--fg-3);font-weight:600;
+    background:var(--surface-2);border-bottom:1px solid var(--line)}
+  table.savings-table td{padding:13px 16px;border-bottom:1px solid var(--line)}
+  table.savings-table tr:last-child td{border-bottom:none}
+  table.savings-table tr.total td{background:var(--ac-bg);font-weight:600;color:var(--ac-2);
+    border-top:2px solid var(--ac-line)}
+  table.savings-table td.num{font-family:var(--mono);text-align:right;color:var(--fg)}
+
+  /* 时间轴 */
+  .roadmap{margin-top:24px;position:relative;padding-left:32px}
+  .roadmap::before{content:"";position:absolute;left:9px;top:8px;bottom:8px;
+    width:2px;background:linear-gradient(to bottom,var(--ac),var(--info),var(--fg-4))}
+  .milestone{position:relative;margin-bottom:24px;padding:18px 22px;
+    background:var(--surface);border:1px solid var(--line);border-radius:12px}
+  .milestone::before{content:"";position:absolute;left:-30px;top:22px;
+    width:14px;height:14px;border-radius:50%;background:var(--surface);
+    border:3px solid var(--ac);box-shadow:0 0 0 4px var(--bg)}
+  .milestone.future::before{border-color:var(--info)}
+  .milestone.current::before{border-color:var(--ac);background:var(--ac);
+    box-shadow:0 0 0 4px var(--bg),0 0 0 6px var(--ac-bg)}
+  .milestone .ver{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--ac-2);
+    letter-spacing:.04em}
+  .milestone.future .ver{color:var(--info)}
+  .milestone .title{font-size:15.5px;font-weight:600;color:var(--fg);margin:4px 0 6px;
+    letter-spacing:-.005em}
+  .milestone .eta{font-size:11.5px;font-family:var(--mono);color:var(--fg-3);
+    background:var(--surface-2);padding:2px 10px;border-radius:999px;
+    border:1px solid var(--line-2);display:inline-block;margin-left:8px}
+  .milestone .desc{font-size:13px;color:var(--fg-2);margin:8px 0 0;line-height:1.65}
+  .milestone ul{margin:8px 0 0;padding-left:18px;font-size:13px;color:var(--fg-2);line-height:1.7}
+  .milestone ul li{margin:3px 0}
+  .milestone ul li strong{color:var(--fg)}
+
+  /* 开发过程时间表 */
+  .devlog{display:grid;grid-template-columns:auto 1fr;gap:0 22px;margin-top:18px;
+    background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    padding:24px 28px}
+  .devlog .when{font-family:var(--mono);font-size:12.5px;color:var(--ac-2);
+    padding-top:6px;font-weight:600;letter-spacing:.02em}
+  .devlog .what{padding:6px 0 18px;border-left:1px solid var(--line);padding-left:22px;
+    margin-left:-12px;position:relative}
+  .devlog .what::before{content:"";position:absolute;left:-5px;top:12px;width:9px;height:9px;
+    border-radius:50%;background:var(--ac);border:2px solid var(--bg)}
+  .devlog .what:last-child{border-left-color:transparent}
+  .devlog .what strong{color:var(--fg);font-size:13.5px;font-weight:600;display:block;margin-bottom:4px}
+  .devlog .what p{margin:0;font-size:12.5px;color:var(--fg-2);line-height:1.6}
+  .devlog .what code{background:var(--surface-2);color:var(--fg);padding:2px 7px;
+    border-radius:4px;font-size:11px;border:1px solid var(--line-2)}
+
+  /* 通用 */
+  code{background:var(--surface-2);color:var(--fg);padding:2px 7px;border-radius:4px;
+    font-size:12px;border:1px solid var(--line-2);font-family:var(--mono)}
+  strong{color:var(--fg);font-weight:600}
+  a{color:var(--ac-2);text-decoration:none;border-bottom:1px dotted var(--ac-line)}
+  a:hover{border-bottom-style:solid}
+  .callout{margin:20px 0;padding:16px 20px;background:var(--surface);
+    border:1px solid var(--line);border-left:3px solid var(--info);
+    border-radius:8px;font-size:13.5px;line-height:1.65;color:var(--fg-2)}
+  .callout strong{color:var(--info)}
+  .callout.warn{border-left-color:var(--warn)}
+  .callout.warn strong{color:var(--warn)}
+
+  /* 页脚 */
+  footer{margin-top:80px;padding:32px 0;border-top:1px solid var(--line);
+    color:var(--fg-3);font-size:12px;text-align:center}
+
+  /* 移动端 */
+  @media (max-width:760px){
+    main{padding:24px 20px 64px}
+    .hero h1.title{font-size:32px}
+    .hero .key-numbers{grid-template-columns:repeat(2,1fr)}
+    .workflow-stages{grid-template-columns:1fr;gap:14px}
+    .stage::after{display:none}
+    .tool-card .meta{grid-template-columns:1fr}
+    .tool-card .savings{position:static;display:inline-block;margin-bottom:12px}
+    .devlog{grid-template-columns:1fr;gap:14px}
+    .devlog .what{margin-left:0;padding-left:0;border-left:none}
+    .devlog .what::before{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <svg class="logo-mark" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M12 1.5L13.4 10.6L22.5 12L13.4 13.4L12 22.5L10.6 13.4L1.5 12L10.6 10.6Z"/>
+    <circle cx="12" cy="12" r="0.9" fill-opacity=".55"/>
+  </svg>
+  <h1><strong>天枢</strong><span class="sub">·&nbsp;质量</span></h1>
+  <span class="meta">产品说明文档 · v0.1</span>
+</header>
+
+<main>
+
+<!-- ============ Hero ============ -->
+<div class="hero">
+  <span class="eyebrow">面向产品 / 老板的全景说明</span>
+  <h1 class="title">把测试团队的重复性工作<br>交给本地 Agent</h1>
+  <p class="lead">
+    天枢·质量是一套基于 Claude Code 订阅的本地 macOS 应用，
+    把测试工程师在「需求评审 → 用例设计 → 接口/UI/弱网/H5/SEO 审计 → Agent 自动化执行」
+    8 个高频环节里的重复劳动，转交给 AI Agent 完成。
+    人均工作量缩减约 80%（提速 5×），数据全程本机存放，不上云。
+  </p>
+  <div class="key-numbers">
+    <div class="kn">
+      <div class="num">8</div>
+      <div class="lbl">个 AI Agent</div>
+      <div class="hint">需求 / 用例 / 接口 / UI / 弱网 / H5 / SEO / 自动化</div>
+    </div>
+    <div class="kn">
+      <div class="num">↑ 80%</div>
+      <div class="lbl">人效提升</div>
+      <div class="hint">重复劳动量缩到原来的 20%</div>
+    </div>
+    <div class="kn">
+      <div class="num">5×</div>
+      <div class="lbl">提速倍数</div>
+      <div class="hint">同等工作量耗时变 1/5</div>
+    </div>
+    <div class="kn">
+      <div class="num">¥150</div>
+      <div class="lbl">月均成本 / 人</div>
+      <div class="hint">用户已有的 Claude 订阅</div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 1. 工具范围与工作流 ============ -->
+<section>
+  <h2><span class="num">01</span>工具覆盖范围与工作流程</h2>
+  <p class="lead">
+    天枢·质量覆盖的是<strong>软件测试发版周期里"机械可重复"的部分</strong> —— 评审拆解、
+    用例设计、接口/UI/弱网/H5/SEO 审计、自动化执行。需求决策、跨部门沟通、
+    探索性测试这类"判断密集"的工作仍由人主导。
+  </p>
+
+  <div class="workflow">
+    <h4>典型迭代周期里 8 个 Agent 的位置</h4>
+    <div class="workflow-stages">
+      <div class="stage">
+        <div class="name">需求阶段</div>
+        <div class="tools">① 需求评审<br>② 测试用例设计</div>
+        <div class="desc">读 PRD/原型 → 拆模块 → 出 P0-P3 用例</div>
+      </div>
+      <div class="stage">
+        <div class="name">开发自测</div>
+        <div class="tools">③ 接口测试</div>
+        <div class="desc">梳接口清单 → 出功能 / 安全 / 边界用例</div>
+      </div>
+      <div class="stage">
+        <div class="name">提测</div>
+        <div class="tools">④ UI 一致性<br>⑤ Agent 自动化<br>⑥ 弱网 / 容错</div>
+        <div class="desc">对照设计稿、跑用例、模拟弱网</div>
+      </div>
+      <div class="stage">
+        <div class="name">上线前</div>
+        <div class="tools">⑦ H5 适配<br>⑧ SEO 审计</div>
+        <div class="desc">15+ 浏览器矩阵 + Core Web Vitals</div>
+      </div>
+      <div class="stage">
+        <div class="name">回归 / 复盘</div>
+        <div class="tools">报告库</div>
+        <div class="desc">所有报告本地保存可追溯</div>
+      </div>
+    </div>
+  </div>
+
+  <h3>覆盖与不覆盖（边界）</h3>
+  <table class="savings-table">
+    <thead>
+      <tr><th style="width:45%">能做的事</th><th style="width:55%">不做 / 仍需人</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>读 PRD / 原型 / 接口文档，拆模块出可测结构</td>
+        <td>判定"这个需求要不要做"（产品决策）</td>
+      </tr>
+      <tr>
+        <td>设计 P0-P3 用例，覆盖主流程 / 异常 / 边界 / 权限 / 状态机</td>
+        <td>用例落地到 Jira / 禅道 / TestRail（v0.4 规划）</td>
+      </tr>
+      <tr>
+        <td>给接口出功能/安全/边界用例，给版本可测性结论</td>
+        <td>真实测试数据准备（账户、订单、库存等）</td>
+      </tr>
+      <tr>
+        <td>截图比对设计稿 vs 实际页面，输出一致性报告</td>
+        <td>跨部门需求澄清 / 争议判断</td>
+      </tr>
+      <tr>
+        <td>Agent 自动化跑 P0 + 关键 P1/P2，失败归因</td>
+        <td>CI/CD 集成（v0.4 规划）</td>
+      </tr>
+      <tr>
+        <td>弱网/断网容错 7 维度审计，给退回判定</td>
+        <td>探索性测试 / 体验研究 / 性能调优</td>
+      </tr>
+      <tr>
+        <td>15+ 浏览器矩阵的 H5 适配审计</td>
+        <td>真实多设备真机回归</td>
+      </tr>
+      <tr>
+        <td>SEO 站点抓取 + Core Web Vitals + 整改清单</td>
+        <td>具体业务文案 / SEO 内容创作</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============ 2. 8 个工具详解 ============ -->
+<section>
+  <h2><span class="num">02</span>8 个工具的功能、作用与人效提升</h2>
+  <p class="lead">
+    每个工具都是一个独立 Agent，由 5-7 个 substep prompt 编排而成。Agent 自身负责
+    "应该做什么"和"哪里有风险"，输出结构化报告（HTML/MD/JSON）；人只需读结论 + 决策。
+  </p>
+
+  <table class="savings-table">
+    <thead>
+      <tr>
+        <th>工具</th>
+        <th class="num">人效提升</th>
+        <th class="num">提速倍数</th>
+        <th>备注</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>📋 需求评审</td><td class="num">↑ 75%</td><td class="num">4×</td><td>读 PRD 出结构化拆解 → 不漏关键缺失</td></tr>
+      <tr><td>🧪 测试用例设计</td><td class="num">↑ 83%</td><td class="num">6×</td><td>P0-P3 用例一次性产出，覆盖度更高</td></tr>
+      <tr><td>🔌 接口测试</td><td class="num">↑ 75%</td><td class="num">4×</td><td>30 接口 6.4 分钟跑完，含安全 / 边界</td></tr>
+      <tr><td>🎨 UI 一致性比对</td><td class="num">↑ 81%</td><td class="num">5×</td><td>截图 + Vision 对比，自动红框标注</td></tr>
+      <tr><td>🤖 Agent 自动化执行</td><td class="num">↑ 75%</td><td class="num">4×</td><td>失败归因到 6 个责任域，不靠人猜</td></tr>
+      <tr><td>📶 弱网/断网测试</td><td class="num">↑ 83%</td><td class="num">6×</td><td>7 维度容错审计，秒出退回判定</td></tr>
+      <tr><td>📱 H5 适配初审</td><td class="num">↑ 83%</td><td class="num">6×</td><td>15+ 浏览器矩阵，6 视口一次出</td></tr>
+      <tr><td>🔍 SEO 深度审计</td><td class="num">↑ 75%</td><td class="num">4×</td><td>整改清单按 ROI 排序，开发直接领</td></tr>
+      <tr class="total">
+        <td>合计（覆盖整条测试链路）</td>
+        <td class="num">↑ 80%</td>
+        <td class="num">5×</td>
+        <td>同等工作量，团队产能放大 5 倍</td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="font-size:12.5px;color:var(--fg-3);margin:0 0 32px">
+    ※ 人效提升 = (人工耗时 - AI 接入后耗时) / 人工耗时；提速倍数 = 人工耗时 / AI 耗时。
+    数据按主流互联网测试团队中等复杂度迭代估算，简单需求增益更高，复杂多端项目增益相对收敛。
+    实际效果会随团队熟练度、模型选用（Sonnet / Opus / Haiku）、需求复杂度浮动 ± 15%。
+  </p>
+
+  <h3>每个工具的详细说明</h3>
+  <div class="tool-grid">
+
+    <!-- step1 需求评审 -->
+    <div class="tool-card">
+      <div class="savings">人效 ↑ 75% · 4×</div>
+      <div class="header">
+        <div class="icon">📋</div>
+        <div class="header-text">
+          <div class="name">需求评审 <span class="step-tag">step1</span></div>
+          <div class="tagline">把 PRD/UI/原型拆成可测结构，识别遗漏与门禁</div>
+        </div>
+      </div>
+      <div class="body">
+        AI 自动阅读需求材料，输出《需求拆解报告》：模块拆解、主流程/异常流程、
+        前后端交互链路、状态流转、需求遗漏点。命中关键缺失时直接 reject_with_report
+        阻止下一步。<strong>解决的痛点</strong>：测试同学手动梳理 PRD 是高频且无差异化的劳动，
+        Agent 全自动一次出结构化报告，且不会漏看技术契约 / 边界情况，
+        把这部分工作量压到原来的 1/4。
+      </div>
+      <div class="meta">
+        <div class="meta-row"><span class="meta-key">输出</span><span class="meta-val">《需求拆解报告》</span></div>
+        <div class="meta-row"><span class="meta-key">主执行</span><span class="meta-val">AI 主执行</span></div>
+      </div>
+      <div class="gate"><strong>退回门槛：</strong>材料完整度 &lt; 80% 或 blocker 遗漏 ≥ 3 时阻止进入测试用例设计</div>
+    </div>
+
+    <!-- step2 测试用例设计 -->
+    <div class="tool-card">
+      <div class="savings">人效 ↑ 83% · 6×</div>
+      <div class="header">
+        <div class="icon">🧪</div>
+        <div class="header-text">
+          <div class="name">测试用例设计 <span class="step-tag">step2</span></div>
+          <div class="tagline">基于需求拆解报告生成 P0/P1/P2 用例集</div>
+        </div>
+      </div>
+      <div class="body">
+        覆盖主流程、异常、边界、权限、状态流转、双端差异。每条用例含步骤、预期、
+        依赖、自动化适配标记。<strong>实测数据</strong>：电商 H5 PRD 一次跑完
+        产出 187 条用例（P0-P3 4 个等级齐全），把测试用例设计的工作量压缩到原来的 1/6，
+        覆盖度比人工设计更全面。<strong>这是 8 个 Agent 里人效提升最高的工具。</strong>
+      </div>
+      <div class="meta">
+        <div class="meta-row"><span class="meta-key">输出</span><span class="meta-val">《测试用例集（P0/P1/P2）》</span></div>
+        <div class="meta-row"><span class="meta-key">主执行</span><span class="meta-val">AI 主执行</span></div>
+      </div>
+      <div class="gate"><strong>退回门槛：</strong>主流程未覆盖、优先级错误、用例不可执行时不流转</div>
+    </div>
+
+    <!-- step4 接口测试 -->
+    <div class="tool-card">
+      <div class="savings">人效 ↑ 75% · 4×</div>
+      <div class="header">
+        <div class="icon">🔌</div>
+        <div class="header-text">
+          <div class="name">接口测试 <span class="step-tag">step4</span></div>
+          <div class="tagline">覆盖功能、安全、边界值，给版本可测性结论</div>
+        </div>
+      </div>
+      <div class="body">
+        梳理核心接口清单与业务链路，覆盖功能正确性 / 安全与权限 / 边界值与异常处理。
+        命中核心接口不通、鉴权失效、关键字段缺失等条件 → 退回提测。
+        <strong>实测数据</strong>：30 个接口 6.4 分钟跑完。
+      </div>
+      <div class="meta">
+        <div class="meta-row"><span class="meta-key">输出</span><span class="meta-val">《接口测试报告》</span></div>
+        <div class="meta-row"><span class="meta-key">主执行</span><span class="meta-val">AI + 测试</span></div>
+      </div>
+      <div class="gate"><strong>退回门槛：</strong>核心接口不通 / 鉴权失效 / 主流程接口报错 → 退回提测</div>
+    </div>
+
+    <!-- step5 UI 一致性比对 -->
+    <div class="tool-card">
+      <div class="savings">人效 ↑ 81% · 5×</div>
+      <div class="header">
+        <div class="icon">🎨</div>
+        <div class="header-text">
+          <div class="name">UI 一致性比对 <span class="step-tag">step5</span></div>
+          <div class="tagline">对照 PRD/UI 检查实现偏差，超 20% 退回</div>
+        </div>
+      </div>
+      <div class="body">
+        Playwright 跨视口截图 + Claude Vision 视觉分析 + PIL 红框标注问题位置。
+        分析页面结构、入口、按钮、文案、交互流程、状态反馈、双端一致性。
+        <strong>实测数据</strong>：飞书 vs 钉钉 双站点截图对比，AI 自动定位差异点
+        并在截图上画红框 + 编号。
+      </div>
+      <div class="meta">
+        <div class="meta-row"><span class="meta-key">输出</span><span class="meta-val">《需求/UI 一致性评估报告》</span></div>
+        <div class="meta-row"><span class="meta-key">主执行</span><span class="meta-val">AI + 测试</span></div>
+      </div>
+      <div class="gate"><strong>退回门槛：</strong>核心页面/模块偏差 &gt; 20% 或主流程交互不一致 → 退回提测</div>
+    </div>
+
+    <!-- step6 Agent 自动化执行 -->
+    <div class="tool-card">
+      <div class="savings">人效 ↑ 75% · 4×</div>
+      <div class="header">
+        <div class="icon">🤖</div>
+        <div class="header-text">
+          <div class="name">Agent 自动化执行 <span class="step-tag">step6</span></div>
+          <div class="tagline">Agent 跑 P0 + 关键 P1/P2，归因 + 阻塞清单</div>
+        </div>
+      </div>
+      <div class="body">
+        执行前检查（环境/账号/数据/依赖）→ P0 全量执行 → 关键 P1/P2 执行 →
+        失败归因（前端/后端/接口/数据/环境/需求）→ 输出执行报告。默认 dry-run，
+        需要真实环境时手动开 --live。<strong>核心价值</strong>：失败归因不再靠人猜，
+        Agent 直接告诉你"是前端 BUG / 后端报错 / 数据缺 / 环境挂 / 还是需求漏"。
+      </div>
+      <div class="meta">
+        <div class="meta-row"><span class="meta-key">输出</span><span class="meta-val">《Agent 自动化执行报告》</span></div>
+        <div class="meta-row"><span class="meta-key">主执行</span><span class="meta-val">AI Agent</span></div>
+      </div>
+      <div class="gate"><strong>退回门槛：</strong>页面不可达 / 元素缺失 / 数据或权限阻塞 → 标记阻塞</div>
+    </div>
+
+    <!-- network_resilience 弱网/断网 -->
+    <div class="tool-card">
+      <div class="savings">人效 ↑ 83% · 6×</div>
+      <div class="header">
+        <div class="icon">📶</div>
+        <div class="header-text">
+          <div class="name">弱网/断网测试 <span class="step-tag">network</span></div>
+          <div class="tagline">弱网档位 + 离线/恢复 + 容错审计 + 退回判定</div>
+        </div>
+      </div>
+      <div class="body">
+        识别网络敏感操作 → 设计弱网（慢/丢包/延迟）+ 断网（offline/reconnect/切换/挂起）
+        用例 → 审计客户端容错 7 维度（超时/重试/幂等/取消/队列/错误分类/可观测）。
+        <strong>核心价值</strong>：以前要测试同学装 Charles + 慢网 + 断网手动反复试，
+        现在 AI 直接告诉你哪里没幂等、哪里会重复提交、哪里数据会丢。
+      </div>
+      <div class="meta">
+        <div class="meta-row"><span class="meta-key">输出</span><span class="meta-val">《弱网容灾报告》</span></div>
+        <div class="meta-row"><span class="meta-key">主执行</span><span class="meta-val">AI + 测试</span></div>
+      </div>
+      <div class="gate"><strong>退回门槛：</strong>断网→恢复出现重复提交/数据丢失/无幂等 → 退回提测</div>
+    </div>
+
+    <!-- h5_adapt H5 适配 -->
+    <div class="tool-card">
+      <div class="savings">人效 ↑ 83% · 6×</div>
+      <div class="header">
+        <div class="icon">📱</div>
+        <div class="header-text">
+          <div class="name">H5 适配初审 <span class="step-tag">h5</span></div>
+          <div class="tagline">页面盘点 + 视口/安全区/浏览器矩阵/交互/性能 全维度</div>
+        </div>
+      </div>
+      <div class="body">
+        针对 H5 / Web Mobile 在 iOS Safari、Android Chrome、微信 X5/MQQ、QQ/UC、
+        钉钉/飞书/企业微信、抖音/小红书等 <strong>15+ 浏览器和 WebView</strong> 下的
+        适配深度审计。覆盖 viewport / safe-area / 像素密度 / 长屏 / 表单键盘 /
+        触摸手势 / 性能 / 分享 / 唤起 App / 暗色模式 / 无障碍。
+        <strong>实测数据</strong>：飞书首页 6 视口实测产出 31 条带 bbox 问题。
+      </div>
+      <div class="meta">
+        <div class="meta-row"><span class="meta-key">输出</span><span class="meta-val">《H5 适配初审报告》</span></div>
+        <div class="meta-row"><span class="meta-key">主执行</span><span class="meta-val">AI + 前端</span></div>
+      </div>
+      <div class="gate"><strong>退回门槛：</strong>主流程在微信/iOS Safari/Android Chrome 任一 critical 失败 → 退回</div>
+    </div>
+
+    <!-- seo_audit SEO 深度审计 -->
+    <div class="tool-card">
+      <div class="savings">人效 ↑ 75% · 4×</div>
+      <div class="header">
+        <div class="icon">🔍</div>
+        <div class="header-text">
+          <div class="name">SEO 深度审计 <span class="step-tag">seo</span></div>
+          <div class="tagline">抓取 + 元数据 + 内容 + Core Web Vitals 四维深度</div>
+        </div>
+      </div>
+      <div class="body">
+        审计协议/重定向/robots/sitemap/canonical/hreflang → 元数据与 schema.org →
+        内容结构与可访问性 → Core Web Vitals → 输出按 ROI 排序的整改清单 + 快速胜利。
+        <strong>核心价值</strong>：SEO 审计专业门槛高，找外部审计一次几万；
+        AI 给的清单按"投入产出比"排好序，开发可直接领走改。
+      </div>
+      <div class="meta">
+        <div class="meta-row"><span class="meta-key">输出</span><span class="meta-val">《SEO 深度审计报告》</span></div>
+        <div class="meta-row"><span class="meta-key">主执行</span><span class="meta-val">AI 主执行</span></div>
+      </div>
+      <div class="gate"><strong>退回门槛：</strong>全站 noindex 误配 / robots 屏蔽全站 / sitemap 大量 4xx → 退回</div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ============ 3. 后续版本计划 ============ -->
+<section>
+  <h2><span class="num">03</span>后续版本开发计划</h2>
+  <p class="lead">
+    v0.1 已端到端跑通 8 个 Agent，整体进度约 90%。剩余工作集中在<strong>报告体验</strong>、
+    <strong>跨 Agent 串联</strong>、<strong>多端 + CI 集成</strong>、<strong>团队协作</strong>四个方向。
+  </p>
+
+  <div class="roadmap">
+
+    <div class="milestone current">
+      <span class="ver">v0.1</span>
+      <span class="eta">当前 · 已完成</span>
+      <div class="title">8 Agent 端到端跑通 + macOS DMG</div>
+      <p class="desc">
+        8 个工具全部端到端跑通，macOS 79 MB DMG 可分发，3 种连接模式（本地 / OAuth / API Key），
+        启动自动检测依赖 + 一键安装，报告管理（HTML/MD/JSON 单条 / ZIP 全部）。
+      </p>
+    </div>
+
+    <div class="milestone future">
+      <span class="ver">v0.2</span>
+      <span class="eta">1-2 周</span>
+      <div class="title">报告体验优化（让产品/开发能直接拿来用）</div>
+      <p class="desc">让开发和产品同学打开报告就能拿来用，不用再问测试。</p>
+      <ul>
+        <li><strong>分受众</strong>：按"产品视角 / 开发视角 / 测试视角"分块组织报告</li>
+        <li><strong>结论先行</strong>：顶部 5 行执行摘要 — 找到几个问题、哪几个阻塞、谁该改</li>
+        <li><strong>业务语言</strong>：JSON 原文降级到次屏，主屏用业务语言</li>
+        <li><strong>可操作</strong>：每个 issue 标注「操作人 / 修复优先级 / 复现步骤」</li>
+        <li><strong>双向联动</strong>：截图红框 ↔ 问题描述双向跳转</li>
+      </ul>
+    </div>
+
+    <div class="milestone future">
+      <span class="ver">v0.3</span>
+      <span class="eta">2-3 周</span>
+      <div class="title">跨 Agent 串联 + 用例库</div>
+      <p class="desc">8 个工具的产物自动接力，用例长期累积。</p>
+      <ul>
+        <li><strong>自动接力</strong>：step1 需求拆解 → step2 用例设计 → step6 自动化执行 全自动接力</li>
+        <li><strong>中间产物可编辑</strong>：用户能审阅 / 修改 / 拒绝任意一步的 AI 输出</li>
+        <li><strong>用例库累积</strong>：每次跑完的用例存到本地用例库，下次迭代复用</li>
+        <li>新增工具：<strong>「测试报告汇总」</strong> — 把多个 Agent 的产出合并成一份对外发版报告</li>
+      </ul>
+    </div>
+
+    <div class="milestone future">
+      <span class="ver">v0.4</span>
+      <span class="eta">4 周</span>
+      <div class="title">多端 + CI 集成 + 测试管理同步</div>
+      <p class="desc">从单机工具升级为团队工具链的一部分。</p>
+      <ul>
+        <li><strong>Windows / Linux 版本</strong>：当前仅 macOS，覆盖更多终端</li>
+        <li><strong>CI 集成</strong>：GitLab / Jenkins webhook 触发，PR 自动跑测</li>
+        <li><strong>用例同步</strong>：自动同步到 Jira / 禅道 / TestRail / 飞书任务</li>
+        <li>新增工具：<strong>「性能基线测试」</strong> — Lighthouse / WebPageTest 对比 + 性能回归告警</li>
+        <li>新增工具：<strong>「兼容性矩阵测试」</strong> — BrowserStack/SauceLabs 真机驱动 + 多端截图比对</li>
+      </ul>
+    </div>
+
+    <div class="milestone future">
+      <span class="ver">v0.5</span>
+      <span class="eta">4 周</span>
+      <div class="title">团队协作（看板 + 评论 + 任务领走）</div>
+      <p class="desc">从单人工具升级为团队工具，多人共享和协作。</p>
+      <ul>
+        <li><strong>报告共享</strong>：多人共享同一份报告（云端可选，仍以本地为主）</li>
+        <li><strong>评论与领走</strong>：每条 issue 可评论 / 指派 / 关闭</li>
+        <li><strong>团队看板</strong>：本周生成 / 已修复 / 阻塞中</li>
+        <li>新增工具：<strong>「测试度量与 KPI」</strong> — 缺陷密度 / 用例通过率 / 自动化覆盖率 趋势图</li>
+        <li>新增工具：<strong>「线上故障复盘助手」</strong> — 输入故障描述 → AI 反推用例缺口 → 补到用例库</li>
+      </ul>
+    </div>
+
+    <div class="milestone future">
+      <span class="ver">v1.0</span>
+      <span class="eta">约 3 个月后</span>
+      <div class="title">稳定版</div>
+      <p class="desc">面向团队稳定使用版本。</p>
+      <ul>
+        <li>全部工具端到端验证通过 30+ 真实业务项目</li>
+        <li>新增工具：<strong>「安全测试」</strong> — OWASP Top 10 自动化扫描 + AI 解读</li>
+        <li>新增工具：<strong>「无障碍审计」</strong> — WCAG 2.1 AA 全维度</li>
+        <li>新增工具：<strong>「跨语言/多区域审计」</strong> — i18n 完整性 + 地区合规</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <div class="callout">
+    <strong>新增工具的判断标准：</strong>必须满足"高频 + 重复 + 有标准化产出"三条。
+    新增前先在已有工具的报告里给个简化版（substep）跑通，再决定是否拆成独立 Agent。
+    避免一上来就堆功能、最后没人用。
+  </div>
+</section>
+
+<!-- ============ 4. 开发过程 ============ -->
+<section>
+  <h2><span class="num">04</span>开发过程简述</h2>
+  <p class="lead">
+    项目从需求探索到 v0.1 端到端跑通，整体节奏分四个阶段。
+    全程小步快跑、每个 Agent 端到端先打通再优化，避免架构先行的过度设计。
+  </p>
+
+  <div class="devlog">
+    <div class="when">阶段 1<br>架构选型</div>
+    <div class="what">
+      <strong>底层选 claude-agent-sdk + 本地 CLI</strong>
+      <p>
+        早期对比了 OpenAI Assistants API、LangGraph 自建、本地模型 + LangChain 三条路径。
+        最终选 <code>claude-agent-sdk</code>：用户复用已有的 Claude 订阅成本最低，
+        SDK 本身处理子进程管理、流式输出、tool calling，自建工作量降到最少。
+        所有 Agent 用 <code>query()</code> 发指令，工具内部不持有任何 API key。
+      </p>
+    </div>
+
+    <div class="when">阶段 2<br>单 Agent 跑通</div>
+    <div class="what">
+      <strong>从 step2 测试用例设计开始的端到端</strong>
+      <p>
+        最先选了「测试用例设计」作为 0 → 1 的目标 — 因为它是 8 个 Agent 里 ROI 最高的。
+        电商 H5 PRD 一次跑出 187 条用例，验证了「Agent 编排 + 5-7 个 substep 接力 +
+        JSON 结构化输出」这条路是通的。剩下 7 个 Agent 都按这个模板复制 + 改 prompt。
+      </p>
+    </div>
+
+    <div class="when">阶段 3<br>跨 Agent 共性抽取</div>
+    <div class="what">
+      <strong>提炼通用工作流框架</strong>
+      <p>
+        8 个 Agent 跑通后发现共性：每个都是「读材料 → 拆 substep → 每步 JSON 输出 →
+        最后聚合成报告」。把这套抽到 <code>packages/workflow/base.py</code>，
+        每个 Agent 只需要写 prompt + 注册到 TOOL_CATALOG 即可。
+        新增 H5 / SEO / 弱网三个 Agent 各只用了 1-2 天。
+      </p>
+    </div>
+
+    <div class="when">阶段 4<br>报告 + 工程化</div>
+    <div class="what">
+      <strong>报告聚合 + 截图管线 + macOS 打包</strong>
+      <p>
+        Playwright 跨视口截图 + Claude Vision 视觉分析 + PIL 红框标注 形成三阶段闭环。
+        报告统一 4 块结构（测试结论 / 风险 / 问题描述 / 用例执行情况）。
+        PyInstaller 打 macOS .app，pywebview 起原生 WebKit 窗口，启动自动检测依赖 +
+        一键装。最后用户拿到一个 79 MB 的 DMG，双击就能用。
+      </p>
+    </div>
+
+    <div class="when">阶段 5<br>认证模式调整</div>
+    <div class="what">
+      <strong>三连接模式 + 手动激活原则</strong>
+      <p>
+        早期默认自动复用本机 Claude 凭据。用户反馈"全部人都需要人工手动操作"后改成 unset 默认值，
+        用户必须在设置页主动选「<code>本地</code>」「<code>OAuth</code>」「<code>API Key</code>」一种才能跑工具。
+        三种模式的差别只在<code>env</code>处理方式：本地不动、OAuth 强清 key、API Key 强注入。
+      </p>
+    </div>
+
+    <div class="when">阶段 6<br>持续打磨</div>
+    <div class="what">
+      <strong>用户反馈驱动的迭代</strong>
+      <p>
+        每次用户反馈都会被转成 PR 级别的小改动 — 「报告对开发不友好」→ 加 11 字段 ticket schema、
+        「桌面客户端 vs CLI 混淆」→ 加澄清 banner、「设置页有重复 section」→ 合并到「连接 Claude」。
+        小步迭代，每次都打 DMG，用户当天就能体验。
+      </p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <strong>主要技术栈：</strong>
+    Python (FastAPI + asyncio) · claude-agent-sdk · pywebview (macOS 原生窗口) ·
+    Playwright (跨浏览器截图) · PIL (图像标注) · PyInstaller (打包) · 纯前端原生 JS（无框架）
+  </div>
+
+  <div class="callout warn">
+    <strong>开发原则：</strong>
+    <strong>先端到端再深度</strong>（先把 8 个跑通再优化任何一个）·
+    <strong>本地优先</strong>（数据不上云，订阅认证不走自建后台）·
+    <strong>不重复造轮子</strong>（Claude SDK 提供的能力直接用，不二次封装）·
+    <strong>小步迭代</strong>（每次改动都打 DMG 让用户当天试）。
+  </div>
+</section>
+
+<footer>
+  天枢·质量 · 产品说明文档 · v0.1 · 由项目组维护 ·
+  <a href="STAGE_REPORT.html">阶段性总结</a>
+</footer>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,14 @@
+module: data_consistency
+name: 数据一致性测试
+priority_matrix:
+  P0:
+    - read_after_write
+    - cache_db_coherence
+    - idempotency
+  P1:
+    - master_replica_consistency
+    - distributed_transaction
+    - reconciliation
+ai_value_points:
+  - "根据接口/DB schema 自动生成对账用例"
+  - "识别幂等风险接口"

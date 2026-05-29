@@ -1,0 +1,14 @@
+module: crash_analysis
+name: 崩溃分析
+priority_matrix:
+  P0:
+    - bugly_crashlytics_integration
+    - stack_symbolication
+    - similar_crash_clustering
+    - impact_scope_analysis
+  P1:
+    - rca_hypothesis_generation
+    - fix_suggestion
+tech_stack: [bugly, firebase_crashlytics, atos, ndk_stack]
+ai_value_points:
+  - "堆栈 → 聚类 → RCA → 修复建议一条龙"

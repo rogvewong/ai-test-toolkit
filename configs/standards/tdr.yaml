@@ -1,0 +1,115 @@
+# TDR 专项标准 (Test Design Review / Technical Design Review)
+# 评审产物、评审维度、角色、评论结构、闸门规则、不可抵赖签名
+version: "1.0.0"
+last_updated: "2026-04-18"
+
+review_artifacts:
+  required_per_review:
+    - test_strategy_document
+    - test_scope_definition
+    - risk_analysis
+    - coverage_matrix
+    - entry_exit_criteria
+    - test_schedule
+    - resource_plan
+    - quality_metrics_baseline
+
+review_dimensions:
+  - id: completeness
+    name: "完整性"
+    checkpoints:
+      - "需求覆盖是否100%"
+      - "异常场景是否充分"
+      - "非功能需求是否涉及"
+    weight: 0.25
+  - id: correctness
+    name: "正确性"
+    checkpoints:
+      - "用例逻辑是否正确"
+      - "断言是否明确可验证"
+      - "数据构造是否合法"
+    weight: 0.25
+  - id: feasibility
+    name: "可行性"
+    checkpoints:
+      - "执行环境是否就绪"
+      - "依赖是否明确"
+      - "工期是否合理"
+    weight: 0.15
+  - id: risk_awareness
+    name: "风险意识"
+    checkpoints:
+      - "高风险项是否识别"
+      - "回归影响面是否评估"
+      - "缓解措施是否可执行"
+    weight: 0.20
+  - id: traceability
+    name: "可追溯性"
+    checkpoints:
+      - "需求-用例-缺陷链路是否完整"
+      - "变更影响是否记录"
+    weight: 0.15
+
+roles:
+  - id: author
+    name: "作者"
+    responsibilities: ["提交评审产物", "回应评论", "修订后重新提交"]
+  - id: reviewer
+    name: "评审员"
+    min_count: 2
+    responsibilities: ["按维度打分", "结构化评论", "签字确认"]
+    required_expertise: [functional_testing, automation, risk_analysis]
+  - id: moderator
+    name: "主审"
+    count: 1
+    responsibilities: ["组织评审", "闸门裁决", "归档产物"]
+    seniority: senior_or_above
+
+comment_structure:
+  required_fields:
+    - id
+    - dimension
+    - severity
+    - location
+    - observation
+    - suggestion
+    - requires_response
+  severity_levels:
+    - blocker
+    - major
+    - minor
+    - suggestion
+  blocker_must_resolve_before_exit: true
+
+gate_rules:
+  pass_threshold: 0.80
+  block_if:
+    - any_blocker_comment_unresolved: true
+    - completeness_score: "<0.80"
+    - correctness_score: "<0.85"
+    - reviewer_count: "<2"
+    - moderator_signed: false
+  conditional_pass_threshold: 0.70
+  on_conditional_pass:
+    require_followup_items: true
+    must_close_within_days: 7
+
+signing:
+  algorithm: ed25519
+  required_signers: [author, all_reviewers, moderator]
+  artifact_hash_included: true
+  timestamp_authority_included: true
+  non_repudiation: true
+  storage: "evidence_archive/tdr_signatures/"
+
+audit_trail:
+  log_events:
+    - review_created
+    - artifact_submitted
+    - artifact_revised
+    - comment_added
+    - comment_resolved
+    - reviewer_signed
+    - moderator_decision
+    - review_closed
+  retention_years: 3

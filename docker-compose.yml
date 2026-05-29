@@ -1,0 +1,42 @@
+services:
+  tianshu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tianshu:latest
+    container_name: tianshu
+    restart: unless-stopped
+    ports:
+      # 公网部署时把左边换成 0.0.0.0:80,或者交给 nginx 反代
+      - "8084:8084"
+    environment:
+      # ── 数据落盘位置 (镜像里写死了 /data,容器内不要改) ────────────────
+      AITK_DATA_DIR: /data
+      HOST: 0.0.0.0
+      PORT: "8084"
+
+      # ── 首位管理员账号 (零交互启动用) ───────────────────────────────────
+      # 启动时若 users.db 里还没这位用户,自动创建为 admin。
+      # 已存在则忽略 (不会用 env 里的密码覆盖现有密码)。
+      AITK_ADMIN_USER: ${AITK_ADMIN_USER:-}
+      AITK_ADMIN_PASSWORD: ${AITK_ADMIN_PASSWORD:-}
+      AITK_ADMIN_DISPLAY_NAME: ${AITK_ADMIN_DISPLAY_NAME:-}
+
+      # ── Claude 凭据 (二选一,或者在 web 设置页配置) ─────────────────────
+      # 方案 A:在这里塞 API Key — 镜像启动后所有用户共用
+      # ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # 方案 B:不在 env 配,启动后让 admin 进 /settings 用 OAuth 授权一次
+      #         OAuth token 自动落盘 /data/configs/auth.json,跨重启保留
+
+    volumes:
+      # 唯一需要持久化的目录:用户库 + Claude 凭据 + 报告 + 截图
+      - ./data:/data
+
+    # 简单健康检查:容器启动 15s 后开始,uvicorn 起来即可
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8084/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

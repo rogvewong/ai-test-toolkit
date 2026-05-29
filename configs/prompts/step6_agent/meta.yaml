@@ -1,0 +1,99 @@
+step_id: step6
+name: Agent 自动化执行
+version: 2.0.0
+order:
+  - 6_1_pre_check.md
+  - 6_2_p0_execution.md
+  - 6_3_p1p2_execution.md
+  - 6_4_attribution.md
+  - 6_5_finalize.md
+common_system_suffix: |
+  通用规则：
+  - 输出必须是合法 JSON，禁止任何前后说明文字。
+  - case_id：AT-{MODULE:3}-{SERIAL:0000}（自动化用例）。
+  - 严禁建议在生产环境执行破坏性动作。
+  - 严禁虚构工具能力；不确定就标 unknown。
+  - 自动化方案要明确工具栈（Playwright / Cypress / Appium / pytest+requests / Postman）。
+  - confidence.score 在 [0,1]。
+
+  【统一报告契约 · 所有 finalize 步骤强制遵守】
+  最终步（_5_*）输出必须包含以下五个顶层字段，缺一不可；中间步可以只输出本步关心的子部分。
+  ```json
+  {
+    "verdict": "通过 | 有条件通过 | 不通过",
+    "verdict_summary": "一句话给老板看的关键结论 (≤120 字)",
+    "risks": [
+      {
+        "id": "R-001",
+        "title": "风险标题",
+        "impact": "对业务/用户的影响范围",
+        "why": "为什么是风险（基于哪段输入）",
+        "severity": "high|medium|low"
+      }
+    ],
+    "blockers": [
+      {
+        "id": "B-001",
+        "title": "阻碍当前阶段继续的硬约束",
+        "why_blocking": "为什么必须先处理",
+        "what_to_unblock": "需要谁/做什么才能解开",
+        "owner_role": "product|backend|frontend|test|devops|security|data",
+        "estimated_hours": 0
+      }
+    ],
+    "issues": [
+      {
+        "issue_id": "<MODULE-AREA-NNNN>",
+        "title": "标题",
+        "severity": "critical|high|medium|low|info",
+        "priority": "P0|P1|P2|P3",
+        "module": "出现位置/接口/页面",
+        "current_behavior": "现状",
+        "expected_behavior": "期望",
+        "fix_suggestion": "怎么修",
+        "reproduce_steps": ["步骤1", "步骤2"],
+        "acceptance_criteria": "怎么验",
+        "related_test_cases": ["TC-xxx"],
+        "owner_role": "...",
+        "estimated_hours": 0,
+        "impact_scope": "影响面",
+        "evidence": "来自输入材料的具体引用"
+      }
+    ],
+    "cases": [
+      {
+        "id": "<TC-xxx>",
+        "title": "...",
+        "priority": "P0|P1|P2|P3",
+        "type": "main|exception|boundary|security|perf|compat",
+        "preconditions": "...",
+        "steps": ["..."],
+        "expected": "...",
+        "automation_tag": "auto|semi_auto|manual",
+        "status": "designed|executed_pass|executed_fail|skipped|blocked"
+      }
+    ],
+    "gate_decision": {"action": "proceed|proceed_with_warning|reject_with_report", "reasons": ["..."]},
+    "confidence": {"score": 0.0, "rationale": "..."}
+  }
+  ```
+  - issues 必须按 (severity, priority) 严重度优先级双键排序：critical>high>medium>low>info；同级内 P0>P1>P2>P3。
+  - cases 必须按 priority (P0→P3) 排序。
+  - blockers 与 risks 区分：blockers 表示"不解开就不能继续"，risks 表示"可能出问题但不阻塞当前流程"。
+  - 即使无内容，字段也要保留为空数组 []，不要省略。
+
+  【契约硬约束 v2 · 优先级 / 阻碍 / 证据 / 用例数 / 字段命名】
+  - **priority 必填**：每条 issue / case 必须含 `priority`（P0/P1/P2/P3），缺则视作 P2，但 LLM **不应主动省略**。
+  - **blocker 严格定义**：只有满足以下任一才能进 blockers，其它一律归 risks 或 issues：
+      ① 主流程 / 核心功能不可用 ② 严重安全 / 合规 / 数据正确性风险
+      ③ 必须先解决才能继续后续测试（外部依赖未就绪、账号未开通等硬阻塞）
+    "一般体验问题、可绕过的小 bug、改进建议" 一律 **不算 blocker**。
+  - **evidence 可追溯**：`evidence` 字段必须引用输入材料的**具体段落 / 字段名 / URL / 截图文件名**。
+    形如 "PRD 提到..." "需求文档说..." 这种泛指，视为无效证据，会被丢弃。
+  - **用例数克制**：用例数量应反映需求复杂度，不要为凑数生成机械组合：
+      · P0 主流程用例 ≤ 8 条（覆盖核心 happy path）
+      · P1 异常 / 边界用例 ≤ 20 条（按模块聚合，每模块 ≤ 5 条）
+      · P2 / P3 用例 ≤ 30 条（仅当输入材料明确暗示长尾需求时输出）
+  - **字段命名统一**：用 `type` 而非 `kind` 标注 issue / case 的分类（type 枚举：
+    main / exception / boundary / security / perf / compat / state / data / a11y）。
+    旧的 `kind` 字段允许保留作为兼容，但 finalize 输出必须用 `type`。

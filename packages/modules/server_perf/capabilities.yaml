@@ -1,0 +1,25 @@
+module: server_perf
+name: 服务端性能测试
+priority_matrix:
+  P0:
+    - load_test
+    - stress_test
+    - capacity_test
+    - stability_long_run
+    - mixed_scenario
+    - baseline_diff
+    - rca_cpu_mem_gc_slow_sql
+    - slow_query_analysis
+    - trace_bottleneck
+  P1:
+    - spike_test
+    - capacity_planning_forecast
+tech_stack:
+  load_gen: [k6, locust]
+  metrics: [prometheus, grafana]
+  trace: [jaeger, skywalking]
+  profiling: [pyroscope, arthas, ebpf]
+ai_value_points:
+  - "OpenAPI + 流量画像 → 自动生成 k6 脚本"
+  - "智能判停 + 拐点识别"
+  - "一句话结论 + Top 3 瓶颈 + 优化建议"

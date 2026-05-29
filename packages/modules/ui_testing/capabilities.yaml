@@ -1,0 +1,17 @@
+module: ui_testing
+name: UI一致性测试
+sop_hook: step5
+priority_matrix:
+  P0:
+    - figma_reference_sync
+    - screenshot_capture
+    - pixel_diff
+    - layout_color_typography_copy_diff
+    - threshold_20pct_gate
+  P1:
+    - icon_diff
+    - interaction_state_diff
+tech_stack: [playwright, adb, figma_api, opencv, vision_llm]
+ai_value_points:
+  - "设计稿 vs 实现的语义级差异判断"
+  - "文案/图标差异描述 + 修复建议"

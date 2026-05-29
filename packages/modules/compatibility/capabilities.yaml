@@ -1,0 +1,15 @@
+module: compatibility
+name: 兼容性测试（非多机型）
+priority_matrix:
+  P1:
+    - os_version_android_ios_keydiff
+    - webview_system_vs_x5
+    - screen_logic_1x_2x_3x_fold
+    - font_darkmode_rtl
+    - i18n_truncation_placeholder
+    - vendor_channel_push_pay_share
+scope_excludes:
+  - multi_device_matrix  # explicitly out of scope per user
+ai_value_points:
+  - "从 UI 截图识别深色/字体/RTL 异常"
+  - "厂商通道差异自动归类"

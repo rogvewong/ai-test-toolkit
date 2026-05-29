@@ -1,0 +1,340 @@
+# 团队建设标准 (Team Building Standards)
+# 角色与职责 / 能力模型 / 职业梯队 / RACI / 入职培训 / 认证
+version: "1.0.0"
+owner: "QA Platform"
+last_updated: "2026-04-18"
+
+# ---------------------------------------------------------------
+# 角色定义 — 每个角色有明确的职责、层级和汇报线
+# 与 tdr.yaml::roles (author/reviewer/moderator) 对齐，这里是组织侧的完整视图
+# ---------------------------------------------------------------
+roles:
+  - id: qa_engineer
+    name: "测试工程师"
+    level_range: [L1, L2]
+    mission: "按测试策略独立完成功能测试、用例编写、缺陷跟踪"
+    responsibilities:
+      - "需求评审参与，输出用例"
+      - "执行功能/兼容性/回归测试"
+      - "缺陷提交、跟踪、验证"
+      - "工具集日常使用（step1-step6 AI 流水线操作）"
+    tdr_role_mapping: author
+    reports_to: qa_lead
+
+  - id: senior_qa_engineer
+    name: "高级测试工程师"
+    level_range: [L3]
+    mission: "主导模块级测试，担任 TDR 评审员"
+    responsibilities:
+      - "制定模块测试方案与风险分析"
+      - "主导接口/性能/安全等专项测试"
+      - "参与 TDR，按维度打分并签名"
+      - "指导初级测试，code review 自动化脚本"
+    tdr_role_mapping: reviewer
+    required_expertise: [functional_testing, risk_analysis]
+    reports_to: qa_lead
+
+  - id: automation_engineer
+    name: "自动化测试工程师"
+    level_range: [L3, L4]
+    mission: "建设自动化能力，降低回归成本"
+    responsibilities:
+      - "UI/接口/端到端自动化脚本开发"
+      - "CI/CD 集成，流水线可观测性建设"
+      - "Agent 工具契约扩展（step6 tool_contract）"
+      - "Golden Set 维护与回归守护"
+    tdr_role_mapping: reviewer
+    required_expertise: [automation, tooling_platform]
+    reports_to: qa_lead
+
+  - id: qa_architect
+    name: "测试架构师"
+    level_range: [L4, L5]
+    mission: "定义测试架构与体系标准"
+    responsibilities:
+      - "制定 & 维护 4 份标准 YAML（process / quality / data / tdr）"
+      - "设计降级链路、异常处理、证据归档架构"
+      - "跨项目测试策略裁决"
+      - "LLM prompt 模板与验证管线的技术选型"
+    tdr_role_mapping: moderator
+    reports_to: qa_manager
+
+  - id: qa_lead
+    name: "测试组长"
+    level_range: [L4]
+    mission: "单项目/业务线测试交付与 TDR 主审"
+    responsibilities:
+      - "排期、资源协调、质量承诺"
+      - "TDR 主审：组织评审、闸门裁决、归档"
+      - "带教、绩效 1:1、晋升推荐"
+    tdr_role_mapping: moderator
+    seniority: senior_or_above
+    reports_to: qa_manager
+
+  - id: qa_manager
+    name: "测试经理"
+    level_range: [L5, L6]
+    mission: "团队建设、跨团队协作、质量体系治理"
+    responsibilities:
+      - "团队编制与招聘"
+      - "质量体系落地（本 team.yaml + 其他 3 份标准）"
+      - "SLO/成本/合规向上汇报"
+      - "跨职能谈判（产研、运维、安全）"
+    tdr_role_mapping: moderator
+    reports_to: cto
+
+# ---------------------------------------------------------------
+# 能力模型 — 7 大维度 × 5 级
+# 每个角色在每个维度上有"期望最低级别"
+# ---------------------------------------------------------------
+competency_framework:
+  dimensions:
+    - id: business_understanding
+      name: "业务理解"
+      description: "理解产品形态、用户场景、核心流程"
+    - id: test_design
+      name: "测试设计"
+      description: "等价类/边界/场景/状态迁移等方法的运用"
+    - id: automation
+      name: "自动化"
+      description: "UI / 接口 / 单元 / E2E 脚本开发与维护"
+    - id: tooling_platform
+      name: "工具与平台"
+      description: "CI/CD、AI 测试工具链、监控、数据治理"
+    - id: risk_management
+      name: "风险识别"
+      description: "识别发版风险、评估影响面、设计缓解措施"
+    - id: communication
+      name: "沟通协作"
+      description: "跨职能对齐、评审主持、文档与汇报能力"
+    - id: leadership
+      name: "领导力"
+      description: "带人、决策、跨团队影响力"
+
+  levels:
+    L1: "入门：在指导下完成任务"
+    L2: "独立：可独立完成单模块/单系统工作"
+    L3: "资深：可主导项目、指导他人"
+    L4: "专家：能定义标准、影响整个业务线"
+    L5: "领导：能带领团队、影响多业务线"
+
+  # role -> dimension -> min expected level
+  matrix:
+    qa_engineer:
+      business_understanding: L2
+      test_design: L2
+      automation: L1
+      tooling_platform: L1
+      risk_management: L1
+      communication: L2
+      leadership: L1
+    senior_qa_engineer:
+      business_understanding: L3
+      test_design: L3
+      automation: L2
+      tooling_platform: L2
+      risk_management: L3
+      communication: L3
+      leadership: L2
+    automation_engineer:
+      business_understanding: L2
+      test_design: L2
+      automation: L4
+      tooling_platform: L4
+      risk_management: L2
+      communication: L3
+      leadership: L2
+    qa_architect:
+      business_understanding: L4
+      test_design: L4
+      automation: L4
+      tooling_platform: L5
+      risk_management: L4
+      communication: L4
+      leadership: L3
+    qa_lead:
+      business_understanding: L3
+      test_design: L3
+      automation: L3
+      tooling_platform: L3
+      risk_management: L4
+      communication: L4
+      leadership: L4
+    qa_manager:
+      business_understanding: L4
+      test_design: L3
+      automation: L2
+      tooling_platform: L3
+      risk_management: L5
+      communication: L5
+      leadership: L5
+
+# ---------------------------------------------------------------
+# RACI × SOP — 8 步 SOP 里每步的责任归属
+# R = Responsible (执行) / A = Accountable (负责拍板)
+# C = Consulted (咨询) / I = Informed (知情)
+# 同一步可多 R / 多 C / 多 I，但 A 只有一个
+# ---------------------------------------------------------------
+raci:
+  step1_requirement:
+    R: [qa_engineer, senior_qa_engineer]
+    A: qa_lead
+    C: [qa_architect]
+    I: [qa_manager]
+  step2_testcase:
+    R: [qa_engineer, senior_qa_engineer]
+    A: qa_lead
+    C: [automation_engineer]
+    I: [qa_manager]
+  step3_testcase_review:
+    R: [senior_qa_engineer]
+    A: qa_lead
+    C: [qa_engineer]
+    I: [qa_manager]
+  step4_api_testing:
+    R: [senior_qa_engineer, automation_engineer]
+    A: qa_lead
+    C: [qa_architect]
+    I: [qa_manager]
+  step5_ui_consistency:
+    R: [qa_engineer, automation_engineer]
+    A: qa_lead
+    C: [qa_architect]
+    I: [qa_manager]
+  step6_agent_execution:
+    R: [automation_engineer]
+    A: qa_lead
+    C: [qa_architect, senior_qa_engineer]
+    I: [qa_manager]
+  step7_result_review:
+    R: [senior_qa_engineer, qa_lead]
+    A: qa_manager
+    C: [qa_architect]
+    I: []
+  step8_second_round:
+    R: [qa_engineer, senior_qa_engineer, automation_engineer]
+    A: qa_lead
+    C: []
+    I: [qa_manager]
+  tdr_review:
+    R: [senior_qa_engineer, automation_engineer]  # reviewers ≥2
+    A: qa_lead                                     # moderator
+    C: [qa_architect]
+    I: [qa_manager]
+
+# ---------------------------------------------------------------
+# 职业梯队 — 与能力等级 L1-L5 对应
+# ---------------------------------------------------------------
+career_ladder:
+  - level: L1
+    title: "见习 / 初级"
+    typical_roles: [qa_engineer]
+    tenure_months: "0-12"
+    promotion_criteria:
+      - "能独立完成模块用例设计与执行"
+      - "平均缺陷漏出率 < 5%"
+      - "工具集 5 步流水线可独立操作"
+  - level: L2
+    title: "中级"
+    typical_roles: [qa_engineer]
+    tenure_months: "12-24"
+    promotion_criteria:
+      - "能主导模块级测试方案"
+      - "至少 1 次 TDR 作为 author 通过"
+      - "有能力编写简单自动化脚本"
+  - level: L3
+    title: "资深"
+    typical_roles: [senior_qa_engineer, automation_engineer]
+    tenure_months: "24-48"
+    promotion_criteria:
+      - "作为 TDR reviewer 签名 ≥ 10 次"
+      - "主导 ≥ 1 个中型项目的测试策略"
+      - "能培养至少 1 名 L2"
+  - level: L4
+    title: "专家 / 组长"
+    typical_roles: [qa_architect, qa_lead]
+    tenure_months: "48+"
+    promotion_criteria:
+      - "作为 TDR moderator 主审 ≥ 20 次"
+      - "参与标准制定（修订过 process/quality/data/tdr 之一）"
+      - "有跨团队影响力案例"
+  - level: L5
+    title: "领导"
+    typical_roles: [qa_architect, qa_manager]
+    promotion_criteria:
+      - "对业务线质量承诺负责"
+      - "推动组织级质量改进"
+      - "公开技术影响力（文章 / 大会 / 标准贡献）"
+
+# ---------------------------------------------------------------
+# 入职路径 — 30 / 60 / 90 天
+# ---------------------------------------------------------------
+onboarding:
+  day_1_to_7:
+    - "环境搭建：.env / 密钥 / 本地跑通 `qactl version`"
+    - "通读 4 份标准 YAML"
+    - "观摩 1 次 TDR 评审"
+    - "配 mentor（L3+）"
+  day_8_to_30:
+    - "独立跑完 step1→step6 流水线（示例 PRD）"
+    - "提交 1 份见习 TDR（小范围）"
+    - "熟悉 golden set 概念，跑一次回归"
+  day_31_to_60:
+    - "承担 1 个模块的用例设计"
+    - "作为 TDR author 提交评审产物"
+    - "完成 ISTQB Foundation 预习"
+  day_61_to_90:
+    - "通过转正答辩（至少 1 个 reviewer + 1 个 moderator 签字）"
+    - "产出 1 份对现有标准的 follow-up 建议"
+
+# ---------------------------------------------------------------
+# 认证与培训
+# ---------------------------------------------------------------
+certifications:
+  - name: "ISTQB Foundation"
+    required_for: [qa_engineer]
+    recommended_for: [senior_qa_engineer]
+  - name: "ISTQB Advanced (Test Manager / Test Analyst)"
+    required_for: [senior_qa_engineer, qa_lead]
+  - name: "ISTQB Expert"
+    recommended_for: [qa_architect, qa_manager]
+  - name: "安全测试认证（CEH / OSCP 任一）"
+    recommended_for: [senior_qa_engineer]
+
+training_cadence:
+  - name: "新人 Bootcamp"
+    frequency: "新人入职当月"
+    duration_days: 5
+    topics: [标准通读, 工具集实操, TDR 见习]
+  - name: "月度技术分享"
+    frequency: "每月 1 次"
+    duration_hours: 2
+    topics: [新工具, 业务变更, bug case study]
+  - name: "季度 Golden Set 走查"
+    frequency: "每季度 1 次"
+    duration_hours: 4
+    topics: [回归样本扩充, 准确率回评, 模型升级影响]
+  - name: "年度 TDR 体系复盘"
+    frequency: "每年 1 次"
+    duration_days: 1
+    topics: [闸门命中率, 漏出缺陷, 标准修订]
+
+# ---------------------------------------------------------------
+# 团队健康度度量
+# ---------------------------------------------------------------
+team_health_metrics:
+  - id: role_ratio
+    description: "L1:L2:L3:L4+ 建议比例 2:3:3:2"
+    warn_if: "L1 占比 > 40% 或 L3+ 占比 < 30%"
+  - id: mentor_coverage
+    description: "每个 L1/L2 至少配 1 个 L3+ mentor"
+    warn_if: "未覆盖率 > 20%"
+  - id: tdr_participation
+    description: "L3+ 每季度至少参与 TDR reviewer 5 次"
+    warn_if: "低于标准人数 > 30%"
+  - id: onboarding_pass_rate
+    description: "90 天转正通过率"
+    target: ">= 85%"
+  - id: turnover_rate
+    description: "年度主动离职率"
+    target: "<= 15%"

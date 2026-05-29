@@ -1,0 +1,23 @@
+module: security
+name: 安全测试
+priority_matrix:
+  P0:
+    - sast_scan
+    - dast_scan
+    - sca_dependency
+    - secrets_scan
+    - owasp_top10
+    - authz_horizontal_vertical
+    - sensitive_data_leak
+    - api_bola_bfla
+  P1:
+    - protocol_tls_jwt_oauth
+    - mobile_hardening_root_hook
+tech_stack:
+  sast: [sonarqube, semgrep]
+  dast: [zap, burp]
+  sca: [trivy, osv]
+  secrets: [gitleaks, trufflehog]
+ai_value_points:
+  - "误报压降：80% → <15%"
+  - "业务逻辑漏洞（越权、价格篡改）推理路径"

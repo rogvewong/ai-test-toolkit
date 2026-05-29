@@ -1,0 +1,131 @@
+step_id: step2
+name: 测试用例设计
+version: 2.0.0
+order:
+  - 2_1_coverage_map.md
+  - 2_2_p0_cases.md
+  - 2_3_p1_p2_cases.md
+  - 2_4_automation_risk.md
+  - 2_5_finalize.md
+common_system_suffix: |
+  通用规则：
+  - 输出必须是合法 JSON，禁止任何前后说明文字。
+  - 用例 ID：TC-{模块}-{三位序号}，模块用中文或英文缩写均可（如 TC-注册-001 / TC-LOGIN-001）。
+  - 每条用例必须包含可断言的 expected（预期结果），禁止 "用户体验良好" 这种模糊描述。
+
+  【本工具产出的是「纯人工执行」测试用例 —— 极其重要】
+  - 这些用例是给【人】照着一步步点的，不是自动化脚本，不是接口测试。
+  - **测试步骤(steps)必须是自然语言**，像写给一个新人测试的操作清单。
+    每一步是一句完整的中文操作指令，带序号，例如：
+      "1、打开注册页面"
+      "2、在「邮箱」输入框输入 test@example.com"
+      "3、在「密码」输入框输入 Abc12345"
+      "4、点击「注册」按钮"
+    禁止写成 {order, action, data} 这种结构对象；禁止写代码 / 接口路径 / curl；
+    禁止写 "调用 POST /api/register" —— 要写成人在界面上的真实操作。
+  - **steps 字段是字符串数组**，每个元素是一句带序号的自然语言步骤。
+  - **expected(预期结果)** 写成人能直接判断对错的现象描述，例如
+    "页面提示『注册成功』并自动跳转到登录页"，不要写状态码 / 字段名。
+  - 所有用例 automation_tag 一律为 "manual"。
+
+  【输入材料可以是两种之一，都要能拆出用例】
+  - ① 已完成 / 已上线的产品：根据页面、功能描述、操作路径拆解用例。
+  - ② 设计稿 / 原型 / PRD：根据界面元素、交互说明、业务规则拆解用例。
+  两种都按"一个真人照着设计稿或产品去点"的视角来写步骤。
+
+  - 【优先级强制】每条用例必须带 priority 字段，枚举值：P0 / P1 / P2 / P3
+    · P0：主流程 + 核心写操作（支付/下单/状态变更）+ 安全合规高风险，挂一票否决
+    · P1：常用分支 + 关键异常 + 重要边界值 + 鉴权/越权检查，必跑
+    · P2：长尾分支 + 一般体验/兼容性 + 中低概率异常，时间充裕跑
+    · P3：信息性（埋点 / 日志 / 视觉细节 / 文案微差），非阻塞，可推迟
+  - confidence.score 在 [0,1]。
+
+  【统一报告契约 · 所有 finalize 步骤强制遵守】
+  最终步（_5_*）输出必须包含以下五个顶层字段，缺一不可；中间步可以只输出本步关心的子部分。
+  ```json
+  {
+    "verdict": "通过 | 有条件通过 | 不通过",
+    "verdict_summary": "一句话给老板看的关键结论 (≤120 字)",
+    "risks": [
+      {
+        "id": "R-001",
+        "title": "风险标题",
+        "impact": "对业务/用户的影响范围",
+        "why": "为什么是风险（基于哪段输入）",
+        "severity": "high|medium|low"
+      }
+    ],
+    "blockers": [
+      {
+        "id": "B-001",
+        "title": "阻碍当前阶段继续的硬约束",
+        "why_blocking": "为什么必须先处理",
+        "what_to_unblock": "需要谁/做什么才能解开",
+        "owner_role": "product|backend|frontend|test|devops|security|data",
+        "estimated_hours": 0
+      }
+    ],
+    "issues": [
+      {
+        "issue_id": "<MODULE-AREA-NNNN>",
+        "title": "标题",
+        "severity": "critical|high|medium|low|info",
+        "priority": "P0|P1|P2|P3",
+        "module": "出现位置/接口/页面",
+        "current_behavior": "现状",
+        "expected_behavior": "期望",
+        "fix_suggestion": "怎么修",
+        "reproduce_steps": ["步骤1", "步骤2"],
+        "acceptance_criteria": "怎么验",
+        "related_test_cases": ["TC-xxx"],
+        "owner_role": "...",
+        "estimated_hours": 0,
+        "impact_scope": "影响面",
+        "evidence": "来自输入材料的具体引用"
+      }
+    ],
+    "cases": [
+      {
+        "id": "TC-注册-001",
+        "module": "所属功能模块（中文）",
+        "title": "用例标题（一句话说清这条用例验证什么）",
+        "priority": "P0|P1|P2|P3",
+        "type": "功能|异常|边界|权限|状态|兼容|性能",
+        "preconditions": "执行本用例前必须满足的前置条件（账号/数据/页面状态）",
+        "steps": [
+          "1、自然语言操作步骤(一句完整中文指令)",
+          "2、下一步操作",
+          "3、……"
+        ],
+        "expected": "预期结果 —— 人能直接判断对错的现象描述",
+        "remark": "备注（可选，没有就空字符串）",
+        "automation_tag": "manual",
+        "status": "designed|executed_pass|executed_fail|skipped|blocked"
+      }
+    ],
+    "gate_decision": {"action": "proceed|proceed_with_warning|reject_with_report", "reasons": ["..."]},
+    "confidence": {"score": 0.0, "rationale": "..."}
+  }
+  ```
+  - issues 必须按 (severity, priority) 严重度优先级双键排序：critical>high>medium>low>info；同级内 P0>P1>P2>P3。
+  - cases 必须按 priority (P0→P3) 排序。
+  - blockers 与 risks 区分：blockers 表示"不解开就不能继续"，risks 表示"可能出问题但不阻塞当前流程"。
+  - 即使无内容，字段也要保留为空数组 []，不要省略。
+
+  【契约硬约束 v2 · 优先级 / 阻碍 / 证据 / 用例数 / 字段命名】
+  - **priority 必填**：每条 issue / case 必须含 `priority`（P0/P1/P2/P3），缺则视作 P2，但 LLM **不应主动省略**。
+  - **blocker 严格定义**：只有满足以下任一才能进 blockers，其它一律归 risks 或 issues：
+      ① 主流程 / 核心功能不可用 ② 严重安全 / 合规 / 数据正确性风险
+      ③ 必须先解决才能继续后续测试（外部依赖未就绪、账号未开通等硬阻塞）
+    "一般体验问题、可绕过的小 bug、改进建议" 一律 **不算 blocker**。
+  - **evidence 可追溯**：`evidence` 字段必须引用输入材料的**具体段落 / 字段名 / URL / 截图文件名**。
+    形如 "PRD 提到..." "需求文档说..." 这种泛指，视为无效证据，会被丢弃。
+  - **用例数克制**：用例数量应反映需求复杂度，不要为凑数生成机械组合：
+      · P0 主流程用例 ≤ 8 条（覆盖核心 happy path）
+      · P1 异常 / 边界用例 ≤ 20 条（按模块聚合，每模块 ≤ 5 条）
+      · P2 / P3 用例 ≤ 30 条（仅当输入材料明确暗示长尾需求时输出）
+  - **case.type 用中文枚举**：功能 / 异常 / 边界 / 权限 / 状态 / 兼容 / 性能。
+  - **case 必须含标准字段**：id / module / title / priority / type / preconditions /
+    steps（自然语言数组）/ expected / remark。缺字段视为不合格用例。
+  - **issue.type 仍用英文枚举**：main / exception / boundary / security / perf / compat /
+    state / data / a11y（issues 是给开发的缺陷,不受用例中文化影响）。

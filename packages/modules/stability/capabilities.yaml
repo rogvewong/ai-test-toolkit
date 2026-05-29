@@ -1,0 +1,15 @@
+module: stability
+name: 稳定性测试
+priority_matrix:
+  P0:
+    - crash_anr_analysis
+    - monkey_fuzz
+    - long_run_24_72h
+    - memory_leak
+  P1:
+    - oom_prediction
+tech_stack: [bugly, crashlytics, leakcanary, mat, android_monkey]
+ai_value_points:
+  - "Crash 聚类 + 根因 + 影响面"
+  - "引导式 Monkey 探索"
+  - "内存曲线 → OOM 提前预警"

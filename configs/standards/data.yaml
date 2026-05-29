@@ -1,0 +1,131 @@
+# 数据标准 (Data Standards)
+# 6份报告schema、ID命名、证据归档、优先级、严重度、状态机、输入指纹
+version: "1.0.0"
+last_updated: "2026-04-18"
+
+reports:
+  - id: requirement_breakdown_report
+    name: "需求拆解报告"
+    schema: "packages.core.models.reports.RequirementBreakdownReport"
+    produced_by: step1
+    required_sections:
+      [meta, materials, modules, flows, ambiguities, gate_decision]
+  - id: test_case_report
+    name: "测试用例报告"
+    schema: "packages.core.models.reports.TestCaseReport"
+    produced_by: step2
+    required_sections:
+      [meta, coverage_map, p0_cases, p1_cases, p2_cases, automation_tags, gate_decision]
+  - id: api_test_report
+    name: "接口测试报告"
+    schema: "packages.core.models.reports.ApiTestReport"
+    produced_by: step4
+    required_sections:
+      [meta, api_list, functional_results, security_results, boundary_results, defects, gate_decision]
+  - id: ui_consistency_report
+    name: "UI一致性报告"
+    schema: "packages.core.models.reports.UiConsistencyReport"
+    produced_by: step5
+    required_sections:
+      [meta, references, diffs, severity_map, gate_decision]
+  - id: execution_report
+    name: "执行报告"
+    schema: "packages.core.models.reports.ExecutionReport"
+    produced_by: step6
+    required_sections:
+      [meta, pre_check, plan, steps, failures, rca, gate_decision]
+  - id: tdr_review_report
+    name: "TDR技术评审报告"
+    schema: "packages.core.models.reports.TdrReviewReport"
+    produced_by: tdr_workstation
+    required_sections:
+      [meta, artifacts_reviewed, comments, decisions, signatures]
+
+id_conventions:
+  pattern: "{prefix}-{module}-{serial}"
+  prefixes:
+    requirement: REQ
+    flow: FLOW
+    ambiguity: AMB
+    testcase: TC
+    api: API
+    diff: DIFF
+    defect: BUG
+    execution_step: STEP
+    evidence: EVID
+  module_code_length: 3
+  serial_format: "%04d"
+  example: "TC-LOG-0001"
+
+priorities:
+  - id: P0
+    meaning: "核心主流程，阻塞发版"
+    must_automate: true
+    must_pass_for_release: true
+  - id: P1
+    meaning: "重要分支、异常处理"
+    must_automate: recommended
+    must_pass_for_release: true
+  - id: P2
+    meaning: "边缘场景、兼容性"
+    must_automate: optional
+    must_pass_for_release: false
+
+severity:
+  - id: critical
+    definition: "核心功能不可用/数据丢失/安全漏洞"
+    sla_fix_hours: 4
+    gate_block: true
+  - id: high
+    definition: "主流程受损有workaround"
+    sla_fix_hours: 24
+    gate_block: true
+    threshold_for_block: 3
+  - id: medium
+    definition: "次要功能异常"
+    sla_fix_hours: 72
+    gate_block: false
+  - id: low
+    definition: "优化建议"
+    sla_fix_hours: 168
+    gate_block: false
+
+defect_state_machine:
+  initial: new
+  states: [new, triaging, confirmed, fixing, fixed, verified, closed, wont_fix, reopened]
+  transitions:
+    new: [triaging, wont_fix]
+    triaging: [confirmed, wont_fix]
+    confirmed: [fixing]
+    fixing: [fixed]
+    fixed: [verified, reopened]
+    verified: [closed]
+    closed: [reopened]
+    reopened: [triaging]
+    wont_fix: []
+
+execution_state_machine:
+  initial: queued
+  states: [queued, running, passed, failed, flaky, skipped, error, aborted]
+  transitions:
+    queued: [running, aborted]
+    running: [passed, failed, flaky, skipped, error, aborted]
+
+input_fingerprint:
+  algorithm: sha256
+  include:
+    - content_hash
+    - normalized_metadata
+    - sop_version
+    - prompt_version
+  purpose: "幂等+缓存+回溯"
+
+evidence_archive:
+  structure: "{run_id}/{step_id}/{artifact_type}/{timestamp}_{id}.{ext}"
+  required_for_each_run:
+    - raw_input
+    - prompt_rendered
+    - llm_raw_response
+    - parsed_output
+    - validation_result
+    - final_report

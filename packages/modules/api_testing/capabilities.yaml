@@ -1,0 +1,29 @@
+module: api_testing
+name: 接口测试
+sop_hook: step4
+priority_matrix:
+  P0:
+    - import_openapi_postman_har
+    - case_generation_from_doc
+    - functional_positive_negative
+    - boundary_and_fuzz
+    - permission_horizontal_vertical
+    - dependency_graph_execution
+    - change_impact_analysis
+  P1:
+    - contract_testing_pact
+    - idempotency_replay
+    - record_replay_desensitize
+    - diff_vs_baseline
+  P2:
+    - data_fixture_generation_ai
+tech_stack:
+  runner: [httpx, pytest, schemathesis]
+  mocking: [mitmproxy]
+  contract: [pact]
+  fuzz: [hypothesis, schemathesis]
+ai_value_points:
+  - "从自然语言文档自动抽接口 + 生成断言"
+  - "识别破坏性 schema 变更并评分"
+  - "根据字段语义构造边界/注入样本"
+  - "推理权限矩阵并生成越权用例"

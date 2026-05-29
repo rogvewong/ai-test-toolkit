@@ -1,0 +1,24 @@
+module: network_perf
+name: 网络性能测试
+priority_matrix:
+  P0:
+    - weak_network_12_presets
+    - packet_loss_retx
+    - latency_breakdown
+    - bandwidth_limit
+    - disconnect_switch_4g_wifi
+    - first_screen_first_frame
+  P1:
+    - dns_resolution_analysis
+    - cdn_hit_ratio
+    - tls_handshake_analysis
+    - traffic_economy_compression
+  P2:
+    - http1_vs_h2_vs_h3_compare
+tech_stack:
+  shaping: [tc, netem, atc, clumsy]
+  probes: [curl, dnsperf]
+  capture: [mitmproxy, wireshark_cli]
+ai_value_points:
+  - "每发版 12 档弱网回归 → 对比矩阵"
+  - "白屏归因：DNS / TCP / TLS / 后端 / 前端渲染"

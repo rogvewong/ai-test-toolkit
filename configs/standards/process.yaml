@@ -1,0 +1,133 @@
+# 流程标准 (Process Standards)
+# 8步SOP、闸门规则、人机边界、降级策略、异常处理
+version: "1.0.0"
+owner: "QA Platform"
+last_updated: "2026-04-18"
+
+sop:
+  name: "AI Agent 测试 8步 SOP"
+  steps:
+    - id: step1
+      name: "需求拆解"
+      mode: ai
+      substeps: [1.1, 1.2, 1.3, 1.4, 1.5]
+      input_types: [prd, flow_chart, design_doc]
+      output_report: requirement_breakdown_report
+    - id: step2
+      name: "用例设计"
+      mode: ai
+      substeps: [2.1, 2.2, 2.3, 2.4, 2.5]
+      input_types: [requirement_breakdown_report]
+      output_report: test_case_report
+    - id: step3
+      name: "用例复核"
+      mode: human
+      skipped_in_toolkit: true
+      rationale: "人工复核不纳入工具集，工具仅提供可视化辅助"
+    - id: step4
+      name: "接口测试"
+      mode: ai
+      substeps: [4.1, 4.2, 4.3, 4.4, 4.5]
+      input_types: [api_doc, test_case_report]
+      output_report: api_test_report
+    - id: step5
+      name: "UI一致性"
+      mode: ai
+      substeps: [5.1, 5.2, 5.3, 5.4, 5.5]
+      input_types: [ui_design, screenshot]
+      output_report: ui_consistency_report
+    - id: step6
+      name: "Agent自动化执行"
+      mode: ai
+      substeps: [6.1, 6.2, 6.3, 6.4, 6.5]
+      input_types: [test_case_report]
+      output_report: execution_report
+    - id: step7
+      name: "结果复核"
+      mode: human
+      skipped_in_toolkit: true
+    - id: step8
+      name: "二轮测试"
+      mode: human
+      skipped_in_toolkit: true
+
+gate_rules:
+  step1_to_step2:
+    block_if:
+      - missing_materials: [prd]
+      - incomplete_score: "<0.8"
+      - unresolved_ambiguity_count: ">3"
+    action: reject_with_report
+  step2_to_step4:
+    block_if:
+      - p0_coverage: "<1.0"
+      - unlabeled_automation_cases: ">0"
+    action: reject_with_report
+  step4_to_step6:
+    block_if:
+      - critical_bugs: ">0"
+      - high_severity_bugs: ">=3"
+      - api_pass_rate: "<0.9"
+    action: reject_with_report
+  step5_to_step6:
+    block_if:
+      - ui_deviation_ratio: ">0.2"
+    action: warn_and_continue
+  step6_final:
+    block_if:
+      - overall_pass_rate: "<0.85"
+      - critical_failures: ">0"
+    action: reject_with_report
+
+human_ai_boundary:
+  ai_exclusive:
+    - "结构化文档解析"
+    - "测试用例生成"
+    - "接口断言生成"
+    - "UI差异计算"
+    - "日志归因"
+  ai_with_confirmation:
+    - "P0用例设计最终版"
+    - "接口权限用例"
+    - "执行计划"
+  human_exclusive:
+    - "测试策略决策"
+    - "风险接受/豁免"
+    - "发版闸门通过判定"
+
+degradation_chain:
+  - level: 1
+    trigger: "首选模型失败 (Opus)"
+    fallback: "降级到 Sonnet"
+  - level: 2
+    trigger: "Sonnet 失败"
+    fallback: "降级到 Haiku + 告警"
+  - level: 3
+    trigger: "全部模型失败"
+    fallback: "输出 degraded_report + 挂起任务 + 通知人工"
+
+exception_handling:
+  retry:
+    max_attempts: 3
+    backoff: exponential
+    base_delay_seconds: 2
+  rate_limit:
+    action: queue_with_backoff
+    notify_threshold_attempts: 5
+  input_too_large:
+    action: chunk_and_summarize
+    chunk_strategy: semantic
+  output_invalid_schema:
+    action: repair_prompt_then_retry
+    max_repairs: 2
+
+version_traceability:
+  every_artifact_must_include:
+    - toolkit_version
+    - sop_version
+    - prompt_version
+    - model_id
+    - model_version
+    - input_fingerprint
+    - run_id
+    - timestamp_utc
