@@ -7244,6 +7244,27 @@ async def api_device_status(request: Request) -> dict[str, Any]:
     return await adb_status()
 
 
+@app.post("/api/device/screencap")
+async def api_device_screencap(request: Request) -> dict[str, Any]:
+    """截宿主模拟器当前屏 — 验证容器→模拟器→PNG 通路。需登录。"""
+    require_user(request)
+    from packages.core.device import _first_online_serial, screencap, AdbError
+    serial = await _first_online_serial()
+    if not serial:
+        raise HTTPException(503, "无在线模拟器设备")
+    out_dir = Path(settings.evidence_output_dir) / "screenshots"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    import uuid as _uuid
+    fname = f"screencap_{_uuid.uuid4().hex[:8]}.png"
+    fpath = out_dir / fname
+    try:
+        await screencap(serial, str(fpath))
+    except AdbError as exc:
+        raise HTTPException(502, f"截图失败: {exc}")
+    size = fpath.stat().st_size if fpath.exists() else 0
+    return {"ok": size > 0, "serial": serial, "filename": fname, "size": size, "path": str(fpath)}
+
+
 @app.get("/api/claude/info")
 async def api_claude_info() -> dict[str, Any]:
     """探测本地 Claude Code 的接入状态、版本、登录账户、默认 effort/model。
