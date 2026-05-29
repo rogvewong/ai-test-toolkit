@@ -3,16 +3,15 @@
 
 为什么需要它:
   容器里的浏览器是全新 profile + 数据中心 IP,无法继承用户的 Google SSO 登录。
-  本助手跑在宿主,用真实 Chrome + 持久 profile(用户一次性 Google 登录),
-  之后像用户平时的浏览器一样自动登录,容器通过 HTTP 调它拿 Figma 设计图。
+  本助手跑在宿主,用真实 Chrome(channel=chrome)+ 持久 profile。
+  用户在 step5 点「登录」→ 弹出真实 Chrome → 用 Google 一键登录(秒通)→ 会话
+  持久保存,以后直接读图。容器通过 HTTP 调它。
 
-模式:
-  python figma_runner.py login   # 一次性:弹出 Chrome 让用户登录 Figma(Google),登录后自动退出
-  python figma_runner.py serve    # 常驻:HTTP 服务(默认 0.0.0.0:8077),容器调 /shot 拿设计图
-
-HTTP 接口:
-  GET  /health           → {"ok": true, "logged_in": bool}
-  POST /shot  {"url": …}  → {"ok": bool, "png_b64": …}  (Figma 节点截图)
+交互模型(避免 profile 锁冲突,用 marker 文件记录登录态):
+  POST /login   → 后台弹出真实 Chrome 让用户登录;登录成功写 marker 并关闭
+  GET  /status  → {logged_in, login_running}(读 marker,不抢 profile)
+  POST /shot {url} → 持久登录态下打开 Figma 链接截图(登录窗口须先关闭)
+  GET  /health  → {ok}
 """
 from __future__ import annotations
 
@@ -20,18 +19,22 @@ import base64
 import json
 import os
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 PROFILE_DIR = os.environ.get("AITK_FIGMA_PROFILE") or str(Path.home() / ".aitk-figma-profile")
 PORT = int(os.environ.get("AITK_FIGMA_RUNNER_PORT", "8077"))
-CHROME_CHANNEL = "chrome"  # 用真实 Chrome,降低 Google "浏览器不安全" 拦截
+CHROME_CHANNEL = "chrome"
 _REAL_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-
 _LAUNCH_ARGS = ["--disable-blink-features=AutomationControlled"]
 _IGNORE_ARGS = ["--enable-automation"]
+_MARKER = Path(PROFILE_DIR) / ".figma_logged_in"
+
+_login_lock = threading.Lock()
+_login_running = False
 
 
 def _new_context(pw, headless: bool):
@@ -42,7 +45,7 @@ def _new_context(pw, headless: bool):
     )
 
 
-def _is_logged_in(page) -> bool:
+def _page_logged_in(page) -> bool:
     try:
         page.goto("https://www.figma.com/files/recent", timeout=40000, wait_until="domcontentloaded")
         time.sleep(4)
@@ -52,37 +55,44 @@ def _is_logged_in(page) -> bool:
         return False
 
 
-def cmd_login() -> None:
-    """弹出真实 Chrome 让用户登录 Figma(Google SSO),登录成功后自动退出。"""
+def _login_worker():
+    """后台:弹出真实 Chrome 让用户登录,成功后写 marker 并关闭。"""
+    global _login_running
     from playwright.sync_api import sync_playwright
-    print(f"[login] profile = {PROFILE_DIR}")
-    print("[login] 即将弹出 Chrome 窗口 — 请在窗口里用 Google 登录 Figma。登录成功后本程序自动退出。")
-    with sync_playwright() as pw:
-        ctx = _new_context(pw, headless=False)
-        page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        page.goto("https://www.figma.com/login", wait_until="domcontentloaded")
-        deadline = time.time() + 300  # 5 分钟给用户登录
-        ok = False
-        while time.time() < deadline:
-            time.sleep(5)
+    try:
+        with sync_playwright() as pw:
+            ctx = _new_context(pw, headless=False)  # 头显,用户能操作
+            page = ctx.pages[0] if ctx.pages else ctx.new_page()
             try:
-                cur = (page.inner_text("body") or "")[:200].lower()
+                page.goto("https://www.figma.com/login", wait_until="domcontentloaded")
             except Exception:
-                cur = ""
-            # 登录后通常跳到 files/home,登录墙文案消失
-            if "log in" not in cur and "sign up" not in cur and "continue with" not in cur:
-                # 再确认一次
-                if _is_logged_in(page):
-                    ok = True
-                    break
-        ctx.close()
-    print("[login] 登录成功 ✅,会话已保存到 profile。" if ok else "[login] 超时未检测到登录(可重试)。")
-    sys.exit(0 if ok else 2)
+                pass
+            deadline = time.time() + 300
+            ok = False
+            while time.time() < deadline:
+                time.sleep(5)
+                try:
+                    cur = (page.inner_text("body") or "")[:200].lower()
+                except Exception:
+                    cur = ""
+                if not any(k in cur for k in ("log in", "sign up", "continue with")):
+                    if _page_logged_in(page):
+                        ok = True
+                        break
+            if ok:
+                _MARKER.parent.mkdir(parents=True, exist_ok=True)
+                _MARKER.write_text(str(int(time.time())))
+            ctx.close()
+    except Exception:
+        pass
+    finally:
+        _login_running = False
 
 
 def shot(url: str) -> dict:
-    """在持久登录态下打开 Figma 链接并截图。返回 {ok, png_b64, error}。"""
     from playwright.sync_api import sync_playwright
+    if _login_running:
+        return {"ok": False, "error": "登录窗口未关闭,请先完成登录"}
     with sync_playwright() as pw:
         ctx = _new_context(pw, headless=True)
         try:
@@ -91,7 +101,7 @@ def shot(url: str) -> dict:
             time.sleep(6)
             txt = (page.inner_text("body") or "")[:300].lower()
             if any(k in txt for k in ("log in", "sign up", "continue with")) and not page.query_selector("canvas"):
-                return {"ok": False, "error": "未登录(请先运行 login 模式登录一次)"}
+                return {"ok": False, "error": "未登录 — 请先在 step5 点「登录 Figma」"}
             try:
                 page.wait_for_selector("canvas", timeout=15000)
             except Exception:
@@ -105,19 +115,8 @@ def shot(url: str) -> dict:
             ctx.close()
 
 
-def logged_in_quick() -> bool:
-    from playwright.sync_api import sync_playwright
-    with sync_playwright() as pw:
-        ctx = _new_context(pw, headless=True)
-        try:
-            page = ctx.pages[0] if ctx.pages else ctx.new_page()
-            return _is_logged_in(page)
-        finally:
-            ctx.close()
-
-
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *a):  # 静音
+    def log_message(self, *a):
         pass
 
     def _send(self, code: int, obj: dict):
@@ -132,37 +131,42 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send(200, {"ok": True})
         elif self.path == "/status":
-            self._send(200, {"ok": True, "logged_in": logged_in_quick()})
+            self._send(200, {"ok": True, "logged_in": _MARKER.exists(),
+                             "login_running": _login_running})
         else:
             self._send(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
-        if self.path != "/shot":
+        if self.path == "/login":
+            global _login_running
+            with _login_lock:
+                if not _login_running:
+                    _login_running = True
+                    threading.Thread(target=_login_worker, daemon=True).start()
+            self._send(200, {"ok": True, "started": True, "login_running": _login_running})
+        elif self.path == "/logout":
+            try:
+                _MARKER.unlink()
+            except Exception:
+                pass
+            self._send(200, {"ok": True})
+        elif self.path == "/shot":
+            try:
+                n = int(self.headers.get("content-length") or 0)
+                data = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                self._send(400, {"ok": False, "error": "bad json"}); return
+            if not data.get("url"):
+                self._send(400, {"ok": False, "error": "missing url"}); return
+            self._send(200, shot(data["url"]))
+        else:
             self._send(404, {"ok": False, "error": "not found"})
-            return
-        try:
-            n = int(self.headers.get("content-length") or 0)
-            data = json.loads(self.rfile.read(n) or b"{}")
-        except Exception:
-            self._send(400, {"ok": False, "error": "bad json"})
-            return
-        url = data.get("url")
-        if not url:
-            self._send(400, {"ok": False, "error": "missing url"})
-            return
-        self._send(200, shot(url))
 
 
 def cmd_serve() -> None:
-    print(f"[serve] Figma 读图助手监听 0.0.0.0:{PORT} | profile={PROFILE_DIR}")
+    print(f"[serve] Figma 读图助手 0.0.0.0:{PORT} | profile={PROFILE_DIR} | logged_in={_MARKER.exists()}")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":
-    mode = sys.argv[1] if len(sys.argv) > 1 else "serve"
-    if mode == "login":
-        cmd_login()
-    elif mode == "status":
-        print("logged_in:", logged_in_quick())
-    else:
-        cmd_serve()
+    cmd_serve()
