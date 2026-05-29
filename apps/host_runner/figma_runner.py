@@ -121,6 +121,17 @@ def shot(url: str, user) -> dict:
             except Exception:
                 pass
             time.sleep(4)
+            # 只截 node-id 指向的那一帧,不要整个编辑器画面:
+            #   node-id URL 打开后该节点已被选中 → Shift+2 缩放到选中节点充满画布;
+            #   Cmd+\ 隐藏左右面板/工具栏,只留画布;再截图 = 干净的单帧设计图。
+            try:
+                page.mouse.move(760, 460)  # 把焦点移到画布区
+                page.keyboard.press("Shift+2")          # zoom to selection(选中的就是该 node)
+                time.sleep(1.5)
+                page.keyboard.press("Meta+Backslash")    # 隐藏 UI 面板(Figma: Cmd+\)
+                time.sleep(1.5)
+            except Exception:
+                pass
             png = page.screenshot(full_page=False)
             try:
                 m = _marker(user); m.parent.mkdir(parents=True, exist_ok=True)
