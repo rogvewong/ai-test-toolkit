@@ -7053,6 +7053,7 @@ async def _fetch_live_models() -> list[dict[str, Any]] | None:
         data = resp.json().get("data", []) or []
     except Exception:
         return None
+    import re as _re
     effort_order = ["low", "medium", "high", "xhigh", "max"]
     out: list[dict[str, Any]] = []
     for m in data:
@@ -7065,14 +7066,16 @@ async def _fetch_live_models() -> list[dict[str, Any]] | None:
         think = cap.get("extended_thinking") or cap.get("thinking") or {}
         supports_think = bool(think.get("supported")) if isinstance(think, dict) else False
         ctx = m.get("max_input_tokens") or 0
-        tag = {"opus": "最强推理 · 慢", "sonnet": "平衡 · 默认推荐",
-               "haiku": "最快 · 简单任务"}.get(_tier_word(mid) or "", "")
+        dname = m.get("display_name") or mid
+        # 从 display_name 解析版本号用于正确排序("Claude Opus 4.8" → (4,8);"...4" → (4,0))
+        vm = _re.search(r"(\d+)(?:\.(\d+))?", dname)
+        ver = (int(vm.group(1)), int(vm.group(2) or 0)) if vm else (0, 0)
         out.append({
             "key": mid,
             "model": mid,  # 全 ID → 选哪个版本就跑哪个版本
-            "label": m.get("display_name") or mid,
+            "label": dname,
             "version_badge": "1M" if ctx and ctx >= 1_000_000 else None,
-            "tag": tag,
+            "tag": "",  # 排序后按 tier + 是否最新填
             "default": False,
             "legacy": False,
             "betas": [],
@@ -7081,19 +7084,30 @@ async def _fetch_live_models() -> list[dict[str, Any]] | None:
             "supported_efforts": efforts,
             "supported_thinking": (["disabled", "adaptive", "enabled"] if supports_think else []),
             "context": ctx,
+            "_tier": _tier_word(mid) or "",
+            "_ver": ver,
         })
     if not out:
         return None
-    # 排序:同 tier 内版本号新→旧(id 倒序),再把 opus>sonnet>haiku 排前
-    out.sort(key=lambda x: x["model"], reverse=True)
+    # 排序:tier 优先级 opus>sonnet>haiku;同 tier 内按版本号新→旧(数值,不是字符串)
     rank = {"opus": 0, "sonnet": 1, "haiku": 2}
-    out.sort(key=lambda x: rank.get(_tier_word(x["model"]) or "", 9))
-    # 默认 = 排序后第一个 opus(即最新 opus)
+    out.sort(key=lambda x: (rank.get(x["_tier"], 9), -x["_ver"][0], -x["_ver"][1]))
+    # 标签:每个 tier 第一个(最新)给能力描述 + 「最新」;其余标「上一代」
+    tier_desc = {"opus": "最强推理 · 慢", "sonnet": "平衡 · 默认推荐", "haiku": "最快 · 简单任务"}
+    seen: set[str] = set()
     for x in out:
-        if _tier_word(x["model"]) == "opus":
-            x["default"] = True
-            break
-    else:
+        t = x["_tier"]
+        if t not in seen:
+            seen.add(t)
+            base = tier_desc.get(t, "")
+            x["tag"] = (base + " · 最新") if base else "最新"
+            if t == "opus":
+                x["default"] = True  # 最新 Opus = 默认选中
+        else:
+            x["tag"] = "上一代"
+        x.pop("_tier", None)
+        x.pop("_ver", None)
+    if not any(x.get("default") for x in out):
         out[0]["default"] = True
     cache["models"] = out
     cache["at"] = now
