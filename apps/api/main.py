@@ -4149,10 +4149,15 @@ async def api_report_export(run_id: str, fmt: str, request: Request) -> Any:
         else:
             xlsx_bytes = _build_testcase_xlsx(r, tool, report)
             suffix = "_testcases"
+        # 文件名含中文 → 必须 RFC 5987 编码(HTTP 头只能 latin-1),
+        # 同时给纯 ASCII 回退名,兼容老浏览器。
+        from urllib.parse import quote as _q
+        full_name = f"{fname_base}{suffix}.xlsx"
+        disp = f"attachment; filename=\"{fname_base}.xlsx\"; filename*=UTF-8''{_q(full_name)}"
         return Response(
             content=xlsx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="{fname_base}{suffix}.xlsx"'},
+            headers={"Content-Disposition": disp},
         )
     # html
     body = _build_html_report(r, tool, report)
