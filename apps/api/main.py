@@ -4256,6 +4256,52 @@ async def _seo_run_collect(ctx: Any, state: dict[str, Any]) -> None:
         "cwv": len([k for k, v in data.cwv.items() if isinstance(v, dict)]) if isinstance(data.cwv, dict) else 0})
 
 
+async def _seo_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
+    """SEO:基于真实采集数据,1 次 LLM 调用产出审计结论(替代 5 子步骤,大幅提速)。"""
+    sd = state.get("seo_data") or {}
+    data_text = _seo_data_to_prompt(sd)
+    system = (
+        "你是资深 SEO 审计专家。下面是对某站点的【真实全站采集数据】(已确定性测得,不是猜测)。"
+        "请只基于这些真实数据,产出一份审计结论的合法 JSON。要求:\n"
+        "1) 问题清单必须可执行——让开发照着就能修:fix_suggestion 写清楚改哪里、怎么改;\n"
+        "2) 按 P0(致命)→P2 排优先级;只列真实存在的问题,数据没体现的不要编;\n"
+        "3) 全部中文。响应必须以 { 开头、是合法 JSON,无任何前后缀、无 markdown 代码块。\n\n"
+        "输出格式:\n"
+        "{\n"
+        '  "verdict": "通过|有条件通过|不通过",\n'
+        '  "verdict_summary": "≤120字一句话核心结论",\n'
+        '  "overview": {"评定":"2-4句总体评定", "核心问题":"最关键的1-3个问题", "后续动作":"按优先级的下一步动作"},\n'
+        '  "issues": [{"issue_id":"SEO-01","priority":"P0|P1|P2","module":"领域(如 内容/i18n/sitemap/性能/技术SEO)",'
+        '"title":"一句话问题","current_behavior":"实测现状(引采集数据)","expected_behavior":"应做到什么",'
+        '"impact_scope":"对 SEO/收录/排名的影响","fix_suggestion":"具体怎么修(改哪个文件/标签/响应头/字段)"}],\n'
+        '  "strengths": ["已验证的优点(基于通过项)"]\n'
+        "}"
+    )
+    state["progress"] = "AI 综合分析 SEO 采集结果…"
+    resp = await ctx.llm.complete(
+        system=system, messages=[{"role": "user", "content": data_text}],
+        max_tokens=8000, allow_degrade=False)
+    try:
+        ctx.usage.merge(resp.usage)
+    except Exception:
+        pass
+    parsed = {}
+    try:
+        parsed = resp.json() or {}
+    except Exception:
+        parsed = {}
+    return {
+        "verdict": parsed.get("verdict") or "有条件通过",
+        "verdict_summary": parsed.get("verdict_summary") or "(见各 sheet 明细)",
+        "overview": parsed.get("overview") or {},
+        "issues": parsed.get("issues") or [],
+        "risks": [],
+        "cases": [],
+        "strengths": parsed.get("strengths") or _seo_strengths(sd),
+        "meta": {},
+    }
+
+
 def _seo_strengths(sd: dict[str, Any]) -> list[str]:
     out: list[str] = []
     t = sd.get("tech", {}); s = sd.get("summary", {}); sm = sd.get("sitemap", {})
@@ -4277,18 +4323,22 @@ def _seo_strengths(sd: dict[str, Any]) -> list[str]:
 
 
 def _seo_synthesis(report: dict[str, Any], seo_data: dict[str, Any]) -> dict[str, Any]:
-    """把 LLM 报告(verdict/issues)+ 采集数据,组装成 Excel 需要的 synthesis。"""
+    """把 LLM 报告(overview/issues/strengths)+ 采集数据,组装成 Excel 需要的 synthesis。
+    优先用 LLM 直接产出的 overview/strengths;缺失则从 verdict/issues/采集数据兜底派生。"""
     issues = report.get("issues") or []
-    core = "；".join(str(i.get("title") or i.get("current_behavior") or "") for i in issues[:3] if (i.get("title") or i.get("current_behavior")))
-    actions = "；".join(str(i.get("fix_suggestion") or "") for i in issues[:3] if i.get("fix_suggestion"))
-    return {
-        "overview": {
+    ov = report.get("overview") or {}
+    if not (ov.get("评定") or ov.get("核心问题")):
+        core = "；".join(str(i.get("title") or i.get("current_behavior") or "") for i in issues[:3] if (i.get("title") or i.get("current_behavior")))
+        actions = "；".join(str(i.get("fix_suggestion") or "") for i in issues[:3] if i.get("fix_suggestion"))
+        ov = {
             "评定": report.get("verdict_summary") or report.get("verdict") or "(见各 sheet 明细)",
             "核心问题": core or "(未识别出突出问题)",
             "后续动作": actions or "(无)",
-        },
+        }
+    return {
+        "overview": ov,
         "issues": issues,
-        "strengths": _seo_strengths(seo_data),
+        "strengths": report.get("strengths") or _seo_strengths(seo_data),
     }
 
 
@@ -4359,6 +4409,49 @@ async def _network_run_collect(ctx: Any, state: dict[str, Any]) -> None:
     ctx.inputs["documents"] = (docs or "") + "\n\n" + _netdata_to_prompt(nd)
     state.setdefault("logs", []).append({
         "ts": _time.time(), "event": "net.collected", "profiles": len(nd.get("profiles", []))})
+
+
+async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
+    """弱网/断网:基于真实多档位实测数据,1 次 LLM 调用产出结论(替代 5 子步骤,提速)。"""
+    nd = state.get("network_data") or {}
+    data_text = _netdata_to_prompt(nd)
+    system = (
+        "你是资深性能/容错测试专家。下面是对某页面在不同网络档位下的【真实实测数据】"
+        "(Playwright CDP 真实限速/断网测得)。请只基于这些真实数据产出审计结论的合法 JSON。要求:\n"
+        "1) 重点关注弱网与断网体验:加载态反馈、超时处理、错误提示、降级、断网恢复;\n"
+        "2) 问题清单要让开发照着就能修:fix_suggestion 写清楚改哪里、怎么改(如接 Service Worker/骨架屏/重试);\n"
+        "3) 按 P0→P2 排;只列数据体现的真实问题;全部中文;\n"
+        "4) 响应以 { 开头、合法 JSON、无 markdown 代码块。\n\n"
+        "输出格式:\n"
+        "{\n"
+        '  "verdict": "通过|有条件通过|不通过",\n'
+        '  "verdict_summary": "≤120字核心结论",\n'
+        '  "issues": [{"issue_id":"NET-01","priority":"P0|P1|P2","module":"档位/场景(如 断网态/弱网加载)",'
+        '"title":"一句话问题","current_behavior":"实测现状","expected_behavior":"应做到什么",'
+        '"impact_scope":"对用户的影响","fix_suggestion":"具体怎么修"}]\n'
+        "}"
+    )
+    state["progress"] = "AI 综合分析弱网/断网实测结果…"
+    resp = await ctx.llm.complete(
+        system=system, messages=[{"role": "user", "content": data_text}],
+        max_tokens=6000, allow_degrade=False)
+    try:
+        ctx.usage.merge(resp.usage)
+    except Exception:
+        pass
+    parsed = {}
+    try:
+        parsed = resp.json() or {}
+    except Exception:
+        parsed = {}
+    return {
+        "verdict": parsed.get("verdict") or "有条件通过",
+        "verdict_summary": parsed.get("verdict_summary") or "(见各 sheet 明细)",
+        "issues": parsed.get("issues") or [],
+        "risks": [],
+        "cases": [],
+        "meta": {},
+    }
 
 
 def _build_testcase_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, Any]) -> bytes:
@@ -5450,11 +5543,18 @@ async def _run_tool_async(
                 ctx.inputs["documents"] = docs + "\n".join(lines)
 
         state["progress"] = "调用 Claude（本地客户端）…"
-        report = await orch_cls(ctx).execute()
+        # SEO / 弱网:采集层已拿到全部事实,LLM 只需 1 次综合(替代 5 子步骤,大幅提速);
+        # 且不把采集截图喂给分析(截图仅留报告/Excel 展示)。其余工具走原 orchestrator。
+        if tool["id"] == "seo_audit":
+            report_dump = await _seo_synthesize(ctx, state)
+        elif tool["id"] == "network_resilience":
+            report_dump = await _network_synthesize(ctx, state)
+        else:
+            report = await orch_cls(ctx).execute()
+            report_dump = report.model_dump(mode="json")
         # Persist a JSON copy alongside the run-id for download
         out_dir = Path(settings.report_output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
-        report_dump = report.model_dump(mode="json")
         # 把 run 持有人写到 meta — 持久化跨重启可用,/api/reports 据此过滤
         report_meta = report_dump.setdefault("meta", {})
         if state.get("owner_user_id"):
