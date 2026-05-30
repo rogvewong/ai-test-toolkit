@@ -4120,9 +4120,10 @@ async def api_report_export(run_id: str, fmt: str, request: Request) -> Any:
     tool = next((t for t in TOOL_CATALOG if t["id"] == tool_id), None) or {"id": tool_id, "name": tool_id, "icon": "?"}
     fname_base = f"{tool_id}_{run_id[:8]}"
 
-    # step2 测试用例工具:产出只有 Excel,不出 HTML / Markdown 报告。
-    # 直接请求 export.html / export.md 一律重定向到 Excel。
-    if tool_id == "step2" and fmt in ("html", "md"):
+    # 这些工具只产出 Excel(step2 用例 / seo_audit SEO审计 / network_resilience 弱网):
+    # 请求 export.html / export.md 一律重定向到 Excel。
+    _XLSX_ONLY = {"step2", "seo_audit", "network_resilience"}
+    if tool_id in _XLSX_ONLY and fmt in ("html", "md"):
         return RedirectResponse(f"/api/reports/{run_id}/export.xlsx", status_code=302)
 
     if fmt == "json":
@@ -4138,12 +4139,20 @@ async def api_report_export(run_id: str, fmt: str, request: Request) -> Any:
             headers={"Content-Disposition": f'attachment; filename="{fname_base}.md"'},
         )
     if fmt == "xlsx":
-        # Excel 用例表 — 标准人工测试用例格式
-        xlsx_bytes = _build_testcase_xlsx(r, tool, report)
+        # 按工具分发到对应 Excel 生成器
+        if tool_id == "seo_audit":
+            xlsx_bytes = _build_seo_xlsx(r, tool, report)
+            suffix = "_SEO深度审计报告"
+        elif tool_id == "network_resilience":
+            xlsx_bytes = _build_network_xlsx(r, tool, report)
+            suffix = "_弱网断网测试报告"
+        else:
+            xlsx_bytes = _build_testcase_xlsx(r, tool, report)
+            suffix = "_testcases"
         return Response(
             content=xlsx_bytes,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="{fname_base}_testcases.xlsx"'},
+            headers={"Content-Disposition": f'attachment; filename="{fname_base}{suffix}.xlsx"'},
         )
     # html
     body = _build_html_report(r, tool, report)
@@ -4151,6 +4160,200 @@ async def api_report_export(run_id: str, fmt: str, request: Request) -> Any:
         content=body, media_type="text/html; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{fname_base}.html"'},
     )
+
+
+# ══════════════════ SEO 深度审计:真实采集 → Excel ══════════════════
+def _seo_baseline_path(host: str):
+    d = settings.report_output_dir.parent.parent / "seo_baselines"
+    d.mkdir(parents=True, exist_ok=True)
+    safe = _re.sub(r"[^0-9a-zA-Z._-]", "_", host or "site")
+    return d / f"{safe}.json"
+
+
+def _load_seo_baseline(host: str) -> dict[str, Any] | None:
+    try:
+        p = _seo_baseline_path(host)
+        if p.exists():
+            return _json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return None
+
+
+def _save_seo_baseline(host: str, seo_data: dict[str, Any]) -> None:
+    try:
+        # 只存摘要(避免基线文件过大)
+        _seo_baseline_path(host).write_text(
+            _json.dumps({"summary": seo_data.get("summary", {}), "crawled_at": seo_data.get("crawled_at", "")},
+                        ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _seo_data_to_prompt(sd: dict[str, Any]) -> str:
+    s = sd.get("summary", {}); t = sd.get("tech", {}); sm = sd.get("sitemap", {})
+    L = ["## 真实全站 SEO 采集结果(以下分析与问题清单必须基于这些真实数据,不得臆测)"]
+    L.append(f"- 爬取 {s.get('pages_crawled')} 页(200 OK {s.get('pages_ok')}),最大深度 {s.get('max_depth')},死链 {s.get('dead_links')},孤儿页 {s.get('orphan_pages')}")
+    L.append(f"- 内链 {s.get('internal_links')} 条,通用/空锚文本 {s.get('generic_anchor_pct')}%")
+    L.append(f"- 标题重复 {s.get('title_dup')} 页,描述<50字 {s.get('desc_short')} 页,描述缺失 {s.get('desc_missing')} 页")
+    L.append(f"- 图片Alt<80% {s.get('alt_below80')} 页,H1 i18n占位符泄漏 {s.get('h1_i18n_leak')} 页,EN页title含中文 {s.get('en_title_cn')} 页,JSON-LD缺失 {s.get('jsonld_missing')} 页")
+    L.append(f"- 技术SEO:HTTP {t.get('http_version')},HTTPS={t.get('https')},HSTS={'有' if t.get('hsts') else '缺'},CSP={'有' if t.get('csp') else '缺'},nosniff={'有' if t.get('x_content_type_options') else '缺'},压缩={t.get('content_encoding') or '无'}")
+    L.append(f"- sitemap:HTTP {sm.get('index_status')},{sm.get('url_count')} URL,含lastmod {sm.get('with_lastmod')},爬取覆盖 {sm.get('crawl_coverage_pct')}%,robots中Sitemap协议 {sm.get('protocol_in_robots')}")
+    cwv = sd.get("cwv", {}) or {}
+    cl = [f"{k}(LCP{v.get('lcp')}ms/CLS{v.get('cls')}/{v.get('verdict')})" for k, v in cwv.items() if isinstance(v, dict) and v.get("lcp")]
+    if cl:
+        L.append("- Core Web Vitals 实测:" + "; ".join(cl))
+    if sd.get("jsonld_dist"):
+        L.append("- JSON-LD 类型分布:" + ", ".join(f"{k}×{v}" for k, v in list(sd["jsonld_dist"].items())[:8]))
+    for name, info in (sd.get("templates") or {}).items():
+        top = ", ".join(f"{k}×{v}" for k, v in sorted(info.get("issues", {}).items(), key=lambda x: -x[1])[:3])
+        L.append(f"  · 模板[{name}] {info['pages']}页 通过{info['pass']}/警告{info['warn']}/不通过{info['fail']} 主要问题:{top or '无'}")
+    return "\n".join(L)
+
+
+async def _seo_run_collect(ctx: Any, state: dict[str, Any]) -> None:
+    """SEO 真实采集:全站 BFS 爬取 + 逐页解析 + Core Web Vitals 实测 → ctx/state。
+    采集摘要注入 documents 供 LLM 综合分析;原始数据存 state 供 Excel 渲染。"""
+    docs = (ctx.inputs or {}).get("documents") or ""
+    m = _re.search(r"https?://[^\s\"'<>)]+", docs if isinstance(docs, str) else "")
+    if not m:
+        state.setdefault("logs", []).append({"ts": _time.time(), "event": "seo.skip", "reason": "材料无 URL"})
+        return
+    entry = m.group(0).rstrip(".,;)")
+    from packages.core.seo import crawl_and_audit, measure_cwv
+    state["progress"] = "SEO 全站爬取中…"
+    data = await crawl_and_audit(
+        entry, max_pages=300, max_depth=4,
+        on_progress=lambda n, tot, u: state.update({"progress": f"SEO 爬取 {n}/{tot} 页…"}))
+    # 每模板取一个代表页实测 CWV
+    reps: dict[str, str] = {}
+    for p in data.pages:
+        if p.status == 200 and p.template not in reps:
+            reps[p.template] = p.url
+    state["progress"] = "实测 Core Web Vitals…"
+    try:
+        data.cwv = await measure_cwv(dict(list(reps.items())[:10]),
+                                     on_progress=lambda tm, mm: state.update({"progress": f"CWV 实测:{tm}…"}))
+    except Exception as exc:
+        data.cwv = {"error": str(exc)[:150]}
+    try:
+        import datetime as _dt
+        data.crawled_at = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        pass
+    sd = data.to_dict()
+    state["seo_data"] = sd
+    state["seo_baseline"] = _load_seo_baseline(data.host)
+    _save_seo_baseline(data.host, sd)
+    ctx.inputs["documents"] = (docs or "") + "\n\n" + _seo_data_to_prompt(sd)
+    state.setdefault("logs", []).append({
+        "ts": _time.time(), "event": "seo.collected", "pages": len(data.pages),
+        "cwv": len([k for k, v in data.cwv.items() if isinstance(v, dict)]) if isinstance(data.cwv, dict) else 0})
+
+
+def _seo_strengths(sd: dict[str, Any]) -> list[str]:
+    out: list[str] = []
+    t = sd.get("tech", {}); s = sd.get("summary", {}); sm = sd.get("sitemap", {})
+    if t.get("https"):
+        out.append("全站 HTTPS")
+    if t.get("hsts"):
+        out.append("已配置 HSTS")
+    if t.get("http_version") and "2" in str(t.get("http_version")) + str(t.get("alt_svc")):
+        out.append(f"HTTP {t.get('http_version')}" + ("+HTTP/3 alt-svc" if t.get("alt_svc") else ""))
+    if s.get("dead_links") == 0:
+        out.append(f"0 死链、{s.get('orphan_pages', 0)} 孤儿页,内链结构健康")
+    if s.get("generic_anchor_pct", 100) < 5:
+        out.append(f"内链锚文本通用/空占比仅 {s.get('generic_anchor_pct')}%")
+    if sd.get("jsonld_dist"):
+        out.append(f"JSON-LD 全站铺开(共 {sum(sd['jsonld_dist'].values())} 项,{len(sd['jsonld_dist'])} 种 @type)")
+    if sm.get("index_status") == 200 and sm.get("url_count", 0) > 0:
+        out.append(f"sitemap 正常({sm.get('url_count'):,} URL,含 lastmod {sm.get('with_lastmod', 0)})")
+    return out
+
+
+def _seo_synthesis(report: dict[str, Any], seo_data: dict[str, Any]) -> dict[str, Any]:
+    """把 LLM 报告(verdict/issues)+ 采集数据,组装成 Excel 需要的 synthesis。"""
+    issues = report.get("issues") or []
+    core = "；".join(str(i.get("title") or i.get("current_behavior") or "") for i in issues[:3] if (i.get("title") or i.get("current_behavior")))
+    actions = "；".join(str(i.get("fix_suggestion") or "") for i in issues[:3] if i.get("fix_suggestion"))
+    return {
+        "overview": {
+            "评定": report.get("verdict_summary") or report.get("verdict") or "(见各 sheet 明细)",
+            "核心问题": core or "(未识别出突出问题)",
+            "后续动作": actions or "(无)",
+        },
+        "issues": issues,
+        "strengths": _seo_strengths(seo_data),
+    }
+
+
+def _build_seo_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, Any]) -> bytes:
+    from packages.reporting.seo_excel import build_seo_xlsx
+    meta = report.get("meta") or {}
+    seo_data = meta.get("seo_data") or {}
+    baseline = meta.get("seo_baseline")
+    synthesis = _seo_synthesis(report, seo_data)
+    host = seo_data.get("host") or ""
+    m = {"site": seo_data.get("base_url", ""), "site_name": host or "站点",
+         "run_id": r.get("run_id", ""), "model": meta.get("model", ""),
+         "crawled_at": seo_data.get("crawled_at", ""), "baseline": baseline}
+    return build_seo_xlsx(seo_data, synthesis, m)
+
+
+def _build_network_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, Any]) -> bytes:
+    """弱网/断网测试 → Excel(多档位矩阵 + 行为 + 韧性 + 问题清单 + 标准)。"""
+    from packages.reporting.network_excel import build_network_xlsx
+    meta = report.get("meta") or {}
+    nd = meta.get("network_data") or {}
+    m = {"site": nd.get("url") or meta.get("target") or "", "run_id": r.get("run_id", ""),
+         "model": meta.get("model", ""), "tested_at": nd.get("tested_at") or meta.get("tested_at", "")}
+    return build_network_xlsx(report, nd, m)
+
+
+def _netdata_to_prompt(nd: dict[str, Any]) -> str:
+    L = ["## 真实弱网/断网多档位实测结果(结论与问题清单须基于这些真实数据)"]
+    for p in nd.get("profiles", []):
+        L.append(f"- [{p.get('profile')}] 到达={p.get('reached')} 状态={p.get('status')} "
+                 f"加载={p.get('load_ms')}ms FCP={p.get('fcp_ms')}ms 可见{p.get('text_len')}字符 "
+                 f"控制台错误{p.get('console_errors')} 加载态={p.get('has_spinner')} 错误提示={p.get('has_error_ui')} "
+                 f"超时={p.get('timed_out')} → 判定 {p.get('verdict')}")
+    rec = nd.get("recovery", {}) or {}
+    L.append(f"- 韧性:在线加载={rec.get('online_ok')},断网重载错误提示={rec.get('offline_has_error_ui')}"
+             f"(可见{rec.get('offline_text_len','?')}字符),恢复在线后={'已自动恢复' if rec.get('recovered') else '未自动恢复'}")
+    return "\n".join(L)
+
+
+async def _network_run_collect(ctx: Any, state: dict[str, Any]) -> None:
+    """弱网/断网:Playwright CDP 多档位真实限速/断网实测 → ctx/state。"""
+    docs = (ctx.inputs or {}).get("documents") or ""
+    m = _re.search(r"https?://[^\s\"'<>)]+", docs if isinstance(docs, str) else "")
+    if not m:
+        state.setdefault("logs", []).append({"ts": _time.time(), "event": "net.skip", "reason": "材料无 URL"})
+        return
+    url = m.group(0).rstrip(".,;)")
+    from packages.core.netprobe import probe_network
+    shots_dir = Path(settings.evidence_output_dir) / "screenshots"
+    state["progress"] = "弱网/断网多档位实测中…"
+    data = await probe_network(
+        url, shots_dir, name_prefix=f"net_{ctx.run_id[:8]}",
+        on_progress=lambda pn, i, tot: state.update({"progress": f"网络档位实测 {i}/{tot}:{pn}…"}))
+    try:
+        import datetime as _dt
+        data.tested_at = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        pass
+    nd = data.to_dict()
+    state["network_data"] = nd
+    # 把各档位截图登记为报告截图(让 HTML/报告能看到弱网/断网实拍)
+    shots = [{"filename": p["screenshot"], "url": f"net://{p['profile']}", "viewport": "390x844",
+              "width": 390, "height": 844, "label": p["profile"]}
+             for p in nd.get("profiles", []) if p.get("screenshot")]
+    if shots:
+        state["screenshots"] = (state.get("screenshots") or []) + shots
+        ctx.screenshots = (getattr(ctx, "screenshots", None) or []) + shots
+    ctx.inputs["documents"] = (docs or "") + "\n\n" + _netdata_to_prompt(nd)
+    state.setdefault("logs", []).append({
+        "ts": _time.time(), "event": "net.collected", "profiles": len(nd.get("profiles", []))})
 
 
 def _build_testcase_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, Any]) -> bytes:
@@ -5162,10 +5365,8 @@ async def _run_tool_async(
         }[tool["id"]]
         # ── 各工具的「AI 真执行」前置阶段(全 agentic,把真实执行结果注入材料)──
         _browser_cfg = {
-            "seo_audit":          {"prompt": "seo_audit/_execute.md",          "http": False, "net": False},
             "h5_adapt":           {"prompt": "h5_adapt/_execute.md",           "http": False, "net": False},
             "step6":              {"prompt": "step6_agent/_execute.md",        "http": True,  "net": False},
-            "network_resilience": {"prompt": "network_resilience/_execute.md", "http": False, "net": True},
         }
         # 用户上传的文件(PDF/图片/文本/Office):按 documents 里的 file_ref 标记
         # 加载真实文件 → ctx.files。先于 agentic 执行阶段加载,使 step4/浏览器
@@ -5190,6 +5391,21 @@ async def _run_tool_async(
             except Exception as exc:
                 state.setdefault("logs", []).append({
                     "ts": _time.time(), "event": "api.execute.failed", "error": str(exc)[:200]})
+        elif tool["id"] == "seo_audit":
+            # SEO:真实全站 BFS 爬取 + 逐页解析 + Core Web Vitals 实测(确定性采集),
+            # 采集摘要注入材料供 LLM 综合分析,原始数据存 state 供 Excel 渲染。
+            try:
+                await _seo_run_collect(ctx, state)
+            except Exception as exc:
+                state.setdefault("logs", []).append({
+                    "ts": _time.time(), "event": "seo.collect.failed", "error": str(exc)[:200]})
+        elif tool["id"] == "network_resilience":
+            # 弱网/断网:Playwright CDP 多档位真实限速/断网实测 → 数据存 state 供 Excel。
+            try:
+                await _network_run_collect(ctx, state)
+            except Exception as exc:
+                state.setdefault("logs", []).append({
+                    "ts": _time.time(), "event": "net.collect.failed", "error": str(exc)[:200]})
         elif tool["id"] in _browser_cfg:
             # AI 真驱动浏览器(SEO 爬站 / H5 多视口 / step6 端到端 / 弱网容错)
             cfg = _browser_cfg[tool["id"]]
@@ -5248,6 +5464,14 @@ async def _run_tool_async(
             except Exception:
                 pass
             report_meta["screenshots"] = shots_list
+        # SEO:把真实采集数据 + 基线一并存进报告 meta,供 Excel 导出渲染 10 sheet
+        if state.get("seo_data"):
+            report_meta["seo_data"] = state["seo_data"]
+            if state.get("seo_baseline"):
+                report_meta["seo_baseline"] = state["seo_baseline"]
+        # 弱网/断网:多档位实测数据存 meta,供 Excel 渲染
+        if state.get("network_data"):
+            report_meta["network_data"] = state["network_data"]
         report_path = out_dir / f"{tool['id']}_{ctx.run_id}.json"
         report_path.write_text(
             _json.dumps(report_dump, ensure_ascii=False, indent=2),
@@ -10655,6 +10879,77 @@ TOOL_DETAIL_HTML = r"""<!doctype html>
     background:var(--surface-3);color:var(--fg-3);border:1px solid var(--line-1)}
   .anchor-nav a.current .num{background:var(--ac);color:#001a14;border-color:transparent}
   @media (max-width:1080px){.anchor-nav{display:none}}
+
+  /* ===== 执行摘要组件 — 统一为定稿样式(覆盖旧规则,与下载/导出一致) ===== */
+  .exec-block{border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:0 0 16px;background:#fff;box-shadow:0 1px 3px rgba(16,24,40,.04)}
+  .exec-verdict-block{background:linear-gradient(180deg,#fafdfd,#fff)}
+  .exec-head{display:flex;align-items:center;gap:11px;margin-bottom:16px}
+  .exec-num{font-family:var(--mono);font-size:12px;font-weight:700;color:#fff;background:var(--ac);width:25px;height:25px;border-radius:8px;display:grid;place-items:center;flex-shrink:0;box-shadow:0 2px 6px rgba(13,148,136,.3)}
+  .exec-head h3{margin:0;font-size:15px;font-weight:650;letter-spacing:-.01em}
+  .exec-count{margin-left:auto;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--fg-3);background:var(--surface);padding:3px 11px;border-radius:20px;border:1px solid var(--line)}
+  .exec-count.danger{color:var(--bad);background:rgba(220,38,38,.07);border-color:rgba(220,38,38,.22)}
+  .verdict{padding:9px 18px;display:inline-flex;align-items:center;gap:9px;font-size:18px;font-weight:680;border-radius:11px;margin-bottom:14px;border:none}
+  .verdict.ok,.verdict.proceed{background:rgba(5,150,105,.09);color:var(--ok)}
+  .verdict.warn,.verdict.proceed_with_warning{background:rgba(180,83,9,.1);color:var(--warn)}
+  .verdict.bad,.verdict.reject{background:rgba(220,38,38,.09);color:var(--bad)}
+  .verdict-icon{font-size:19px}
+  .verdict-summary{font-size:14px;color:var(--fg-2);line-height:1.78;margin-bottom:18px}
+  .exec-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-bottom:16px}
+  .exec-kpi{flex-direction:column;align-items:center;justify-content:center;background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:15px 12px;text-align:center}
+  .exec-kpi-num{display:block;font-size:28px;font-weight:720;color:var(--fg);line-height:1;font-family:var(--mono);letter-spacing:-.02em}
+  .exec-kpi-lbl{display:block;font-size:11.5px;color:var(--fg-3);margin-top:7px;font-weight:500}
+  .sev-bar{display:flex;height:30px;border-radius:8px;overflow:hidden;border:1px solid var(--line);margin-top:14px;box-shadow:inset 0 1px 2px rgba(0,0,0,.04)}
+  .sev-bar-seg{display:grid;place-items:center;color:#fff;font-family:var(--mono);font-size:12px;font-weight:700;min-width:26px}
+  .sev-bar-critical{background:#dc2626}.sev-bar-high{background:#f97316}
+  .sev-bar-medium{background:#eab308;color:#422006}.sev-bar-low{background:#94a3b8}.sev-bar-info{background:#06b6d4}
+  .sev-tag{font-family:var(--mono);font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0}
+  .sev-tag.sev-critical{background:#fee2e2;color:#991b1b}
+  .sev-tag.sev-high{background:#ffedd5;color:#c2410c}
+  .sev-tag.sev-medium{background:#fef9c3;color:#854d0e}
+  .sev-tag.sev-low{background:#f1f5f9;color:#475569}
+  .sev-tag.sev-info{background:#cffafe;color:#0e7490}
+  .exec-risk-list,.exec-blocker-list{display:flex;flex-direction:column;gap:10px}
+  .exec-risk-item,.exec-blocker-item{border:1px solid var(--line);border-left:3px solid var(--line-2);border-radius:9px;padding:13px 15px;background:var(--surface)}
+  .exec-blocker-item{border-left-color:var(--bad)}
+  .exec-risk-head,.exec-blocker-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px}
+  .exec-risk-title,.exec-blocker-title{font-weight:620;font-size:13.5px;color:var(--fg)}
+  .exec-risk-line,.exec-blocker-line{font-size:12.5px;color:var(--fg-2);line-height:1.65;margin-top:5px;display:flex;gap:9px}
+  .exec-risk-line .lbl,.exec-blocker-line .lbl{color:var(--fg-3);font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;width:52px;padding-top:1px}
+  .exec-blocker-line.fix .lbl{color:var(--ac)}
+  .blocker-tag{font-family:var(--mono);font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px;background:rgba(220,38,38,.1);color:var(--bad);text-transform:uppercase;letter-spacing:.05em;flex-shrink:0}
+  .meta-chip{font-family:var(--mono);font-size:11px;color:var(--fg-2);background:#fff;border:1px solid var(--line);padding:2px 8px;border-radius:5px;font-weight:500}
+  .meta-chip.role{background:var(--surface-2);border-color:transparent}
+  .meta-chip.pri-P0{background:#fee2e2;color:#991b1b;border-color:transparent}
+  .meta-chip.pri-P1{background:#ffedd5;color:#c2410c;border-color:transparent}
+  .meta-chip.pri-P2{background:#fef9c3;color:#854d0e;border-color:transparent}
+  .meta-chip.pri-P3{background:#f1f5f9;color:#475569;border-color:transparent}
+  .exec-issue{border:1px solid var(--line);border-radius:11px;padding:16px 18px;margin-bottom:12px;background:#fff;border-left:4px solid var(--line-2)}
+  .exec-issue.sev-critical{border-left-color:#dc2626}
+  .exec-issue.sev-high{border-left-color:#f97316}
+  .exec-issue.sev-medium{border-left-color:#eab308}
+  .exec-issue.sev-low{border-left-color:#94a3b8}
+  .exec-issue-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .exec-issue-title{font-weight:650;font-size:14.5px;color:var(--fg);letter-spacing:-.01em;line-height:1.4}
+  .exec-issue-meta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:11px}
+  .exec-issue-loc{font-size:12px;color:var(--fg-3);margin-bottom:6px}
+  .exec-issue-loc code{font-size:11px}
+  .exec-issue-impact,.exec-issue-evidence{font-size:12.5px;color:var(--fg-2);line-height:1.65;margin-top:5px}
+  .exec-issue-section{display:grid;grid-template-columns:68px 1fr;gap:13px;padding:9px 0;border-top:1px dashed var(--line)}
+  .exec-issue-section .sec-lbl{font-size:11px;font-weight:600;color:var(--fg-3);text-transform:uppercase;letter-spacing:.04em;padding-top:1px}
+  .exec-issue-section.fix .sec-lbl{color:var(--ac)}
+  .exec-issue-section.verify .sec-lbl{color:var(--ok)}
+  .exec-issue-section .sec-body{font-size:13px;color:var(--fg-2);line-height:1.72;min-width:0}
+  .repro-list{margin:0 0 8px;padding-left:18px;font-size:12.5px;line-height:1.7;color:var(--fg-2)}
+  .repro-list li{margin:2px 0}
+  .accept-line{font-size:12.5px;color:#047857;background:rgba(5,150,105,.06);border-radius:6px;padding:7px 11px;line-height:1.6;margin-top:4px}
+  .related-cases{font-size:12px;color:var(--fg-3);margin-top:12px;padding-top:11px;border-top:1px dashed var(--line)}
+  .related-cases code{font-size:11px}
+  .pri-tag{font-family:var(--mono);font-size:10px;font-weight:700;padding:1px 7px;border-radius:4px}
+  .pri-tag.pri-P0{background:#fee2e2;color:#991b1b}.pri-tag.pri-P1{background:#ffedd5;color:#c2410c}
+  .pri-tag.pri-P2{background:#fef9c3;color:#854d0e}.pri-tag.pri-P3{background:#f1f5f9;color:#475569}
+  .case-type{font-family:var(--mono);font-size:10.5px;color:var(--fg-2);background:var(--surface-2);padding:1px 7px;border-radius:4px}
+  .case-auto{font-family:var(--mono);font-size:10.5px;color:var(--ac-2)}
+  .case-title{font-family:var(--sans);font-size:12.5px;color:var(--fg);font-weight:500}
 </style></head>
 <body>
 <div class="topbar">
@@ -12306,6 +12601,89 @@ details.report-detail[open] > div{margin:6px 0 6px 16px;padding:8px 12px;
   .standalone-nav button:active{transform:translateY(0)}
   @media print{.standalone-nav{display:none}}
   body{padding-top:60px}
+
+  /* ===== 执行摘要组件(补齐 + 美化,与 6 个 HTML 工具统一) ===== */
+  h1{font-size:23px;font-weight:680;letter-spacing:-.02em;margin:0 0 10px}
+  .report-hero{align-items:center;background:linear-gradient(180deg,#fbfcfe,#fff)}
+  .report-hero .report-icon{font-size:22px;background:linear-gradient(135deg,#0d9488,#0891b2);border:none;color:#fff;box-shadow:0 4px 12px rgba(13,148,136,.28)}
+  .report-hero h4{font-size:13px;color:var(--fg-3);font-weight:500}
+  .exec-block{border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:0 0 16px;background:#fff;box-shadow:0 1px 3px rgba(16,24,40,.04);page-break-inside:avoid}
+  .exec-verdict-block{background:linear-gradient(180deg,#fafdfd,#fff)}
+  .exec-head{display:flex;align-items:center;gap:11px;margin-bottom:16px}
+  .exec-num{font-family:var(--mono);font-size:12px;font-weight:700;color:#fff;background:var(--ac);width:25px;height:25px;border-radius:8px;display:grid;place-items:center;flex-shrink:0;box-shadow:0 2px 6px rgba(13,148,136,.3)}
+  .exec-head h3{margin:0;font-size:15px;font-weight:650;letter-spacing:-.01em}
+  .exec-count{margin-left:auto;font-family:var(--mono);font-size:12px;font-weight:600;color:var(--fg-3);background:var(--surface);padding:3px 11px;border-radius:20px;border:1px solid var(--line)}
+  .exec-count.danger{color:var(--bad);background:rgba(220,38,38,.07);border-color:rgba(220,38,38,.22)}
+  .verdict{display:inline-flex;align-items:center;gap:9px;font-size:18px;font-weight:680;padding:9px 18px;border-radius:11px;margin-bottom:14px}
+  .verdict.ok,.verdict.proceed{background:rgba(5,150,105,.09);color:var(--ok)}
+  .verdict.warn,.verdict.proceed_with_warning{background:rgba(180,83,9,.1);color:var(--warn)}
+  .verdict.bad,.verdict.reject{background:rgba(220,38,38,.09);color:var(--bad)}
+  .verdict-icon{font-size:19px}
+  .verdict-summary{font-size:14px;color:var(--fg-2);line-height:1.78;margin-bottom:18px}
+  .exec-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin-bottom:16px}
+  .exec-kpi{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:15px 12px;text-align:center}
+  .exec-kpi-num{display:block;font-size:28px;font-weight:720;color:var(--fg);line-height:1;font-family:var(--mono);letter-spacing:-.02em}
+  .exec-kpi-lbl{display:block;font-size:11.5px;color:var(--fg-3);margin-top:7px;font-weight:500}
+  .sev-bar{display:flex;height:30px;border-radius:8px;overflow:hidden;border:1px solid var(--line);box-shadow:inset 0 1px 2px rgba(0,0,0,.04)}
+  .sev-bar-seg{display:grid;place-items:center;color:#fff;font-family:var(--mono);font-size:12px;font-weight:700;min-width:26px}
+  .sev-bar-critical{background:#dc2626}.sev-bar-high{background:#f97316}
+  .sev-bar-medium{background:#eab308;color:#422006}.sev-bar-low{background:#94a3b8}.sev-bar-info{background:#06b6d4}
+  .sev-tag{font-family:var(--mono);font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0}
+  .sev-tag.sev-critical{background:#fee2e2;color:#991b1b}
+  .sev-tag.sev-high{background:#ffedd5;color:#c2410c}
+  .sev-tag.sev-medium{background:#fef9c3;color:#854d0e}
+  .sev-tag.sev-low{background:#f1f5f9;color:#475569}
+  .sev-tag.sev-info{background:#cffafe;color:#0e7490}
+  .exec-risk-list,.exec-blocker-list{display:flex;flex-direction:column;gap:10px}
+  .exec-risk-item,.exec-blocker-item{border:1px solid var(--line);border-left:3px solid var(--line-2);border-radius:9px;padding:13px 15px;background:var(--surface)}
+  .exec-blocker-item{border-left-color:var(--bad)}
+  .exec-risk-head,.exec-blocker-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px}
+  .exec-risk-title,.exec-blocker-title{font-weight:620;font-size:13.5px;color:var(--fg)}
+  .exec-risk-line,.exec-blocker-line{font-size:12.5px;color:var(--fg-2);line-height:1.65;margin-top:5px;display:flex;gap:9px}
+  .exec-risk-line .lbl,.exec-blocker-line .lbl{color:var(--fg-3);font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;width:52px;padding-top:1px}
+  .exec-blocker-line.fix .lbl{color:var(--ac)}
+  .blocker-tag{font-family:var(--mono);font-size:10px;font-weight:700;padding:2px 8px;border-radius:5px;background:rgba(220,38,38,.1);color:var(--bad);text-transform:uppercase;letter-spacing:.05em;flex-shrink:0}
+  .meta-chip{font-family:var(--mono);font-size:11px;color:var(--fg-2);background:#fff;border:1px solid var(--line);padding:2px 8px;border-radius:5px;font-weight:500}
+  .meta-chip.role{background:var(--surface-2);border-color:transparent}
+  .meta-chip.pri-P0{background:#fee2e2;color:#991b1b;border-color:transparent}
+  .meta-chip.pri-P1{background:#ffedd5;color:#c2410c;border-color:transparent}
+  .meta-chip.pri-P2{background:#fef9c3;color:#854d0e;border-color:transparent}
+  .meta-chip.pri-P3{background:#f1f5f9;color:#475569;border-color:transparent}
+  .exec-issue{border:1px solid var(--line);border-radius:11px;padding:16px 18px;margin-bottom:12px;background:#fff;border-left-width:4px;page-break-inside:avoid}
+  .exec-issue.sev-critical{border-left-color:#dc2626}
+  .exec-issue.sev-high{border-left-color:#f97316}
+  .exec-issue.sev-medium{border-left-color:#eab308}
+  .exec-issue.sev-low{border-left-color:#94a3b8}
+  .exec-issue-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .exec-issue-title{font-weight:650;font-size:14.5px;color:var(--fg);letter-spacing:-.01em;line-height:1.4}
+  .exec-issue-meta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:11px}
+  .exec-issue-loc{font-size:12px;color:var(--fg-3);margin-bottom:6px}
+  .exec-issue-loc code{font-size:11px}
+  .exec-issue-impact,.exec-issue-evidence{font-size:12.5px;color:var(--fg-2);line-height:1.65;margin-top:5px}
+  .exec-issue-section{display:grid;grid-template-columns:68px 1fr;gap:13px;padding:9px 0;border-top:1px dashed var(--line)}
+  .exec-issue-section .sec-lbl{font-size:11px;font-weight:600;color:var(--fg-3);text-transform:uppercase;letter-spacing:.04em;padding-top:1px}
+  .exec-issue-section.fix .sec-lbl{color:var(--ac)}
+  .exec-issue-section.verify .sec-lbl{color:var(--ok)}
+  .exec-issue-section .sec-body{font-size:13px;color:var(--fg-2);line-height:1.72;min-width:0}
+  .repro-list{margin:0 0 8px;padding-left:18px;font-size:12.5px;line-height:1.7;color:var(--fg-2)}
+  .repro-list li{margin:2px 0}
+  .accept-line{font-size:12.5px;color:#047857;background:rgba(5,150,105,.06);border-radius:6px;padding:7px 11px;line-height:1.6;margin-top:4px}
+  .related-cases{font-size:12px;color:var(--fg-3);margin-top:12px;padding-top:11px;border-top:1px dashed var(--line)}
+  .related-cases code{font-size:11px}
+  .case-row.pri-P0{box-shadow:inset 3px 0 0 #dc2626}
+  .case-row.pri-P1{box-shadow:inset 3px 0 0 #f97316}
+  .case-row.pri-P2{box-shadow:inset 3px 0 0 #eab308}
+  .case-idx{color:var(--fg-4);font-size:11px;text-align:center;width:30px}
+  .case-id{font-size:11px}
+  .case-title{font-family:var(--sans);font-size:12.5px;color:var(--fg);font-weight:500}
+  .pri-tag{font-family:var(--mono);font-size:10px;font-weight:700;padding:1px 7px;border-radius:4px}
+  .pri-tag.pri-P0{background:#fee2e2;color:#991b1b}.pri-tag.pri-P1{background:#ffedd5;color:#c2410c}
+  .pri-tag.pri-P2{background:#fef9c3;color:#854d0e}.pri-tag.pri-P3{background:#f1f5f9;color:#475569}
+  .case-type{font-family:var(--mono);font-size:10.5px;color:var(--fg-2);background:var(--surface-2);padding:1px 7px;border-radius:4px}
+  .case-auto{font-family:var(--mono);font-size:10.5px;color:var(--ac-2)}
+  .case-status{font-size:11.5px;color:var(--fg-3)}
+  .case-status-muted{color:var(--fg-4)}
+  .case-status::before{content:"●";font-size:8px;margin-right:4px;color:#cbd5e1;vertical-align:middle}
   </style>
 </head>
 <body>
