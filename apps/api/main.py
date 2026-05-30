@@ -3436,9 +3436,12 @@ async def _execute_apis_agentic(ctx: Any, state: dict[str, Any]) -> dict[str, An
     AI 看真实响应找 bug。真实 req/resp 记录注入 documents,供后续 substep 分析。
     """
     docs = (ctx.inputs or {}).get("documents") or ""
-    if not isinstance(docs, str) or not _re.search(r"https?://", docs):
+    # 有上传文件(接口文档 PDF/文本)时,URL 可能在文件里 → 不因文本无 URL 而跳过;
+    # agent 会从附带的文件内容块里读出接口地址再真发请求。
+    has_files = bool(getattr(ctx, "files", None))
+    if (not isinstance(docs, str) or not _re.search(r"https?://", docs)) and not has_files:
         state.setdefault("logs", []).append({
-            "ts": _time.time(), "event": "api.execute.skip", "reason": "材料里没有可调用的 URL"})
+            "ts": _time.time(), "event": "api.execute.skip", "reason": "材料里没有可调用的 URL,也无上传文件"})
         return None
     import httpx
     from packages.core.agent import agent_loop
@@ -3475,6 +3478,7 @@ async def _execute_apis_agentic(ctx: Any, state: dict[str, Any]) -> dict[str, An
     res = await agent_loop(
         ctx.llm, sysp, task, {"send_request": http_request}, max_steps=18,
         on_step=lambda r: state.update({"progress": f"接口测试 第{r.get('step')}步: {(r.get('args') or {}).get('method','')} {(r.get('args') or {}).get('url','')[:50]}"}),
+        files=getattr(ctx, "files", None),  # 上传的接口文档(PDF/文本)直传给规划 AI
     )
     # 把真实调用记录注入 documents,供 5 个 substep 基于真实结果分析
     lines = ["", "", "## 真实接口调用记录(AI 实测,以下结论须基于这些真实 req/resp)"]
@@ -3502,8 +3506,9 @@ async def _run_browser_agent(
     服务 SEO / H5 / step6 / 弱网。真实执行记录注入 documents。
     """
     docs = (ctx.inputs or {}).get("documents") or ""
-    if not isinstance(docs, str) or not _re.search(r"https?://", docs):
-        state.setdefault("logs", []).append({"ts": _time.time(), "event": "browser.agent.skip", "reason": "材料无 URL"})
+    has_files = bool(getattr(ctx, "files", None))
+    if (not isinstance(docs, str) or not _re.search(r"https?://", docs)) and not has_files:
+        state.setdefault("logs", []).append({"ts": _time.time(), "event": "browser.agent.skip", "reason": "材料无 URL,也无上传文件"})
         return None
     try:
         from playwright.async_api import async_playwright
@@ -3634,7 +3639,8 @@ async def _run_browser_agent(
         state["progress"] = "AI 真实驱动浏览器中…"
         res = await agent_loop(
             ctx.llm, sysp, task, handlers, max_steps=max_steps,
-            on_step=lambda r: state.update({"progress": f"浏览器执行 第{r.get('step')}步: {r.get('action')}"}))
+            on_step=lambda r: state.update({"progress": f"浏览器执行 第{r.get('step')}步: {r.get('action')}"}),
+            files=getattr(ctx, "files", None))  # 上传的目标说明文件直传给规划 AI
         try:
             await browser.close()
         except Exception:
@@ -3650,6 +3656,43 @@ async def _run_browser_agent(
     state.setdefault("logs", []).append({"ts": _time.time(), "event": "browser.agent",
                                           "steps": res.get("steps"), "findings": len(res.get("findings") or [])})
     return res
+
+
+def _load_uploaded_files(ctx: Any) -> list[dict[str, Any]]:
+    """从 documents 文本里解析 file_ref=<id>,加载真实文件元数据(uploads/files/<id>.json)。
+
+    返回 [{path, mime, kind, filename}] 供 base.run_substep 作为 document/image
+    内容块经 stdin 直传 LLM。文件缺失/元数据损坏则跳过(不影响其余)。
+    """
+    docs = (ctx.inputs or {}).get("documents") or ""
+    if not isinstance(docs, str):
+        try:
+            docs = _json.dumps(docs, ensure_ascii=False)
+        except Exception:
+            docs = str(docs)
+    refs = list(dict.fromkeys(_re.findall(r"file_ref=([0-9a-fA-F]{6,32})", docs)))
+    if not refs:
+        return []
+    files_dir = settings.report_output_dir.parent.parent / "uploads" / "files"
+    out: list[dict[str, Any]] = []
+    for ref in refs[:20]:
+        meta_p = files_dir / f"{ref}.json"
+        if not meta_p.exists():
+            continue
+        try:
+            meta = _json.loads(meta_p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        p = meta.get("path")
+        if not p or not Path(p).exists():
+            continue
+        out.append({
+            "path": p,
+            "mime": meta.get("mime") or "",
+            "kind": meta.get("kind") or "document_text",
+            "filename": meta.get("filename") or Path(p).name,
+        })
+    return out
 
 
 async def _capture_screenshots_for_tool(
@@ -5124,6 +5167,22 @@ async def _run_tool_async(
             "step6":              {"prompt": "step6_agent/_execute.md",        "http": True,  "net": False},
             "network_resilience": {"prompt": "network_resilience/_execute.md", "http": False, "net": True},
         }
+        # 用户上传的文件(PDF/图片/文本/Office):按 documents 里的 file_ref 标记
+        # 加载真实文件 → ctx.files。先于 agentic 执行阶段加载,使 step4/浏览器
+        # 规划阶段也能"看到"上传文件;base.run_substep 同样把它们作为
+        # document/image 内容块经 stdin 直传 LLM(不读成文本塞进 prompt)。
+        try:
+            uf = _load_uploaded_files(ctx)
+            if uf:
+                ctx.files = uf
+                state["uploaded_files"] = [{"filename": f["filename"], "kind": f["kind"]} for f in uf]
+                state.setdefault("logs", []).append({
+                    "ts": _time.time(), "event": "files.loaded", "count": len(uf),
+                    "names": [f["filename"] for f in uf][:10]})
+        except Exception as exc:
+            state.setdefault("logs", []).append({
+                "ts": _time.time(), "event": "files.load.failed", "error": str(exc)[:200]})
+
         if tool["id"] == "step4":
             # AI 真发 HTTP 请求看真实响应
             try:
@@ -5145,6 +5204,7 @@ async def _run_tool_async(
             except Exception as exc:
                 state.setdefault("logs", []).append({
                     "ts": _time.time(), "event": "browser.agent.failed", "error": str(exc)[:200]})
+
         # For UI-related tools, capture page screenshots before LLM analysis.
         # Attaches PNG paths to ctx so run_substep can pass them as image
         # content blocks (Claude will then actually SEE the page).
@@ -9607,36 +9667,63 @@ async def api_extract_file(file: UploadFile = File(...)) -> dict[str, Any]:
                     + (f"，包名 {pkg}" if pkg else "")
                     + f"。运行工具时将在模拟器中安装并启动以做 UI 比对。app_ref={app_id}]",
         }
-    if ext == "pdf" or ct == "application/pdf":
-        text = _extract_pdf(blob)
-    elif ext == "docx" or ct in ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",):
-        text = _extract_docx(blob)
-    elif ext in ("xlsx", "xlsm") or ct in ("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",):
-        text = _extract_xlsx(blob)
-    elif ct.startswith("image/") or ext in ("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"):
-        text = _extract_image_meta(blob, name)
-    elif ext in ("doc", "ppt", "pptx"):
-        text = (
-            f"[暂未支持 .{ext} 格式自动提取（建议另存为 .docx / .pdf 后再上传）]\n"
-            f"文件名：{name}，大小 {len(blob)}B"
+    # ── 统一:所有文档/图片都"存盘 + 返回 file_ref 短标记" ──
+    # 运行工具时,后端按 file_ref 取出真实文件,作为 document/image 内容块经
+    # stdin 直传 LLM(PDF/图片让模型原生读,文本/Office 抽文本作命名文本文档),
+    # 不再把全文回吐到前端输入框(避免污染 + 撑爆命令行参数)。
+    import uuid as _uuid2
+    files_dir = settings.report_output_dir.parent.parent / "uploads" / "files"
+    files_dir.mkdir(parents=True, exist_ok=True)
+    file_id = _uuid2.uuid4().hex[:12]
+
+    def _store(ext_: str, kind_: str, mime_: str, data_: bytes) -> str:
+        p = files_dir / f"{file_id}.{ext_}"
+        p.write_bytes(data_)
+        (files_dir / f"{file_id}.json").write_text(
+            _json.dumps({
+                "file_id": file_id, "filename": name, "kind": kind_,
+                "mime": mime_, "path": str(p), "size": len(data_),
+            }, ensure_ascii=False),
+            encoding="utf-8",
         )
+        return str(p)
+
+    if ext == "pdf" or ct == "application/pdf":
+        _store("pdf", "document", "application/pdf", blob)
+        kind, mime_out = "document", "application/pdf"
+    elif ct.startswith("image/") or ext in ("png", "jpg", "jpeg", "gif", "webp", "bmp"):
+        out_ext = ext if ext in ("png", "jpg", "jpeg", "gif", "webp", "bmp") else "png"
+        mime_out = ct if ct.startswith("image/") else f"image/{out_ext}"
+        _store(out_ext, "image", mime_out, blob)
+        kind = "image"
+    elif ext == "docx" or "wordprocessingml" in ct:
+        _store("txt", "document_text", "text/plain", _extract_docx(blob).encode("utf-8"))
+        kind, mime_out = "document_text", "text/plain"
+    elif ext in ("xlsx", "xlsm") or "spreadsheetml" in ct:
+        _store("txt", "document_text", "text/plain", _extract_xlsx(blob).encode("utf-8"))
+        kind, mime_out = "document_text", "text/plain"
+    elif ext in ("doc", "ppt", "pptx"):
+        note = (f"[.{ext} 暂不支持自动解析，建议另存为 .pdf / .docx 后重传] "
+                f"文件名：{name}，大小 {len(blob)}B")
+        _store("txt", "document_text", "text/plain", note.encode("utf-8"))
+        kind, mime_out = "document_text", "text/plain"
     else:
-        # Treat as text (md/txt/json/csv/yaml/html/source code/log...)
-        text = _extract_text_with_encoding(blob)
+        # 文本类(md/txt/json/csv/yaml/html/源码/log…):原样存盘,运行时按文本读取
+        _store(ext or "txt", "document_text", "text/plain", blob)
+        kind, mime_out = "document_text", "text/plain"
 
-    # Cap returned text to protect frontend
-    MAX = 400_000
-    truncated = False
-    if len(text) > MAX:
-        text = text[:MAX] + f"\n\n[截断：原始文本 {len(text):,} 字符，已显示前 {MAX:,} 字符]"
-        truncated = True
-
+    _sz = len(blob)
+    _hsz = f"{_sz/1024/1024:.1f}MB" if _sz >= 1024 * 1024 else f"{max(1, _sz//1024)}KB"
     return {
         "filename": name,
         "content_type": ct or "application/octet-stream",
-        "size": len(blob),
-        "text": text,
-        "truncated": truncated,
+        "size": _sz,
+        "kind": kind,
+        "mime": mime_out,
+        "file_id": file_id,
+        "file_ref": file_id,
+        # 短标记:进输入框/材料文本,运行时据此加载真实文件直传 LLM
+        "text": f"[📎 {name}（{_hsz}） | file_ref={file_id}]",
     }
 
 
@@ -10929,17 +11016,9 @@ function wireInputToolbar(){
     });
   }
 
-  async function readFileAsText(f, onProgress){
-    // Decide: local text read vs server-side extraction
-    const ext = fileExt(f.name);
-    const ct = (f.type || '').toLowerCase();
-    const looksBinary = BINARY_EXTS.has(ext) || ct.startsWith('image/') || ct === 'application/pdf' ||
-      ct.includes('officedocument') || ct === 'application/msword' || ext === 'apk' || ext === 'ipa';
-    if (TEXT_EXTS.has(ext) && !looksBinary){
-      try { return await f.text(); }
-      catch(_){ /* fall through to server */ }
-    }
-    // Send to server for extraction(带上传进度)
+  async function uploadFileGetMarker(f, onProgress){
+    // 所有文件都上传到服务端存盘,拿回短标记(含 file_ref / app_ref)。
+    // 不再在前端读全文塞输入框 —— 真实文件运行时作为内容块直传 LLM。
     const data = await uploadViaServer(f, onProgress);
     return data.text;
   }
@@ -10970,26 +11049,27 @@ function wireInputToolbar(){
       }
       let text;
       try {
-        text = await readFileAsText(f, (loaded, total) => {
+        text = await uploadFileGetMarker(f, (loaded, total) => {
           if (!showProg) return;
           const pct = Math.round(loaded / total * 100);
           bar.style.width = pct + '%'; pctEl.textContent = pct + '%';
           if (pct >= 100){ lbl.textContent = `服务端处理中…（${f.name}）`; pctEl.textContent = '处理中'; }
         });
       } catch(err){
-        text = `(读取失败：${err.message || err})`;
+        text = `(上传失败：${f.name} — ${err.message || err})`;
         failed++;
       }
       if (showProg){ prog.style.display = 'none'; }
-      parts.push(`--- file: ${f.name} (${f.type || 'text/plain'}, ${f.size}B) ---\n${text}`);
+      // 只插短标记(📎 文件名 | file_ref=…),真实文件运行时直传 LLM
+      parts.push(text);
     }
     if (parts.length){
-      const sep = ta.value.trim() ? '\n\n' : '';
-      ta.value += sep + parts.join('\n\n');
+      const sep = ta.value.trim() ? '\n' : '';
+      ta.value += sep + parts.join('\n');
       updateSize();
-      const bits = [`已加载 ${parts.length} 个文件`];
+      const bits = [`已附加 ${parts.length} 个文件（运行时直传给 AI）`];
       if (skipped) bits.push(`跳过 ${skipped} 个空/目录`);
-      if (failed) bits.push(`${failed} 个读取失败`);
+      if (failed) bits.push(`${failed} 个上传失败`);
       toast(bits.join(' · '));
     } else if (skipped > 0){
       toast(`跳过 ${skipped} 个目录或空文件，未加载任何内容`);

@@ -241,6 +241,105 @@ def _flatten_messages(messages: list[dict[str, Any]]) -> str:
     return "\n\n".join(chunks)
 
 
+def _build_attachment_blocks(
+    files: list[dict[str, Any]] | None,
+    images: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """Turn uploaded files + screenshots into Anthropic content blocks.
+
+    Returns None when there is nothing to attach (caller then uses the plain
+    string path). Each uploaded file becomes a REAL block — never text dumped
+    into the prompt:
+      - kind=image            → base64 image block
+      - kind=document (pdf)   → base64 document block (model reads the PDF)
+      - kind=document_text    → text document block (md/txt/csv/json/source…)
+    Screenshots (images=) keep their existing caption+image behavior.
+    All blocks ride the stdin streaming message, so size never hits argv.
+    """
+    import base64 as _b64
+
+    blocks: list[dict[str, Any]] = []
+
+    for f in (files or []):
+        try:
+            p = f.get("path")
+            if not p:
+                continue
+            kind = (f.get("kind") or "").lower()
+            name = f.get("filename") or _PathFromImg(p).name
+            mime = f.get("mime") or ""
+            if kind == "image" or mime.startswith("image/"):
+                raw = open(p, "rb").read()
+                if len(raw) > 8 * 1024 * 1024:  # 8MB image cap
+                    blocks.append({"type": "text", "text": f"[附件 {name} 过大({len(raw)//1024//1024}MB),已跳过图片直传]"})
+                    continue
+                blocks.append({"type": "text", "text": f"[用户上传图片：{name}]"})
+                blocks.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": mime or "image/png", "data": _b64.b64encode(raw).decode("ascii")},
+                })
+            elif kind == "document" or mime == "application/pdf":
+                raw = open(p, "rb").read()
+                if len(raw) > 20 * 1024 * 1024:  # 20MB PDF cap (request-size guard)
+                    blocks.append({"type": "text", "text": f"[附件 PDF {name} 过大({len(raw)//1024//1024}MB),超出直传上限,请拆分后重传]"})
+                    continue
+                blocks.append({"type": "text", "text": f"[用户上传文档：{name}（PDF，请基于其内容分析）]"})
+                blocks.append({
+                    "type": "document",
+                    "source": {"type": "base64", "media_type": "application/pdf", "data": _b64.b64encode(raw).decode("ascii")},
+                    "title": name,
+                })
+            else:
+                # document_text — md/txt/csv/json/yaml/html/source/log, or
+                # office-doc text that was extracted at upload time.
+                txt = _read_text_best_effort(p)
+                MAXT = 1_500_000
+                truncated = ""
+                if len(txt) > MAXT:
+                    txt = txt[:MAXT]
+                    truncated = "\n\n[（文档过长，已截断前 1.5M 字符）]"
+                blocks.append({"type": "text", "text": f"[用户上传文档：{name}（请基于其内容分析）]"})
+                blocks.append({
+                    "type": "document",
+                    "source": {"type": "text", "media_type": "text/plain", "data": txt + truncated},
+                    "title": name,
+                })
+        except Exception:
+            continue
+
+    for img in (images or []):
+        try:
+            p = img.get("path")
+            mime = img.get("mime") or "image/png"
+            caption = img.get("caption") or ""
+            if p is None:
+                continue
+            raw = open(p, "rb").read()
+            if len(raw) > 5 * 1024 * 1024:  # 5MB per screenshot cap
+                continue
+            if caption:
+                blocks.append({"type": "text", "text": f"[截图标识] {caption}"})
+            blocks.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": mime, "data": _b64.b64encode(raw).decode("ascii")},
+            })
+        except Exception:
+            continue
+
+    return blocks or None
+
+
+def _read_text_best_effort(path: Any) -> str:
+    """Read a text file trying utf-8 → gbk → latin-1, never raising."""
+    raw = open(path, "rb").read()
+    for enc in ("utf-8", "gb18030", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 class LlmClient:
     """Async wrapper over `claude-agent-sdk.query()`.
 
@@ -294,6 +393,7 @@ class LlmClient:
         allow_degrade: bool = True,
         stream_callback: Any = None,  # callable(kind: str, accumulated: str)
         images: list[dict[str, Any]] | None = None,  # [{path:Path, mime:"image/png", caption:str}]
+        files: list[dict[str, Any]] | None = None,  # [{path, mime, kind:document|document_text|image, filename}]
     ) -> LlmResponse:
         """Single completion — falls down the degradation chain on failure.
 
@@ -301,6 +401,11 @@ class LlmClient:
                 {path, mime, caption}. When present, the prompt is sent as
                 a multimodal content-block message so vision-capable models
                 actually SEE the page (used by step5 / h5_adapt).
+        files:  optional list of user-uploaded files delivered as REAL
+                content blocks (not text dumped into the prompt). Each dict:
+                {path, mime, kind, filename}. kind ∈ {document(pdf),
+                document_text(md/txt/csv/...), image}. Sent via the stdin
+                streaming path so large files never hit the argv limit.
         """
         # 用户在 UI 显式选了模型(model_override)→ 严格只用这个模型,
         # 不做跨模型降级。"用户选什么就跑什么",失败也只重试同一个模型。
@@ -322,7 +427,7 @@ class LlmClient:
                 try:
                     return await self._call_once(
                         tier=current_tier, system=system, messages=messages,
-                        stream_callback=stream_callback, images=images,
+                        stream_callback=stream_callback, images=images, files=files,
                     )
                 except AuthNotConfiguredError:
                     # 认证错误不重试不降级 — 换模型也救不了
@@ -353,6 +458,7 @@ class LlmClient:
         messages: list[dict[str, Any]],
         stream_callback: Any = None,
         images: list[dict[str, Any]] | None = None,
+        files: list[dict[str, Any]] | None = None,
     ) -> LlmResponse:
         # User-side model override beats the per-substep tier.
         # override 可为档位别名(opus/sonnet/haiku → 自动最新)或具体版本全 ID
@@ -480,30 +586,14 @@ class LlmClient:
         text_buf = ""
         thinking_buf = ""
 
-        # Build prompt: simple string for text-only, AsyncIterable[dict] when images present
+        # Build prompt. When there are attachments (uploaded files OR
+        # screenshots) we send a multimodal content-block message via the
+        # stdin streaming path. Files are delivered as REAL document/image
+        # blocks (never text crammed into the prompt), which also keeps large
+        # material off the command-line argv limit that crashes big inputs.
         prompt_arg: Any
-        if images:
-            import base64 as _b64
-            content_blocks: list[dict[str, Any]] = []
-            for img in images:
-                try:
-                    p = img.get("path")
-                    mime = img.get("mime") or "image/png"
-                    caption = img.get("caption") or ""
-                    if p is None:
-                        continue
-                    raw = open(p, "rb").read()
-                    if len(raw) > 5 * 1024 * 1024:  # 5MB per image cap
-                        continue
-                    b64 = _b64.b64encode(raw).decode("ascii")
-                    if caption:
-                        content_blocks.append({"type": "text", "text": f"[截图标识] {caption}"})
-                    content_blocks.append({
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": mime, "data": b64},
-                    })
-                except Exception:
-                    continue
+        content_blocks = _build_attachment_blocks(files, images)
+        if content_blocks is not None:
             content_blocks.append({"type": "text", "text": user_text})
 
             async def _msg_stream():

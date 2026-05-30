@@ -26,6 +26,44 @@ from packages.core.telemetry import bind_run_context, get_logger
 
 logger = get_logger(__name__)
 
+# 上传文件标记:`[📎 名称 | file_ref=<id>]` — 真实文件已由 ctx.files 直传,
+# 这里把标记从材料文本里抹掉(避免重复噪声)。app_ref(APP 待运行)保留不动。
+_FILE_REF_MARK_RE = re.compile(r"\[?📎?[^\[\]\n]*?file_ref=[0-9a-fA-F]{6,32}[^\[\]\n]*?\]?", re.U)
+_MATERIAL_POINTER = "【材料见本条消息附带的文件与文本，请基于附带内容进行分析】"
+
+
+def _strip_file_ref_markers(text: str) -> str:
+    if not text or "file_ref=" not in text:
+        return text
+    return _FILE_REF_MARK_RE.sub("", text)
+
+
+def _externalize_material(placeholder_values: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """把业务材料从 system 占位符里"外置"出来。
+
+    返回 (material_blob, new_placeholder_values)：
+      - new_placeholder_values：每个非空材料占位符替换成一句短指针，render 进
+        system 后体积极小,绝不触发命令行 argv 上限。
+      - material_blob：去重后的真实材料文本(已抹掉 file_ref 标记),交给调用方
+        放进 user 消息(走 stdin)。空材料返回空串。
+    多个占位符共享同一份用户 blob 时只取一份;若确有不同内容则按出现顺序拼接。
+    """
+    new_pv: dict[str, Any] = {}
+    seen: set[str] = set()
+    order: list[str] = []
+    for k, v in placeholder_values.items():
+        if isinstance(v, str) and v.strip():
+            sv = _strip_file_ref_markers(v).strip()
+            if sv and sv not in seen:
+                seen.add(sv)
+                order.append(sv)
+            new_pv[k] = _MATERIAL_POINTER
+        else:
+            # 空 / 非字符串(已提供结构对象等)保持原样
+            new_pv[k] = v
+    return ("\n\n".join(order), new_pv)
+
+
 # ── Evidence 归档策略 ──
 # off          : 完全不写 system_rendered / response_raw 到磁盘（仅 parsed.json + meta.json）
 # failure_only : 仅在解析失败 / 工具失败时写完整 prompt+response，平时只写 parsed
@@ -126,11 +164,22 @@ class StepOrchestrator(ABC):
             model_tier=tpl.model_tier.value,
             max_tokens=tpl.max_tokens,
         )
-        system_body = tpl.render(placeholder_values)
+        # ── 材料外置：把业务材料从 system prompt 移到 user 消息(走 stdin)──
+        # 原先材料被 render 进 system_body → 作为 --system-prompt 命令行参数传给
+        # claude CLI,材料一大就撑爆 argv(单参数上限 ~128KB)而整个 run 崩溃。
+        # 现在 system 只保留指令模板 + 一句"材料见附件"短指针;真实材料(粘贴文本
+        # + 上传文件抽出的文本)放进 user 消息,上传的原始文件由 ctx.files 以
+        # document/image 内容块直传。两者都走 stdin,不再受命令行长度限制。
+        material_blob, pv_external = _externalize_material(placeholder_values)
+        system_body = tpl.render(pv_external)
         system_full = self.prompts.compose_system(
             PromptTemplate(**{**tpl.__dict__, "body": system_body})
         )
-        user_msg = user_instruction or "请严格按 output 格式输出合法 JSON。"
+        base_instr = user_instruction or "请基于附带材料，严格按 output 格式输出合法 JSON。"
+        if material_blob:
+            user_msg = f"{base_instr}\n\n===== 业务材料 =====\n{material_blob}"
+        else:
+            user_msg = base_instr
         messages = [{"role": "user", "content": user_msg}]
 
         # Rate-limited stream forwarder so we don't spam state["logs"] with
@@ -199,6 +248,11 @@ class StepOrchestrator(ABC):
             if not images:
                 images = None
 
+        # User-uploaded files (PDF / images / text docs) prepared by the run
+        # path (api/main.py _load_uploaded_files) → delivered as REAL content
+        # blocks, never text dumped into the prompt.
+        uploaded_files = getattr(self.ctx, "files", None) or None
+
         resp = await self.ctx.llm.complete(
             system=system_full,
             messages=messages,
@@ -207,6 +261,7 @@ class StepOrchestrator(ABC):
             temperature=tpl.temperature,
             stream_callback=_stream_cb,
             images=images,
+            files=uploaded_files,
         )
         self.ctx.usage.merge(resp.usage)
         # Final flush so the very last chunk shows up

@@ -21,6 +21,7 @@ async def agent_loop(
     max_steps: int = 16,
     on_step: Callable[[dict[str, Any]], None] | None = None,
     max_result_chars: int = 2500,
+    files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     transcript: list[dict[str, Any]] = []
     findings: list[Any] = []
@@ -31,6 +32,7 @@ async def agent_loop(
                 system=system_prompt,
                 messages=[{"role": "user", "content": convo}],
                 max_tokens=2000, allow_degrade=False,
+                files=files,  # 用户上传文件作为内容块直传(规划阶段也能读真实文件)
             )
         except Exception as exc:
             transcript.append({"step": step, "error": f"LLM 调用失败: {str(exc)[:200]}"})
