@@ -9042,7 +9042,10 @@ async def api_figma_preview(request: Request, body: dict[str, Any]) -> dict[str,
                 lk["file_key"], token, str(sc_dir / fname), prefer_node=lk.get("node_id", ""), max_frames=8)
     if not res.get("ok"):
         return {"ok": False, "error": res.get("error")}
-    return {"ok": True, "image_url": f"/api/screenshots/{fname}", "frames": len(res.get("frames") or [])}
+    from pathlib import Path as _PP
+    urls = [f"/api/screenshots/{_PP(fr['path']).name}" for fr in (res.get("frames") or []) if fr.get("path")]
+    return {"ok": True, "image_url": (urls[0] if urls else f"/api/screenshots/{fname}"),
+            "image_urls": urls, "frames": len(res.get("frames") or [])}
 
 
 @app.get("/api/settings/figma-login")
@@ -11505,7 +11508,7 @@ TOOL_DETAIL_HTML = r"""<!doctype html>
           <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
             <span id="figma-status" style="flex:1;font-size:11.5px;color:var(--fg-3);font-family:var(--mono)">设计稿读取走服务端只读 Token</span>
           </div>
-          <img id="figma-preview-img" style="display:none;max-width:300px;margin-top:8px;border:1px solid var(--line);border-radius:6px"/>
+          <div id="figma-preview-gallery" style="display:none;margin-top:8px;gap:8px;flex-wrap:wrap;max-height:360px;overflow-y:auto;padding:4px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px"></div>
         </div>
         <div id="import-panel" style="display:none;margin:8px 0 0;padding:10px 12px;
           background:var(--surface-2);border:1px solid var(--line);border-radius:6px">
@@ -12374,20 +12377,26 @@ function initFigmaBar(){
   bar.style.display='block';
   const readBtn=document.getElementById('figma-read-btn');
   const urlInp=document.getElementById('figma-url');
-  const img=document.getElementById('figma-preview-img');
+  const gal=document.getElementById('figma-preview-gallery');
   const st=document.getElementById('figma-status');
   // 刷新清空(输入框永不禁用)
   urlInp.value=''; urlInp.disabled=false;
   // 换链接 → 「读取完成」还原为「读取预览」
-  urlInp.oninput=()=>{ if(readBtn.textContent==='读取完成'){ readBtn.textContent='读取预览'; img.style.display='none'; } };
-  // 读取 figma 内容(走服务端只读 Token):成功→「读取完成」;失败→说明原因
+  urlInp.oninput=()=>{ if(readBtn.textContent==='读取完成'){ readBtn.textContent='读取预览'; gal.style.display='none'; } };
+  // 读取 figma 内容(登录态浏览器导出):成功→展示全部帧;失败→说明原因
   readBtn.onclick=async()=>{
     const u=(urlInp.value||'').trim();
     if(!u){ st.textContent='先粘贴 Figma 链接'; st.style.color='var(--warn)'; return; }
-    readBtn.disabled=true; readBtn.textContent='读取中…';
+    readBtn.disabled=true; readBtn.textContent='读取中(首次约1分钟,之后秒开)…';
     try{
       const r=await fetch('/api/figma/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u})}).then(r=>r.json());
-      if(r.ok){ img.src=r.image_url; img.style.display='block'; readBtn.textContent='读取完成'; st.textContent='✓ 读取成功'+(r.frames?`(共 ${r.frames} 帧设计图)`:''); st.style.color='var(--ok)'; }
+      if(r.ok){
+        const urls=(r.image_urls&&r.image_urls.length)?r.image_urls:(r.image_url?[r.image_url]:[]);
+        gal.innerHTML=urls.map((u,i)=>`<img src="${u}" title="设计帧 ${i+1}/${urls.length}" style="height:220px;border:1px solid var(--line);border-radius:6px;background:#fff"/>`).join('');
+        gal.style.display='flex';
+        readBtn.textContent='读取完成';
+        st.textContent='✓ 读取成功'+(r.frames?`(共 ${r.frames} 帧设计图 — 下方可滚动查看全部)`:''); st.style.color='var(--ok)';
+      }
       else { readBtn.textContent='读取预览'; st.textContent='✕ 读取失败:'+(r.error||'未知原因'); st.style.color='var(--bad)'; }
     }catch(e){ readBtn.textContent='读取预览'; st.textContent='✕ 读取失败:网络错误'; st.style.color='var(--bad)'; }
     readBtn.disabled=false;
