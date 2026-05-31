@@ -206,23 +206,64 @@ def shot(url: str, user) -> dict:
             ctx.close()
 
 
-def _figma_api_frames(file_key: str, token: str, prefer_node: str = "", max_frames: int = 15) -> dict:
+_FIGMA_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".aitk-figma-cache")
+
+
+def _figma_cache_path(file_key: str, prefer_node: str) -> str:
+    raw = f"{file_key}__{prefer_node or 'auto'}"
+    safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in raw)
+    return os.path.join(_FIGMA_CACHE_DIR, safe + ".json")
+
+
+def _figma_read_cache(cpath: str):
+    try:
+        if os.path.exists(cpath):
+            with open(cpath, "r", encoding="utf-8") as fh:
+                c = json.loads(fh.read())
+            if c.get("ok") and c.get("frames"):
+                return c
+    except Exception:
+        pass
+    return None
+
+
+def _figma_api_frames(file_key: str, token: str, prefer_node: str = "",
+                      max_frames: int = 15, force: bool = False) -> dict:
     """在宿主机(住宅 IP,不被 Figma WAF 拦)调 Figma REST API 逐帧渲染。
 
     /v1/files?depth=2 枚举顶层 Frame → 选页 → /v1/images 批量渲染 → 逐帧下载 → base64。
     容器直连 api.figma.com 会被数据中心 IP 403,故由本助手代发。
+
+    缓存:每个文件(file_key+prefer_node)只渲染一次,落盘复用。Figma /v1/images 限流极严
+    (low 档,耗光要 ~4.5 天),所以预览/多次跑同一设计稿都走缓存,零 API 调用;force=True 强制重读。
+    API 失败时(如 429 限流)若有旧缓存,回退用缓存,保证已读过的文件始终可用。
     """
     import httpx  # 自带 certifi,避免 urllib 在框架 Python 上的证书校验失败
+
+    cpath = _figma_cache_path(file_key, prefer_node)
+    if not force:
+        cached = _figma_read_cache(cpath)
+        if cached:
+            cached = dict(cached); cached["_cached"] = True
+            return cached
 
     def _get(url, params=None):
         with httpx.Client(timeout=60.0, follow_redirects=True) as c:
             r = c.get(url, headers={"X-Figma-Token": token}, params=params or {})
             return r.status_code, r.content
 
+    def _fail(msg):
+        # API 失败 → 有旧缓存就回退用缓存(限流期间已读过的文件照样能用)
+        fb = _figma_read_cache(cpath)
+        if fb:
+            fb = dict(fb); fb["_cached"] = True; fb["_stale_note"] = msg
+            return fb
+        return {"ok": False, "error": msg}
+
     try:
         st, body = _get(f"https://api.figma.com/v1/files/{file_key}", {"depth": "2"})
         if st != 200:
-            return {"ok": False, "error": f"Figma files API {st}"}
+            return _fail(f"Figma files API {st}")
         doc = (json.loads(body) or {}).get("document", {})
         pages = [p for p in doc.get("children", []) if p.get("type") == "CANVAS"]
         if not pages:
@@ -267,7 +308,7 @@ def _figma_api_frames(file_key: str, token: str, prefer_node: str = "", max_fram
         st2, body2 = _get(f"https://api.figma.com/v1/images/{file_key}",
                           {"ids": ids, "format": "png", "scale": "2"})
         if st2 != 200:
-            return {"ok": False, "error": f"Figma images API {st2}"}
+            return _fail(f"Figma images API {st2}")
         images = (json.loads(body2) or {}).get("images", {}) or {}
         out = []
         for f in frames:
@@ -283,10 +324,17 @@ def _figma_api_frames(file_key: str, token: str, prefer_node: str = "", max_fram
                 out.append({"name": f.get("name") or f["id"],
                             "png_b64": base64.b64encode(content).decode("ascii")})
         if not out:
-            return {"ok": False, "error": "未渲染出任何帧"}
-        return {"ok": True, "frames": out, "error": None}
+            return _fail("未渲染出任何帧")
+        result = {"ok": True, "frames": out, "error": None}
+        try:
+            os.makedirs(_FIGMA_CACHE_DIR, exist_ok=True)
+            with open(cpath, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(result, ensure_ascii=False))
+        except Exception:
+            pass
+        return result
     except Exception as exc:
-        return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+        return _fail(f"{type(exc).__name__}: {str(exc)[:160]}")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -344,7 +392,8 @@ class Handler(BaseHTTPRequestHandler):
             if not fk or not tok:
                 self._send(400, {"ok": False, "error": "missing file_key/token"}); return
             self._send(200, _figma_api_frames(fk, tok, data.get("prefer_node", ""),
-                                               int(data.get("max_frames", 15))))
+                                               int(data.get("max_frames", 15)),
+                                               bool(data.get("force", False))))
         else:
             self._send(404, {"ok": False, "error": "not found"})
 
