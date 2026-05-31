@@ -206,6 +206,89 @@ def shot(url: str, user) -> dict:
             ctx.close()
 
 
+def _figma_api_frames(file_key: str, token: str, prefer_node: str = "", max_frames: int = 15) -> dict:
+    """在宿主机(住宅 IP,不被 Figma WAF 拦)调 Figma REST API 逐帧渲染。
+
+    /v1/files?depth=2 枚举顶层 Frame → 选页 → /v1/images 批量渲染 → 逐帧下载 → base64。
+    容器直连 api.figma.com 会被数据中心 IP 403,故由本助手代发。
+    """
+    import httpx  # 自带 certifi,避免 urllib 在框架 Python 上的证书校验失败
+
+    def _get(url, params=None):
+        with httpx.Client(timeout=60.0, follow_redirects=True) as c:
+            r = c.get(url, headers={"X-Figma-Token": token}, params=params or {})
+            return r.status_code, r.content
+
+    try:
+        st, body = _get(f"https://api.figma.com/v1/files/{file_key}", {"depth": "2"})
+        if st != 200:
+            return {"ok": False, "error": f"Figma files API {st}"}
+        doc = (json.loads(body) or {}).get("document", {})
+        pages = [p for p in doc.get("children", []) if p.get("type") == "CANVAS"]
+        if not pages:
+            return {"ok": False, "error": "文件无可读页面"}
+
+        def _screen_like(node):
+            # 只要"界面"形态的帧:跳过极端长条(banner/分割条)和极小组件/图标。
+            bb = node.get("absoluteBoundingBox") or {}
+            w, h = bb.get("width") or 0, bb.get("height") or 0
+            if not w or not h:
+                return True  # 无尺寸信息就不过滤
+            ar = w / h
+            return 0.18 <= ar <= 3.2 and (w * h) >= 80000
+
+        def _top(page):
+            fr = []
+            for ch in page.get("children", []):
+                t = ch.get("type")
+                if t in ("FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE") and ch.get("visible", True) is not False:
+                    if _screen_like(ch):
+                        fr.append({"id": ch["id"], "name": ch.get("name", "")})
+                elif t == "SECTION":
+                    for sub in ch.get("children", []):
+                        if (sub.get("type") in ("FRAME", "COMPONENT") and sub.get("visible", True) is not False
+                                and _screen_like(sub)):
+                            fr.append({"id": sub["id"], "name": sub.get("name", "")})
+            return fr
+
+        chosen = None
+        if prefer_node:
+            for p in pages:
+                if prefer_node in {c.get("id") for c in p.get("children", [])}:
+                    chosen = p
+                    break
+        if chosen is None:
+            chosen = max(pages, key=lambda p: len(_top(p)))
+        frames = _top(chosen)[:max_frames]
+        if not frames:
+            return {"ok": False, "error": "该页没有顶层 Frame"}
+
+        ids = ",".join(f["id"] for f in frames)
+        st2, body2 = _get(f"https://api.figma.com/v1/images/{file_key}",
+                          {"ids": ids, "format": "png", "scale": "2"})
+        if st2 != 200:
+            return {"ok": False, "error": f"Figma images API {st2}"}
+        images = (json.loads(body2) or {}).get("images", {}) or {}
+        out = []
+        for f in frames:
+            iu = images.get(f["id"])
+            if not iu:
+                continue
+            try:
+                with httpx.Client(timeout=60.0, follow_redirects=True) as c:
+                    content = c.get(iu).content
+            except Exception:
+                continue
+            if content:
+                out.append({"name": f.get("name") or f["id"],
+                            "png_b64": base64.b64encode(content).decode("ascii")})
+        if not out:
+            return {"ok": False, "error": "未渲染出任何帧"}
+        return {"ok": True, "frames": out, "error": None}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -256,6 +339,12 @@ class Handler(BaseHTTPRequestHandler):
             if not data.get("url"):
                 self._send(400, {"ok": False, "error": "missing url"}); return
             self._send(200, shot(data["url"], user))
+        elif self.path == "/frames":
+            fk = data.get("file_key"); tok = data.get("token")
+            if not fk or not tok:
+                self._send(400, {"ok": False, "error": "missing file_key/token"}); return
+            self._send(200, _figma_api_frames(fk, tok, data.get("prefer_node", ""),
+                                               int(data.get("max_frames", 15))))
         else:
             self._send(404, {"ok": False, "error": "not found"})
 
