@@ -8988,10 +8988,16 @@ async def api_set_figma_token(request: Request, body: dict[str, Any]) -> dict[st
 
 @app.get("/api/figma/status")
 async def api_figma_status(request: Request) -> dict[str, Any]:
-    """查询当前用户在宿主 Figma 助手的登录态。step5 轮询用。"""
+    """查询当前用户在宿主 Figma 助手的登录态 + 是否已配只读 Token。step5 轮询用。"""
     user = require_user(request)
     from packages.core.device.figma import host_runner_call
-    return await host_runner_call("GET", "/status", user=user.id)
+    from packages.core.auth_config import get_figma_token
+    res = await host_runner_call("GET", "/status", user=user.id)
+    if not isinstance(res, dict):
+        res = {"ok": False}
+    # 配了只读 Token(REST API) → 纯服务端读图,任意机器可用,无需浏览器登录。
+    res["token_configured"] = bool(get_figma_token())
+    return res
 
 
 @app.post("/api/figma/login")
@@ -12348,6 +12354,15 @@ async function refreshFigmaStatus(){
   if(!st) return;
   try{
     const d=await fetch('/api/figma/status').then(r=>r.json());
+    // 配了只读 Token(REST API)→ 纯服务端读图,任意机器可用,无需浏览器登录。
+    if(d.token_configured){
+      st.textContent='✅ 已配置只读 Token（REST API）— 运行时直接读设计图，任意机器可用，无需登录';
+      st.style.color='var(--ok)';
+      if(_figmaPollTimer){clearInterval(_figmaPollTimer);_figmaPollTimer=null;}
+      if(auth){ auth.style.display='none'; }
+      return;
+    }
+    if(auth){ auth.style.display=''; }
     if(!d.runner_up){ st.textContent='⚠ 宿主读图助手未运行(请在 Mac 上启动 figma_runner)'; st.style.color='var(--warn)';
       if(auth){auth.disabled=false;auth.textContent='登录 Figma';auth.dataset.mode='login';auth.style.color='var(--fg-2)';} return; }
     if(d.login_running){ st.textContent='⏳ 登录窗口已弹出 — 请在 Chrome 用 Google 登录…'; st.style.color='var(--warn)';
