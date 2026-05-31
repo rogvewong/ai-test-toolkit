@@ -4359,6 +4359,42 @@ def _build_step5_images(ctx: Any) -> list[dict[str, Any]] | None:
     return images[:30] or None
 
 
+def _step5_build_montage(designs: list[dict[str, Any]], out_path: str, cols: int = 8) -> str | None:
+    """把设计帧拼成带编号(#1..#N)的网格图,供「视觉配对」——设计帧无有效名字(如导出帧 screen1..N)时用。
+    8 列网格;成图任一边超 1900px 则等比缩到 1900(避开多模态 2000px 上限)。"""
+    try:
+        from PIL import Image, ImageDraw
+    except Exception:
+        return None
+    cw, ch, lab, gap = 140, 300, 22, 6
+    items = []
+    for i, d in enumerate(designs):
+        try:
+            items.append((i + 1, Image.open(d["path"]).convert("RGB").resize((cw, ch))))
+        except Exception:
+            continue
+    if not items:
+        return None
+    rows = (len(items) + cols - 1) // cols
+    canvas = Image.new("RGB", (cols * (cw + gap) + gap, rows * (ch + lab + gap) + gap), (24, 24, 28))
+    draw = ImageDraw.Draw(canvas)
+    for idx, (num, im) in enumerate(items):
+        r, c = divmod(idx, cols)
+        x = gap + c * (cw + gap); y = gap + r * (ch + lab + gap)
+        draw.rectangle([x, y, x + cw, y + lab], fill=(245, 200, 0))
+        draw.text((x + 4, y + 5), f"#{num}", fill=(0, 0, 0))
+        canvas.paste(im, (x, y + lab))
+    m = max(canvas.size)
+    if m > 1900:
+        s = 1900 / m
+        canvas = canvas.resize((int(canvas.width * s), int(canvas.height * s)))
+    try:
+        canvas.save(out_path)
+        return out_path
+    except Exception:
+        return None
+
+
 async def _step5_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
     """step5:逐帧设计 vs 实拍比对 —— 每个实拍配名字最匹配的设计帧,一对(2图)一次调用,
     多对并行(限并发5),替代 5 子步骤 + 单次塞28图,几分钟出全部差异。"""
@@ -4391,6 +4427,37 @@ async def _step5_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
     for a in actuals:
         best = max(designs, key=lambda d: _score(a, d)) if designs else None
         pairs.append((a, best if best and _score(a, best) > 0 else None))
+
+    # 名字配对全军覆没(浏览器导出的设计帧名是 screen1..N,关键词永远 0 分)→ 改用「视觉配对」:
+    # 把设计帧拼成带编号拼图,让 AI 逐张实拍判断对应哪个编号(不靠名字)。
+    if designs and not any(d for _, d in pairs):
+        state["progress"] = f"AI 视觉配对(设计帧无名字,拼图比对 {len(actuals)} 屏)…"
+        montage = sc_dir / f"_pair_montage_{ctx.run_id[:8]}.png"
+        if _step5_build_montage(designs, str(montage)):
+            _msem = _asyncio.Semaphore(5)
+
+            async def _match(a):
+                async with _msem:
+                    try:
+                        resp = await ctx.llm.complete(
+                            system=("你在做界面匹配。第一张是若干编号设计稿的拼图(每格左上角 #编号),第二张是一个实拍界面。"
+                                    "判断该实拍对应拼图里哪一个编号(同一界面/同一功能页)。只输出 JSON:"
+                                    "{\"match\": 编号数字} 或 {\"match\": null}(拿不准/无对应就 null)。"),
+                            messages=[{"role": "user", "content": f"实拍界面『{a['name']}』对应拼图里哪个设计稿编号?"}],
+                            images=[{"path": str(montage), "mime": "image/png", "caption": "设计稿拼图(每格#编号)"},
+                                    {"path": a["path"], "mime": "image/png", "caption": f"实拍:{a['name']}"}],
+                            max_tokens=200, allow_degrade=False)
+                        m = (resp.json() or {}).get("match")
+                        try:
+                            ctx.usage.merge(resp.usage)
+                        except Exception:
+                            pass
+                        return designs[int(m) - 1] if isinstance(m, (int, float)) and 1 <= int(m) <= len(designs) else None
+                    except Exception:
+                        return None
+
+            matched = await _asyncio.gather(*[_match(a) for a, _ in pairs])
+            pairs = [(a, matched[i]) for i, (a, _d) in enumerate(pairs)]
 
     try:
         cmp_md = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "step5_ui" / "_compare_pair.md"
@@ -13541,17 +13608,24 @@ function buildUiComparisonBlock(rep, runId){
   if (verdict || vsum){
     h += `<div class="ui-cmp-verdict ${vCls}"><b>设计符合度：${escapeHtml(verdict||'—')}</b>${vsum?' — '+escapeHtml(vsum):''}</div>`;
   }
-  const design = designShots[0];
+  // 按真实配对一对一展示:每个实拍配它自己对应的设计帧(不再全部贴第一张 designShots[0])
+  const pcMap = {}; (rep.pairs_checked||[]).forEach(p => { pcMap[p.actual] = p.design; });
+  const designByName = {};
+  designShots.forEach(d => { const nm = String(d.node_name||d.viewport||''); if(nm && !(nm in designByName)) designByName[nm]=d; });
   if (actualShots.length){
     actualShots.forEach(act => {
       const actFn = act.annotated_filename || act.filename;
+      const an = act.viewport || act.filename;
+      const dn = pcMap[an];
+      const paired = dn && dn !== '(无对应设计帧)';
+      const des = paired ? designByName[String(dn)] : null;
       h += `<div class="ui-cmp-pair">
-        <div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿（Figma 设计基线）</div>${design?imgTag(design.filename):'<div class="ui-cmp-nodes">本次未提供 Figma 设计稿</div>'}</div>
-        <div class="ui-cmp-side"><div class="ui-cmp-label actual">📱 实际产品 · ${escapeHtml(act.viewport||'')} · 红框=与设计不一致</div>${imgTag(actFn)}</div>
+        <div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿${paired?'『'+escapeHtml(dn)+'』':''}</div>${des?imgTag(des.filename):'<div class="ui-cmp-nodes">无对应设计帧</div>'}</div>
+        <div class="ui-cmp-side"><div class="ui-cmp-label actual">📱 实际产品 · ${escapeHtml(an)} · 红框=与设计不一致</div>${imgTag(actFn)}</div>
       </div>`;
     });
-  } else if (design){
-    h += `<div class="ui-cmp-pair"><div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿（Figma）</div>${imgTag(design.filename)}</div><div class="ui-cmp-side"><div class="ui-cmp-nodes">未捕获到实际产品截图</div></div></div>`;
+  } else if (designShots.length){
+    h += `<div class="ui-cmp-pair"><div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿（Figma）</div>${imgTag(designShots[0].filename)}</div><div class="ui-cmp-side"><div class="ui-cmp-nodes">未捕获到实际产品截图</div></div></div>`;
   }
   h += `<div class="ui-cmp-list-head">不一致清单（${issues.length} 处）</div>`;
   if (!issues.length){
@@ -17313,17 +17387,24 @@ function buildUiComparisonBlock(rep, runId){
   if (verdict || vsum){
     h += `<div class="ui-cmp-verdict ${vCls}"><b>设计符合度：${escapeHtml(verdict||'—')}</b>${vsum?' — '+escapeHtml(vsum):''}</div>`;
   }
-  const design = designShots[0];
+  // 按真实配对一对一展示:每个实拍配它自己对应的设计帧(不再全部贴第一张 designShots[0])
+  const pcMap = {}; (rep.pairs_checked||[]).forEach(p => { pcMap[p.actual] = p.design; });
+  const designByName = {};
+  designShots.forEach(d => { const nm = String(d.node_name||d.viewport||''); if(nm && !(nm in designByName)) designByName[nm]=d; });
   if (actualShots.length){
     actualShots.forEach(act => {
       const actFn = act.annotated_filename || act.filename;
+      const an = act.viewport || act.filename;
+      const dn = pcMap[an];
+      const paired = dn && dn !== '(无对应设计帧)';
+      const des = paired ? designByName[String(dn)] : null;
       h += `<div class="ui-cmp-pair">
-        <div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿（Figma 设计基线）</div>${design?imgTag(design.filename):'<div class="ui-cmp-nodes">本次未提供 Figma 设计稿</div>'}</div>
-        <div class="ui-cmp-side"><div class="ui-cmp-label actual">📱 实际产品 · ${escapeHtml(act.viewport||'')} · 红框=与设计不一致</div>${imgTag(actFn)}</div>
+        <div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿${paired?'『'+escapeHtml(dn)+'』':''}</div>${des?imgTag(des.filename):'<div class="ui-cmp-nodes">无对应设计帧</div>'}</div>
+        <div class="ui-cmp-side"><div class="ui-cmp-label actual">📱 实际产品 · ${escapeHtml(an)} · 红框=与设计不一致</div>${imgTag(actFn)}</div>
       </div>`;
     });
-  } else if (design){
-    h += `<div class="ui-cmp-pair"><div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿（Figma）</div>${imgTag(design.filename)}</div><div class="ui-cmp-side"><div class="ui-cmp-nodes">未捕获到实际产品截图</div></div></div>`;
+  } else if (designShots.length){
+    h += `<div class="ui-cmp-pair"><div class="ui-cmp-side"><div class="ui-cmp-label">🎨 设计稿（Figma）</div>${imgTag(designShots[0].filename)}</div><div class="ui-cmp-side"><div class="ui-cmp-nodes">未捕获到实际产品截图</div></div></div>`;
   }
   h += `<div class="ui-cmp-list-head">不一致清单（${issues.length} 处）</div>`;
   if (!issues.length){
