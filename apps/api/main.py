@@ -3328,6 +3328,8 @@ async def api_tool_detail(tool_id: str, request: Request) -> dict[str, Any]:
 # ----- 异步任务管理 -----
 # 简单内存版任务表：{run_id: {status, started_at, finished_at, tool_id, progress, report, error}}
 _RUNS: dict[str, dict[str, Any]] = {}
+# run_id → asyncio.Task,用于「停止执行」时取消任务(与 _RUNS 分开,避免 Task 进 JSON)
+_RUN_TASKS: dict[str, Any] = {}
 
 
 _KNOWN_INPUT_KEYS = {
@@ -5731,9 +5733,19 @@ async def api_tool_run(
         "owner_username": owner_username,
     }
     # Fire-and-forget; client polls /api/tools/runs/{run_id}
-    _asyncio.create_task(_run_tool_async(
-        run_id=run_id, tool=tool, inputs=inputs, tenant=tenant
-    ))
+    # 包一层:支持「停止执行」取消任务,取消时标记 cancelled(而非 failed)并清理句柄。
+    async def _runner():
+        try:
+            await _run_tool_async(run_id=run_id, tool=tool, inputs=inputs, tenant=tenant)
+        except _asyncio.CancelledError:
+            st = _RUNS.get(run_id)
+            if st is not None and st.get("status") not in ("succeeded", "failed"):
+                st["status"] = "cancelled"
+                st["progress"] = st.get("progress") or "已停止"
+                st["finished_at"] = _time.time()
+        finally:
+            _RUN_TASKS.pop(run_id, None)
+    _RUN_TASKS[run_id] = _asyncio.create_task(_runner())
     return {"run_id": run_id, "status": "queued"}
 
 
@@ -5810,7 +5822,32 @@ async def api_tool_run_status(run_id: str, request: Request) -> dict[str, Any]:
     # 读时把契约字段提升到 report 顶层（无副作用 / 幂等）
     if isinstance(state.get("report"), dict):
         state["report"] = _promote_contract_fields(state["report"])
-    return state
+    # can_stop:能看到本 run(已过 _user_can_see=持有者或管理员)且仍在跑 → 可停止。
+    can_stop = state.get("status") in ("queued", "running")
+    return {**state, "can_stop": can_stop}
+
+
+@app.post("/api/tools/runs/{run_id}/stop")
+async def api_tool_run_stop(run_id: str, request: Request) -> dict[str, Any]:
+    """停止执行 — 仅「执行人(run 持有者)」或「管理员」可停。"""
+    state = _RUNS.get(run_id)
+    if not state:
+        raise HTTPException(404, f"run {run_id} not found")
+    user = require_user(request)
+    if not _user_can_see(user, state.get("owner_user_id")):
+        raise HTTPException(403, "无权停止此运行（仅执行人或管理员可停）")
+    if state.get("status") in ("succeeded", "failed", "cancelled"):
+        return {"ok": True, "status": state["status"], "note": "运行已结束，无需停止"}
+    # 协作取消标志(供长循环检查)+ 立即标记状态(释放工具锁)+ 取消异步任务。
+    state["cancelled"] = True
+    state["status"] = "cancelled"
+    state["progress"] = f"已被 {user.username} 手动停止"
+    state["finished_at"] = _time.time()
+    state["error"] = f"运行被 {user.username} 手动停止"
+    task = _RUN_TASKS.get(run_id)
+    if task is not None and not task.done():
+        task.cancel()
+    return {"ok": True, "status": "cancelled"}
 
 
 def _user_can_see(user: UserRecord, owner_user_id: int | None) -> bool:
@@ -5857,8 +5894,10 @@ async def api_tool_run_list(request: Request) -> dict[str, Any]:
     user = require_user(request)
     visible = [r for r in _RUNS.values() if _user_can_see(user, r.get("owner_user_id"))]
     runs = sorted(visible, key=lambda r: r["started_at"], reverse=True)
+    # 列表已按权限过滤(持有者/管理员可见),故可见即可停 → can_stop 仅看是否在跑。
     summarized = [
-        {k: v for k, v in r.items() if k not in ("report", "traceback")}
+        {**{k: v for k, v in r.items() if k not in ("report", "traceback")},
+         "can_stop": r.get("status") in ("queued", "running")}
         for r in runs[:50]
     ]
     return {"total": len(visible), "recent": summarized}
@@ -6063,12 +6102,19 @@ button{font-family:inherit;cursor:pointer}
 .task-fab .head .count{margin-left:auto;font-family:var(--mono);font-size:11px;
   color:var(--ink-2)}
 .task-fab .body{max-height:432px;overflow-y:auto}
-.task-fab .row{padding:8px 0;border-bottom:1px dashed var(--line);font-size:12.5px;display:block}
+.task-fab .row{padding:8px 0;border-bottom:1px dashed var(--line);font-size:12.5px;
+  display:flex;align-items:center;gap:10px}
 .task-fab .row:last-child{border-bottom:none}
+.task-fab .row .row-link{flex:1;min-width:0;display:block;text-decoration:none}
 .task-fab .row .title{color:var(--ink);font-family:var(--serif);font-size:13.5px;
   letter-spacing:.04em}
 .task-fab .row .progress{color:var(--ink-3);font-family:var(--mono);font-size:11px;
-  margin-top:3px}
+  margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.task-fab .task-stop{flex-shrink:0;cursor:pointer;font-family:var(--mono);font-size:11px;
+  padding:4px 10px;border-radius:5px;border:1px solid rgba(220,38,38,.35);
+  background:rgba(220,38,38,.06);color:#dc2626;transition:background .15s}
+.task-fab .task-stop:hover{background:rgba(220,38,38,.14)}
+.task-fab .task-stop:disabled{opacity:.5;cursor:default}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
 /* ======= 命令面板 ======= */
@@ -6382,11 +6428,29 @@ async function pollRuns() {
     if (!runs.length) { fab.classList.remove('show'); return; }
     document.getElementById('task-count').textContent = runs.length;
     document.getElementById('task-list').innerHTML = runs.map(t => {
-      return `<a class="row" href="/tools/${t.tool_id}?run=${t.run_id}">
-        <div class="title">${escapeHtml(t.tool_name)}</div>
-        <div class="progress">${escapeHtml(t.progress || t.status)}</div>
-      </a>`;
+      const stop = t.can_stop
+        ? `<button class="task-stop" data-run="${t.run_id}" title="停止执行（仅执行人/管理员）">■ 停止</button>`
+        : '';
+      return `<div class="row">
+        <a class="row-link" href="/tools/${t.tool_id}?run=${t.run_id}">
+          <div class="title">${escapeHtml(t.tool_name)}</div>
+          <div class="progress">${escapeHtml(t.progress || t.status)}</div>
+        </a>
+        ${stop}
+      </div>`;
     }).join('');
+    document.querySelectorAll('#task-list .task-stop').forEach(b => {
+      b.onclick = async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (!confirm('确定停止这个运行？已产生的进度会丢失。')) return;
+        b.disabled = true; b.textContent = '停止中…';
+        try {
+          const r = await fetch(`/api/tools/runs/${b.dataset.run}/stop`, {method:'POST'}).then(r => r.json());
+          if (r.ok) { pollRuns(); }
+          else { alert(r.detail || '停止失败'); b.disabled = false; b.textContent = '■ 停止'; }
+        } catch(err) { alert('停止失败：' + err); b.disabled = false; b.textContent = '■ 停止'; }
+      };
+    });
     fab.classList.add('show');
   } catch(e) {}
 }
