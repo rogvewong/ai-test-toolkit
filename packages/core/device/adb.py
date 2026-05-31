@@ -457,6 +457,16 @@ async def run_app_agentic(
                 await _run_adb("-s", serial, "shell", "input", "keyevent", "4", timeout=15.0)
             elif act == "swipe_up":
                 await _run_adb("-s", serial, "shell", "input", "swipe", "540", "1500", "540", "600", "300", timeout=15.0)
+            elif act == "input":
+                # 自动登录/注册:往当前聚焦的输入框打字。先 tap 输入框聚焦,再 input。
+                # adb input text 只可靠支持 ASCII;空格转 %s;中文需 IME(失败则跳过)。
+                txt = str(decision.get("input_text") or "")
+                if txt:
+                    safe = txt.replace(" ", "%s").replace("&", "").replace("'", "")
+                    try:
+                        await _run_adb("-s", serial, "shell", "input", "text", safe, timeout=15.0)
+                    except Exception:
+                        pass
             await asyncio.sleep(2.0)
     finally:
         try:

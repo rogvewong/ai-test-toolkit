@@ -3743,15 +3743,17 @@ async def _capture_screenshots_for_tool(
                     lines = [f'[{i}] text="{c.get("text","")}" pos=({c.get("cx")},{c.get("cy")})'
                              for i, c in enumerate(clickables[:40])]
                     user = (
-                        f"【已截图页面（不要重复截、不要重复进入）】：{captured or '(还没有)'}\n"
+                        f"【已截图页面（不要重复截、不要重复进入同形态）】：{captured or '(还没有)'}\n"
                         f"【最近动作】：\n" + ("\n".join("  " + str(s) for s in recent) if recent else "  (无)") + "\n\n"
                         "【当前屏可点元素】：\n" + ("\n".join(lines) if lines else "(无可点元素;可 back 或 done)")
-                        + "\n\n请选一个**还没截过/没去过**的界面继续;主要界面都覆盖了就 done。按规则输出下一步动作 JSON。")
+                        + "\n\n请按结构**系统遍历所有不同形态的界面**(底部 tab 全走、列表→详情、登录态界面、设置/我的;"
+                        "遇登录/注册自己完成 tap+input)。只有当**所有不同形态界面都覆盖**才 done,不要因张数草草结束。"
+                        "输出下一步动作 JSON。")
                     resp = await ctx.llm.complete(
                         system=explore_sys,
                         messages=[{"role": "user", "content": user}],
                         images=[{"path": Path(shot_path), "mime": "image/png", "caption": "当前 APP 屏幕(实拍)"}],
-                        max_tokens=600, allow_degrade=False,
+                        max_tokens=900, allow_degrade=False,
                     )
                     try:
                         return resp.json()
@@ -3767,7 +3769,7 @@ async def _capture_screenshots_for_tool(
                 res = await run_app_agentic(
                     apk_path=str(apk), out_dir=str(sc_dir),
                     name_prefix=f"{tool_id}_{ctx.run_id[:8]}_{ref}",
-                    decide=_make_decider(), max_steps=14,
+                    decide=_make_decider(), max_steps=30,  # 遍历所有界面需更多步
                 )
                 state.setdefault("logs", []).append({
                     "ts": _time.time(), "event": "app.explore",
