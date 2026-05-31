@@ -85,6 +85,96 @@ async def fetch_figma_image(
         return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
 
 
+async def fetch_figma_frames_via_api(
+    file_key: str,
+    token: str,
+    out_path: str,
+    *,
+    scale: float = 2.0,
+    max_frames: int = 15,
+    prefer_node: str = "",
+) -> dict[str, object]:
+    """枚举文件里的顶层 Frame 并逐帧渲染成干净 PNG(对 view-only 文件同样有效)。
+
+    流程:
+      ① GET /v1/files/:key?depth=2  → document → canvas(页) → 顶层节点
+      ② 选页:有 prefer_node 用其所在页;否则取 Frame 最多的那页
+      ③ 收集该页顶层 FRAME/COMPONENT/SECTION(SECTION 再下钻一层取其 FRAME)
+      ④ GET /v1/images/:key?ids=...  批量拿 CDN 图 URL → 逐帧下载落盘
+    返回 {ok, path, frames:[{path,name}], error}。
+    """
+    import httpx
+    if not token:
+        return {"ok": False, "error": "未配置 Figma token(设置页填只读 PAT)"}
+    headers = {"X-Figma-Token": token}
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as cli:
+            r = await cli.get(f"https://api.figma.com/v1/files/{file_key}",
+                              headers=headers, params={"depth": "2"})
+            if r.status_code == 403:
+                return {"ok": False, "error": "Figma 403:token 无权访问该文件"}
+            if r.status_code != 200:
+                return {"ok": False, "error": f"Figma files API {r.status_code}: {r.text[:160]}"}
+            doc = (r.json() or {}).get("document", {})
+            pages = [p for p in doc.get("children", []) if p.get("type") == "CANVAS"]
+            if not pages:
+                return {"ok": False, "error": "文件无可读页面"}
+
+            def _top_frames(page) -> list[dict[str, str]]:
+                fr: list[dict[str, str]] = []
+                for ch in page.get("children", []):
+                    t = ch.get("type")
+                    if t in ("FRAME", "COMPONENT", "COMPONENT_SET", "INSTANCE"):
+                        if ch.get("visible", True) is not False:
+                            fr.append({"id": ch["id"], "name": ch.get("name", "")})
+                    elif t == "SECTION":
+                        for sub in ch.get("children", []):
+                            if sub.get("type") in ("FRAME", "COMPONENT") and sub.get("visible", True) is not False:
+                                fr.append({"id": sub["id"], "name": sub.get("name", "")})
+                return fr
+
+            # 选页:优先 prefer_node 所在页;否则 Frame 最多的页
+            chosen = None
+            if prefer_node:
+                for p in pages:
+                    ids = {c.get("id") for c in p.get("children", [])}
+                    if prefer_node in ids:
+                        chosen = p
+                        break
+            if chosen is None:
+                chosen = max(pages, key=lambda p: len(_top_frames(p)))
+            frames = _top_frames(chosen)[:max_frames]
+            if not frames:
+                return {"ok": False, "error": "该页没有顶层 Frame 可导出"}
+
+            # 批量渲染
+            ids = ",".join(f["id"] for f in frames)
+            ri = await cli.get(f"https://api.figma.com/v1/images/{file_key}",
+                               headers=headers, params={"ids": ids, "format": "png", "scale": str(scale)})
+            if ri.status_code != 200:
+                return {"ok": False, "error": f"Figma images API {ri.status_code}: {ri.text[:140]}"}
+            images = (ri.json() or {}).get("images", {}) or {}
+
+            from pathlib import Path as _P
+            op = _P(out_path)
+            saved: list[dict[str, object]] = []
+            for j, f in enumerate(frames):
+                img_url = images.get(f["id"])
+                if not img_url:
+                    continue
+                img = await cli.get(img_url)
+                if img.status_code != 200 or not img.content:
+                    continue
+                p = op if not saved else op.with_name(f"{op.stem}_f{len(saved) + 1}{op.suffix}")
+                p.write_bytes(img.content)
+                saved.append({"path": str(p), "name": f.get("name") or f"frame{j + 1}", "size": len(img.content)})
+            if not saved:
+                return {"ok": False, "error": "未能下载任何帧(渲染 URL 为空?)"}
+            return {"ok": True, "path": saved[0]["path"], "frames": saved, "error": None}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+
 _REAL_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 

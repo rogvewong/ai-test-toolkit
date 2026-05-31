@@ -3790,8 +3790,8 @@ async def _capture_screenshots_for_tool(
     figma_shots: list[dict[str, Any]] = []
     try:
         from packages.core.device.figma import (
-            parse_figma_links, fetch_figma_image, fetch_figma_via_browser,
-            fetch_figma_via_host_runner)
+            parse_figma_links, fetch_figma_image, fetch_figma_frames_via_api,
+            fetch_figma_via_browser, fetch_figma_via_host_runner)
         from packages.core.auth_config import get_figma_token, get_figma_login
         links = parse_figma_links(docs)
         if links:
@@ -3804,21 +3804,24 @@ async def _capture_screenshots_for_tool(
                 state["progress"] = f"读取 Figma 设计图 {lk['file_key'][:8]}…"
                 fname = f"{tool_id}_{ctx.run_id[:8]}_figma_{i+1}.png"
                 fpath = str(sc_dir / fname)
-                # 优先级:① 宿主读图助手(真实 Chrome + 该用户 Google 登录,推荐)
-                #         ② 容器内浏览器(账号密码) ③ API token
+                # 优先级:① 只读 API token 逐帧渲染(对 view-only 文件也干净可靠 —— 首选)
+                #         ② 宿主读图助手(真实 Chrome 登录) ③ 容器内浏览器(账号密码)
                 _run_user = state.get("owner_user_id") or "default"
-                res = await fetch_figma_via_host_runner(lk["url"], fpath, user=_run_user)
-                mode = "host_runner"
-                if not res.get("ok"):
-                    if login.get("email"):
+                if token:
+                    res = await fetch_figma_frames_via_api(
+                        lk["file_key"], token, fpath, prefer_node=lk["node_id"])
+                    mode = "api_frames"
+                    if not res.get("ok"):
+                        res = await fetch_figma_via_host_runner(lk["url"], fpath, user=_run_user)
+                        mode = "host_runner"
+                else:
+                    res = await fetch_figma_via_host_runner(lk["url"], fpath, user=_run_user)
+                    mode = "host_runner"
+                    if not res.get("ok") and login.get("email"):
                         res = await fetch_figma_via_browser(
                             lk["url"], fpath, email=login["email"],
                             password=login["password"], profile_dir=profile_dir)
                         mode = "container_browser"
-                    elif token:
-                        res = await fetch_figma_image(lk["file_key"], lk["node_id"],
-                                                      token, fpath)
-                        mode = "api"
                 _frames = res.get("frames") or ([{"path": fpath, "name": "frame1"}] if res.get("ok") else [])
                 state.setdefault("logs", []).append({
                     "ts": _time.time(), "event": "figma.fetch", "mode": mode,
@@ -11022,6 +11025,13 @@ TOOL_DETAIL_HTML = r"""<!doctype html>
   .status-pill.running{background:rgba(251,191,36,.10);color:var(--warn)}
   .status-pill.succeeded{background:rgba(74,222,128,.10);color:var(--ok)}
   .status-pill.failed{background:rgba(248,113,113,.10);color:var(--bad)}
+  .status-pill.cancelled{background:rgba(168,174,184,.14);color:var(--fg-2)}
+  .status-stop{cursor:pointer;font-family:var(--mono);font-size:10px;font-weight:600;
+    padding:2px 8px;border-radius:3px;border:1px solid rgba(220,38,38,.4);
+    background:rgba(220,38,38,.07);color:#dc2626;text-transform:uppercase;
+    letter-spacing:.04em;vertical-align:middle;margin-left:6px;transition:background .15s}
+  .status-stop:hover{background:rgba(220,38,38,.16)}
+  .status-stop:disabled{opacity:.5;cursor:default}
 
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
     background:var(--surface-2);border:1px solid var(--ac);color:var(--fg);
@@ -12345,7 +12355,7 @@ async function poll(runId){
     const r = await resp.json();
     currentRun = r;
     renderRun(r);
-    if (r.status === 'succeeded' || r.status === 'failed'){
+    if (r.status === 'succeeded' || r.status === 'failed' || r.status === 'cancelled'){
       clearInterval(pollTimer); pollTimer = null;
       clearInterval(elapsedTimer); elapsedTimer = null;
     }
@@ -12355,6 +12365,17 @@ async function poll(runId){
     // 网络/JSON 错误也尝试从磁盘读 — 如果是 history 链接至少能渲染。
     try { await loadHistoryFromDisk(runId); } catch(_){}
   }
+}
+
+async function stopCurrentRun(runId){
+  if (!confirm('确定停止这个运行？已产生的进度会丢失。')) return;
+  const btns = document.querySelectorAll('.status-stop');
+  btns.forEach(b => { b.disabled = true; b.textContent = '停止中…'; });
+  try {
+    const r = await fetch(`/api/tools/runs/${runId}/stop`, {method:'POST'}).then(r => r.json());
+    if (r.ok){ poll(runId); }
+    else { alert(r.detail || '停止失败'); btns.forEach(b => { b.disabled = false; b.textContent = '■ 停止'; }); }
+  } catch(e){ alert('停止失败：' + e); btns.forEach(b => { b.disabled = false; b.textContent = '■ 停止'; }); }
 }
 
 async function loadHistoryFromDisk(runId){
@@ -12416,9 +12437,12 @@ function renderRun(r){
   // 有运行任务 → 展开右侧运行面板
   const grid = document.querySelector('.runner-grid');
   if (grid) grid.classList.remove('idle');
-  // Top-bar status + token/cost stats (unchanged)
+  // Top-bar status + token/cost stats (+ 停止按钮:仅执行人/管理员、运行中)
   document.getElementById('tb-sep').style.display = '';
-  document.getElementById('tb-status').innerHTML = `<span class="status-pill ${r.status}">${r.status}</span>`;
+  const _stop = r.can_stop
+    ? ` <button class="status-stop" onclick="stopCurrentRun('${r.run_id}')" title="停止执行（仅执行人/管理员）">■ 停止</button>`
+    : '';
+  document.getElementById('tb-status').innerHTML = `<span class="status-pill ${r.status}">${r.status}</span>${_stop}`;
   const u = r.usage || {};
   document.getElementById('s-in').textContent = u.input_tokens != null ? u.input_tokens.toLocaleString() : '—';
   document.getElementById('s-out').textContent = u.output_tokens != null ? u.output_tokens.toLocaleString() : '—';
