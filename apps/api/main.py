@@ -9021,20 +9021,29 @@ async def api_figma_logout(request: Request) -> dict[str, Any]:
 
 @app.post("/api/figma/preview")
 async def api_figma_preview(request: Request, body: dict[str, Any]) -> dict[str, Any]:
-    """读取一次 Figma 链接,返回设计图(base64)给前端预览。step5 用。按当前用户登录态。"""
-    user = require_user(request)
+    """读取一次 Figma 链接预览(走服务端只读 Token + REST API,无需浏览器登录)。step5 用。"""
+    require_user(request)
     url = (body or {}).get("url", "").strip()
     if not url:
         raise HTTPException(400, "missing url")
-    from packages.core.device.figma import fetch_figma_via_host_runner
+    from packages.core.device.figma import parse_figma_links, fetch_figma_frames_via_api
+    from packages.core.auth_config import get_figma_token
+    token = get_figma_token()
+    if not token:
+        return {"ok": False, "error": "未配置 Figma 只读 Token — 请到「设置 → Figma」填入 figd_ 开头的只读 PAT"}
+    links = parse_figma_links(url)
+    if not links:
+        return {"ok": False, "error": "无法从链接解析出 Figma 文件,请确认是 figma.com/design/... 链接"}
+    lk = links[0]
     import uuid as _uuid
     sc_dir = Path(settings.evidence_output_dir) / "screenshots"
     sc_dir.mkdir(parents=True, exist_ok=True)
     fname = f"figma_preview_{_uuid.uuid4().hex[:8]}.png"
-    res = await fetch_figma_via_host_runner(url, str(sc_dir / fname), user=user.id)
+    res = await fetch_figma_frames_via_api(
+        lk["file_key"], token, str(sc_dir / fname), prefer_node=lk.get("node_id", ""), max_frames=8)
     if not res.get("ok"):
         return {"ok": False, "error": res.get("error")}
-    return {"ok": True, "image_url": f"/api/screenshots/{fname}"}
+    return {"ok": True, "image_url": f"/api/screenshots/{fname}", "frames": len(res.get("frames") or [])}
 
 
 @app.get("/api/settings/figma-login")
@@ -11495,9 +11504,7 @@ TOOL_DETAIL_HTML = r"""<!doctype html>
               padding:6px 14px;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap">读取预览</button>
           </div>
           <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
-            <span id="figma-status" style="flex:1;font-size:11.5px;color:var(--fg-3);font-family:var(--mono)">检查登录态…</span>
-            <button type="button" id="figma-auth-btn" style="background:transparent;color:var(--fg-2);
-              border:1px solid var(--line-2);padding:5px 14px;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap">登录 Figma</button>
+            <span id="figma-status" style="flex:1;font-size:11.5px;color:var(--fg-3);font-family:var(--mono)">设计稿读取走服务端只读 Token</span>
           </div>
           <img id="figma-preview-img" style="display:none;max-width:300px;margin-top:8px;border:1px solid var(--line);border-radius:6px"/>
         </div>
@@ -12345,49 +12352,24 @@ function buildModelControls(){
   }
 }
 
-// === Figma 设计稿条(step5 / h5_adapt)===
-let _figmaPollTimer = null;
-let _figmaLoginInProgress = false;
+// === Figma 设计稿条(step5 / h5_adapt)=== 读图走服务端只读 Token(REST API),无前端登录
 async function refreshFigmaStatus(){
   const st=document.getElementById('figma-status');
-  const auth=document.getElementById('figma-auth-btn');
   if(!st) return;
   try{
     const d=await fetch('/api/figma/status').then(r=>r.json());
-    // 配了只读 Token(REST API)→ 纯服务端读图,任意机器可用,无需浏览器登录。
     if(d.token_configured){
-      st.textContent='✅ 已配置只读 Token（REST API）— 运行时直接读设计图，任意机器可用，无需登录';
+      st.textContent='✅ 已配置只读 Token — 粘链接后直接运行 / 读取预览(服务端读图,无需登录)';
       st.style.color='var(--ok)';
-      if(_figmaPollTimer){clearInterval(_figmaPollTimer);_figmaPollTimer=null;}
-      if(auth){ auth.style.display='none'; }
-      return;
-    }
-    if(auth){ auth.style.display=''; }
-    if(!d.runner_up){ st.textContent='⚠ 宿主读图助手未运行(请在 Mac 上启动 figma_runner)'; st.style.color='var(--warn)';
-      if(auth){auth.disabled=false;auth.textContent='登录 Figma';auth.dataset.mode='login';auth.style.color='var(--fg-2)';} return; }
-    if(d.login_running){ st.textContent='⏳ 登录窗口已弹出 — 请在 Chrome 用 Google 登录…'; st.style.color='var(--warn)';
-      if(auth){auth.disabled=true;auth.textContent='登录中…';} return; }
-    if(d.logged_in){
-      st.textContent='✓ Figma 已登录(当前用户)— 运行时自动读取设计图'; st.style.color='var(--ok)';
-      if(_figmaPollTimer){clearInterval(_figmaPollTimer);_figmaPollTimer=null;}
-      _figmaLoginInProgress=false;
-      if(auth){auth.disabled=false;auth.textContent='退出登录';auth.dataset.mode='logout';auth.style.color='var(--bad)';}
     } else {
-      if(_figmaLoginInProgress && !d.login_running){
-        _figmaLoginInProgress=false;
-        if(_figmaPollTimer){clearInterval(_figmaPollTimer);_figmaPollTimer=null;}
-        st.textContent='✕ 未检测到登录 — 请重试「登录 Figma」'; st.style.color='var(--bad)';
-      } else {
-        st.textContent='○ 未登录 — 点「登录 Figma」一次(以后免登录)'; st.style.color='var(--fg-3)';
-      }
-      if(auth){auth.disabled=false;auth.textContent='登录 Figma';auth.dataset.mode='login';auth.style.color='var(--fg-2)';}
+      st.textContent='⚠ 未配置 Figma 只读 Token — 到「设置 → Figma」填 figd_ 开头的只读 PAT';
+      st.style.color='var(--warn)';
     }
-  }catch(e){ st.textContent='状态查询失败'; }
+  }catch(e){ st.textContent='Figma 状态查询失败'; }
 }
 function initFigmaBar(){
   const bar=document.getElementById('figma-bar'); if(!bar) return;
   bar.style.display='block';
-  const auth=document.getElementById('figma-auth-btn');
   const readBtn=document.getElementById('figma-read-btn');
   const urlInp=document.getElementById('figma-url');
   const img=document.getElementById('figma-preview-img');
@@ -12396,32 +12378,14 @@ function initFigmaBar(){
   urlInp.value=''; urlInp.disabled=false;
   // 换链接 → 「读取完成」还原为「读取预览」
   urlInp.oninput=()=>{ if(readBtn.textContent==='读取完成'){ readBtn.textContent='读取预览'; img.style.display='none'; } };
-  // 登录/退出 切换按钮(在状态右侧)
-  auth.onclick=async()=>{
-    const mode=auth.dataset.mode||'login';
-    if(mode==='logout'){
-      auth.disabled=true; auth.textContent='退出中…';
-      try{ await fetch('/api/figma/logout',{method:'POST'}); st.textContent='已退出 Figma 登录 — 需重新登录'; st.style.color='var(--fg-3)'; }
-      catch(e){ st.textContent='退出失败'; }
-      await refreshFigmaStatus(); return;
-    }
-    auth.disabled=true; auth.textContent='登录中…';
-    try{
-      await fetch('/api/figma/login',{method:'POST'});
-      st.textContent='⏳ Chrome 已弹出 — 用 Google 登录,完成后自动变绿'; st.style.color='var(--warn)';
-      _figmaLoginInProgress=true;
-      if(_figmaPollTimer) clearInterval(_figmaPollTimer);
-      _figmaPollTimer=setInterval(refreshFigmaStatus, 4000);
-    }catch(e){ st.textContent='✕ 启动登录失败(宿主助手未运行?)'; st.style.color='var(--bad)'; auth.disabled=false; auth.textContent='登录 Figma'; }
-  };
-  // 读取 figma 内容(在输入框右侧):成功→「读取完成」;失败→说明原因
+  // 读取 figma 内容(走服务端只读 Token):成功→「读取完成」;失败→说明原因
   readBtn.onclick=async()=>{
     const u=(urlInp.value||'').trim();
     if(!u){ st.textContent='先粘贴 Figma 链接'; st.style.color='var(--warn)'; return; }
     readBtn.disabled=true; readBtn.textContent='读取中…';
     try{
       const r=await fetch('/api/figma/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u})}).then(r=>r.json());
-      if(r.ok){ img.src=r.image_url; img.style.display='block'; readBtn.textContent='读取完成'; st.textContent='✓ 设计图读取成功'; st.style.color='var(--ok)'; }
+      if(r.ok){ img.src=r.image_url; img.style.display='block'; readBtn.textContent='读取完成'; st.textContent='✓ 读取成功'+(r.frames?`(共 ${r.frames} 帧设计图)`:''); st.style.color='var(--ok)'; }
       else { readBtn.textContent='读取预览'; st.textContent='✕ 读取失败:'+(r.error||'未知原因'); st.style.color='var(--bad)'; }
     }catch(e){ readBtn.textContent='读取预览'; st.textContent='✕ 读取失败:网络错误'; st.style.color='var(--bad)'; }
     readBtn.disabled=false;
