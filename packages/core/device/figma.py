@@ -132,6 +132,62 @@ async def fetch_figma_frames_via_api(
         return {"ok": False, "error": f"连不上宿主助手({HOST_RUNNER_URL}) /frames: {type(exc).__name__}"}
 
 
+async def fetch_figma_frames_via_export(
+    url: str,
+    out_path: str,
+    *,
+    max_frames: int = 50,
+    user: str = "default",
+    force: bool = False,
+) -> dict[str, object]:
+    """乙案:宿主助手用登录态浏览器『Export frames to PDF』→ 屏幕帧逐帧落盘。**零 REST API 额度**。
+
+    完全走浏览器(像人一样导出 PDF 再拆页),不碰被限流的 Figma REST API;view-only 只读权限也能导。
+    需先把 Figma 会话注入宿主(/figma-session)。宿主返回 [{name, png_b64}] → 这里落盘。
+    返回 {ok, path, frames, error}。
+    """
+    import base64
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=360.0) as cli:
+            r = await cli.post(f"{HOST_RUNNER_URL}/export-frames", json={
+                "url": url, "user": user, "max_frames": max_frames, "force": force})
+        if r.status_code != 200:
+            return {"ok": False, "error": f"宿主助手 /export-frames HTTP {r.status_code}"}
+        data = r.json()
+        if not data.get("ok"):
+            return {"ok": False, "error": f"宿主助手: {data.get('error')}"}
+        from pathlib import Path as _P
+        op = _P(out_path)
+        saved: list[dict[str, object]] = []
+        for j, fr in enumerate(data.get("frames") or []):
+            b64 = fr.get("png_b64")
+            if not b64:
+                continue
+            png = base64.b64decode(b64)
+            p = op if not saved else op.with_name(f"{op.stem}_f{len(saved) + 1}{op.suffix}")
+            p.write_bytes(png)
+            saved.append({"path": str(p), "name": fr.get("name") or f"screen{j + 1}", "size": len(png)})
+        if not saved:
+            return {"ok": False, "error": "宿主助手未返回任何帧"}
+        return {"ok": True, "path": saved[0]["path"], "frames": saved, "error": None}
+    except Exception as exc:
+        return {"ok": False, "error": f"连不上宿主助手({HOST_RUNNER_URL}) /export-frames: {type(exc).__name__}"}
+
+
+async def inject_figma_session_via_host(cookies: list, user: str = "default") -> dict[str, object]:
+    """把操作机导出的 Figma 会话 cookie 转交宿主助手注入(/figma-session)。"""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as cli:
+            r = await cli.post(f"{HOST_RUNNER_URL}/figma-session", json={"cookies": cookies, "user": user})
+        if r.status_code != 200:
+            return {"ok": False, "error": f"宿主助手 /figma-session HTTP {r.status_code}"}
+        return r.json()
+    except Exception as exc:
+        return {"ok": False, "error": f"连不上宿主助手({HOST_RUNNER_URL}): {type(exc).__name__}"}
+
+
 _REAL_UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 

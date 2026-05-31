@@ -162,6 +162,7 @@ def shot(url: str, user) -> dict:
     with sync_playwright() as pw:
         ctx = _new_context(pw, headless=True, user=user)
         try:
+            _apply_session(ctx, user)   # 乙案:注入操作机导出的登录会话
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
             page.goto(url, timeout=45000, wait_until="domcontentloaded")
             time.sleep(6)
@@ -337,6 +338,171 @@ def _figma_api_frames(file_key: str, token: str, prefer_node: str = "",
         return _fail(f"{type(exc).__name__}: {str(exc)[:160]}")
 
 
+def _session_file(user) -> Path:
+    return Path(_profile_dir(user)) / "figma_session.json"
+
+
+def _map_cookies(raw: list) -> list[dict]:
+    """把 Cookie-Editor / Chrome DevTools 导出的 cookie JSON 映射成 Playwright add_cookies 格式。"""
+    ss_map = {"no_restriction": "None", "none": "None", "lax": "Lax",
+              "strict": "Strict", "unspecified": "Lax", "": "Lax"}
+    out: list[dict] = []
+    for c in raw or []:
+        if not isinstance(c, dict) or not c.get("name") or not c.get("domain"):
+            continue
+        ss = ss_map.get(str(c.get("sameSite") or "").lower().replace("-", "_"), "Lax")
+        ck = {
+            "name": str(c["name"]),
+            "value": str(c.get("value", "")),
+            "domain": str(c["domain"]),
+            "path": c.get("path") or "/",
+            "httpOnly": bool(c.get("httpOnly", False)),
+            "secure": bool(c.get("secure", False)),
+            "sameSite": ss,
+        }
+        if ss == "None":
+            ck["secure"] = True
+        exp = c.get("expirationDate") or c.get("expires")
+        if exp and not c.get("session"):
+            try:
+                ck["expires"] = int(float(exp))
+            except Exception:
+                pass
+        out.append(ck)
+    return out
+
+
+def _apply_session(ctx, user) -> bool:
+    """抓图前把保存的会话 cookie 注入当前 context(不依赖 Chrome profile 的 cookie 持久化)。"""
+    f = _session_file(user)
+    if not f.exists():
+        return False
+    try:
+        cks = json.loads(f.read_text())
+        if cks:
+            ctx.add_cookies(cks)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def inject_figma_session(raw_cookies: list, user="default") -> dict:
+    """乙案:把操作机导出的 Figma 会话 cookie 存盘 + 注入校验,使宿主浏览器「以用户身份登录」。"""
+    from playwright.sync_api import sync_playwright
+    figma = [c for c in _map_cookies(raw_cookies) if "figma" in c.get("domain", "").lower()]
+    if not figma:
+        return {"ok": False, "error": "未发现 figma.com 的 Cookie(请在已登录的 figma.com 页面导出)"}
+    d = Path(_profile_dir(user)); d.mkdir(parents=True, exist_ok=True)
+    _session_file(user).write_text(json.dumps(figma))
+    try:
+        with sync_playwright() as pw:
+            ctx = _new_context(pw, headless=True, user=user)
+            try:
+                ctx.add_cookies(figma)
+                page = ctx.pages[0] if ctx.pages else ctx.new_page()
+                page.goto("https://www.figma.com/files", timeout=45000, wait_until="domcontentloaded")
+                time.sleep(4)
+                if "/login" in page.url.lower():
+                    try:
+                        _session_file(user).unlink()
+                    except Exception:
+                        pass
+                    return {"ok": False, "logged_in": False,
+                            "error": "Cookie 注入后仍跳登录页 — 会话可能已过期或缺关键 Cookie,请在 figma.com 重新登录后重新导出"}
+                m = _marker(user); m.parent.mkdir(parents=True, exist_ok=True)
+                m.write_text(str(int(time.time())))
+                return {"ok": True, "logged_in": True, "cookie_count": len(figma)}
+            finally:
+                ctx.close()
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+
+
+def _figma_export_frames(url: str, user="default", max_frames: int = 50, force: bool = False) -> dict:
+    """乙案核心:登录态浏览器触发 Figma『Export frames to PDF』→ 拆页 → 屏幕帧 base64。
+
+    完全走浏览器(像人一样导出),不碰 REST API,零额度;view-only(只读)权限也能导出。
+    结果按 file_key 落盘缓存,预览/多次跑复用。
+    """
+    import re as _re, base64 as _b64, tempfile, os as _os
+    m = _re.search(r"/(?:design|file|proto)/([A-Za-z0-9]+)", url or "")
+    file_key = m.group(1) if m else "unknown"
+    cpath = _figma_cache_path(file_key, "export")
+    if not force:
+        c = _figma_read_cache(cpath)
+        if c:
+            c = dict(c); c["_cached"] = True
+            return c
+    from playwright.sync_api import sync_playwright
+    pdf_path = None
+    try:
+        with sync_playwright() as pw:
+            ctx = _new_context(pw, headless=True, user=user)
+            try:
+                _apply_session(ctx, user)
+                page = ctx.pages[0] if ctx.pages else ctx.new_page()
+                page.goto(url, timeout=60000, wait_until="domcontentloaded")
+                try:
+                    page.wait_for_selector("canvas", timeout=30000)
+                except Exception:
+                    pass
+                time.sleep(9)
+                body = (page.inner_text("body") or "")[:400].lower()
+                if ("log in" in body or "sign up" in body) and not page.query_selector("canvas"):
+                    return {"ok": False, "error": "宿主浏览器未登录 Figma — 请重新导入会话"}
+                page.mouse.click(800, 500); time.sleep(0.4)
+                page.keyboard.press("Escape"); time.sleep(0.4)
+                page.keyboard.press("Meta+Slash"); time.sleep(1.3)      # 快捷操作面板
+                page.keyboard.type("Export frames to PDF", delay=45); time.sleep(1.5)
+                page.keyboard.press("Enter"); time.sleep(2.4)           # 打开导出设置框
+                with page.expect_download(timeout=300000) as dl:
+                    clicked = False
+                    try:
+                        page.get_by_role("button", name="Export").last.click(timeout=3500); clicked = True
+                    except Exception:
+                        pass
+                    if not clicked:
+                        page.keyboard.press("Enter")                    # 设置框默认按钮=Export
+                    page.wait_for_timeout(4000)
+                d = dl.value
+                fd, pdf_path = tempfile.mkstemp(suffix=".pdf"); _os.close(fd)
+                d.save_as(pdf_path)
+            finally:
+                ctx.close()
+        import fitz
+        doc = fitz.open(pdf_path)
+        frames = []
+        for pg in doc:
+            r = pg.rect; w, h = r.width, r.height
+            ar = (w / h) if h else 0
+            if 0.4 <= ar <= 0.62 and h >= 600:        # 竖屏手机帧
+                pix = pg.get_pixmap(matrix=fitz.Matrix(2, 2))
+                frames.append({"name": f"screen{len(frames) + 1}",
+                               "png_b64": _b64.b64encode(pix.tobytes("png")).decode("ascii")})
+                if len(frames) >= max_frames:
+                    break
+        doc.close()
+        if not frames:
+            return {"ok": False, "error": "导出的 PDF 未拆出屏幕帧(竖屏比例)"}
+        result = {"ok": True, "frames": frames, "error": None}
+        try:
+            _os.makedirs(_FIGMA_CACHE_DIR, exist_ok=True)
+            with open(cpath, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(result, ensure_ascii=False))
+        except Exception:
+            pass
+        return result
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+    finally:
+        if pdf_path:
+            try:
+                _os.remove(pdf_path)
+            except Exception:
+                pass
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -387,6 +553,17 @@ class Handler(BaseHTTPRequestHandler):
             if not data.get("url"):
                 self._send(400, {"ok": False, "error": "missing url"}); return
             self._send(200, shot(data["url"], user))
+        elif self.path == "/figma-session":
+            cks = data.get("cookies")
+            if not isinstance(cks, list) or not cks:
+                self._send(400, {"ok": False, "error": "missing cookies (应为 cookie JSON 数组)"}); return
+            self._send(200, inject_figma_session(cks, user))
+        elif self.path == "/export-frames":
+            if not data.get("url"):
+                self._send(400, {"ok": False, "error": "missing url"}); return
+            self._send(200, _figma_export_frames(data["url"], user,
+                                                  int(data.get("max_frames", 50)),
+                                                  bool(data.get("force", False))))
         elif self.path == "/frames":
             fk = data.get("file_key"); tok = data.get("token")
             if not fk or not tok:

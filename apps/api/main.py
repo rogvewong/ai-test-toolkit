@@ -3793,7 +3793,7 @@ async def _capture_screenshots_for_tool(
     try:
         from packages.core.device.figma import (
             parse_figma_links, fetch_figma_image, fetch_figma_frames_via_api,
-            fetch_figma_via_browser, fetch_figma_via_host_runner)
+            fetch_figma_frames_via_export, fetch_figma_via_browser, fetch_figma_via_host_runner)
         from packages.core.auth_config import get_figma_token, get_figma_login
         links = parse_figma_links(docs)
         if links:
@@ -3806,24 +3806,19 @@ async def _capture_screenshots_for_tool(
                 state["progress"] = f"读取 Figma 设计图 {lk['file_key'][:8]}…"
                 fname = f"{tool_id}_{ctx.run_id[:8]}_figma_{i+1}.png"
                 fpath = str(sc_dir / fname)
-                # 优先级:① 只读 API token 逐帧渲染(对 view-only 文件也干净可靠 —— 首选)
-                #         ② 宿主读图助手(真实 Chrome 登录) ③ 容器内浏览器(账号密码)
+                # 优先级:① 登录态浏览器导出 PDF 拆帧(**零 REST 额度**,只读权限也行 —— 首选)
+                #         ② 只读 API token 逐帧渲染(REST,有账号级额度限制) ③ 宿主 /shot 截图
                 _run_user = state.get("owner_user_id") or "default"
-                if token:
-                    res = await fetch_figma_frames_via_api(
-                        lk["file_key"], token, fpath, prefer_node=lk["node_id"])
-                    mode = "api_frames"
+                res = await fetch_figma_frames_via_export(lk["url"], fpath, max_frames=50, user="default")
+                mode = "export_pdf"
+                if not res.get("ok"):
+                    if token:
+                        res = await fetch_figma_frames_via_api(
+                            lk["file_key"], token, fpath, prefer_node=lk["node_id"])
+                        mode = "api_frames"
                     if not res.get("ok"):
                         res = await fetch_figma_via_host_runner(lk["url"], fpath, user=_run_user)
                         mode = "host_runner"
-                else:
-                    res = await fetch_figma_via_host_runner(lk["url"], fpath, user=_run_user)
-                    mode = "host_runner"
-                    if not res.get("ok") and login.get("email"):
-                        res = await fetch_figma_via_browser(
-                            lk["url"], fpath, email=login["email"],
-                            password=login["password"], profile_dir=profile_dir)
-                        mode = "container_browser"
                 _frames = res.get("frames") or ([{"path": fpath, "name": "frame1"}] if res.get("ok") else [])
                 state.setdefault("logs", []).append({
                     "ts": _time.time(), "event": "figma.fetch", "mode": mode,
@@ -8992,11 +8987,12 @@ async def api_figma_status(request: Request) -> dict[str, Any]:
     user = require_user(request)
     from packages.core.device.figma import host_runner_call
     from packages.core.auth_config import get_figma_token
-    res = await host_runner_call("GET", "/status", user=user.id)
+    # 乙案:读图走宿主机「登录态浏览器导出」(零 REST 额度),会话注入在 default profile。
+    res = await host_runner_call("GET", "/status", user="default")
     if not isinstance(res, dict):
         res = {"ok": False}
-    # 配了只读 Token(REST API) → 纯服务端读图,任意机器可用,无需浏览器登录。
-    res["token_configured"] = bool(get_figma_token())
+    res["session_logged_in"] = bool(res.get("logged_in"))
+    res["token_configured"] = bool(get_figma_token())   # 兜底:只读 PAT(有账号级额度限制)
     return res
 
 
@@ -9026,11 +9022,9 @@ async def api_figma_preview(request: Request, body: dict[str, Any]) -> dict[str,
     url = (body or {}).get("url", "").strip()
     if not url:
         raise HTTPException(400, "missing url")
-    from packages.core.device.figma import parse_figma_links, fetch_figma_frames_via_api
+    from packages.core.device.figma import (parse_figma_links, fetch_figma_frames_via_export,
+                                             fetch_figma_frames_via_api)
     from packages.core.auth_config import get_figma_token
-    token = get_figma_token()
-    if not token:
-        return {"ok": False, "error": "未配置 Figma 只读 Token — 请到「设置 → Figma」填入 figd_ 开头的只读 PAT"}
     links = parse_figma_links(url)
     if not links:
         return {"ok": False, "error": "无法从链接解析出 Figma 文件,请确认是 figma.com/design/... 链接"}
@@ -9039,8 +9033,13 @@ async def api_figma_preview(request: Request, body: dict[str, Any]) -> dict[str,
     sc_dir = Path(settings.evidence_output_dir) / "screenshots"
     sc_dir.mkdir(parents=True, exist_ok=True)
     fname = f"figma_preview_{_uuid.uuid4().hex[:8]}.png"
-    res = await fetch_figma_frames_via_api(
-        lk["file_key"], token, str(sc_dir / fname), prefer_node=lk.get("node_id", ""), max_frames=8)
+    # 首选:登录态浏览器导出 PDF 拆帧(零额度,只读权限也行);失败再退只读 API token
+    res = await fetch_figma_frames_via_export(url, str(sc_dir / fname), max_frames=50, user="default")
+    if not res.get("ok"):
+        token = get_figma_token()
+        if token:
+            res = await fetch_figma_frames_via_api(
+                lk["file_key"], token, str(sc_dir / fname), prefer_node=lk.get("node_id", ""), max_frames=8)
     if not res.get("ok"):
         return {"ok": False, "error": res.get("error")}
     return {"ok": True, "image_url": f"/api/screenshots/{fname}", "frames": len(res.get("frames") or [])}
@@ -12352,17 +12351,20 @@ function buildModelControls(){
   }
 }
 
-// === Figma 设计稿条(step5 / h5_adapt)=== 读图走服务端只读 Token(REST API),无前端登录
+// === Figma 设计稿条(step5 / h5_adapt)=== 读图走宿主机「登录态浏览器导出」(零 REST 额度)
 async function refreshFigmaStatus(){
   const st=document.getElementById('figma-status');
   if(!st) return;
   try{
     const d=await fetch('/api/figma/status').then(r=>r.json());
-    if(d.token_configured){
-      st.textContent='✅ 已配置只读 Token — 粘链接后直接运行 / 读取预览(服务端读图,无需登录)';
+    if(d.session_logged_in){
+      st.textContent='✅ 已登录 Figma 会话 — 粘链接直接运行 / 读取预览(登录态浏览器导出,零额度,只读权限也支持)';
       st.style.color='var(--ok)';
+    } else if(d.token_configured){
+      st.textContent='⚠ 未导入会话,暂用只读 Token(REST,有账号级额度限制)— 建议导入会话走零额度';
+      st.style.color='var(--warn)';
     } else {
-      st.textContent='⚠ 未配置 Figma 只读 Token — 到「设置 → Figma」填 figd_ 开头的只读 PAT';
+      st.textContent='⚠ 未登录 Figma 会话 — 需把 figma.com 会话导入宿主机(零额度读图)';
       st.style.color='var(--warn)';
     }
   }catch(e){ st.textContent='Figma 状态查询失败'; }
