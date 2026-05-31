@@ -3817,13 +3817,20 @@ async def _capture_screenshots_for_tool(
                         res = await fetch_figma_image(lk["file_key"], lk["node_id"],
                                                       token, fpath)
                         mode = "api"
+                _frames = res.get("frames") or ([{"path": fpath, "name": "frame1"}] if res.get("ok") else [])
                 state.setdefault("logs", []).append({
                     "ts": _time.time(), "event": "figma.fetch", "mode": mode,
-                    "ok": res.get("ok"), "error": res.get("error"), "node": lk["node_id"]})
+                    "ok": res.get("ok"), "error": res.get("error"), "node": lk["node_id"],
+                    "frames": len(_frames)})
                 if res.get("ok"):
-                    figma_shots.append({
-                        "url": lk["url"], "viewport": "设计基线(Figma)",
-                        "width": "", "height": "", "filename": fname, "is_design": True})
+                    # 逐帧:每个顶层 Frame 一张设计基线图,供逐帧 vs 实拍对照。
+                    for fj, fr in enumerate(_frames):
+                        ffn = Path(fr["path"]).name
+                        figma_shots.append({
+                            "url": lk["url"],
+                            "viewport": (f"设计基线(Figma)· 帧{fj + 1}" if len(_frames) > 1 else "设计基线(Figma)"),
+                            "width": "", "height": "", "filename": ffn, "is_design": True,
+                            "node_name": fr.get("name")})
     except Exception as exc:
         state.setdefault("logs", []).append({
             "ts": _time.time(), "event": "figma.fetch.failed", "error": str(exc)[:200]})

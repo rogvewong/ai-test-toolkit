@@ -101,17 +101,31 @@ async def fetch_figma_via_host_runner(url: str, out_path: str, user: object = "d
     import base64
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=90.0) as cli:
+        async with httpx.AsyncClient(timeout=180.0) as cli:
             r = await cli.post(f"{HOST_RUNNER_URL}/shot", json={"url": url, "user": str(user)})
         if r.status_code != 200:
             return {"ok": False, "error": f"宿主助手 HTTP {r.status_code}"}
         data = r.json()
         if not data.get("ok"):
             return {"ok": False, "error": f"宿主助手: {data.get('error')}"}
-        png = base64.b64decode(data["png_b64"])
         from pathlib import Path as _P
-        _P(out_path).write_bytes(png)
-        return {"ok": True, "path": out_path, "size": len(png), "error": None}
+        op = _P(out_path)
+        # 逐帧存盘(派生文件名);兼容旧版只返回 png_b64 的情况。
+        frame_list = data.get("frames")
+        if not frame_list and data.get("png_b64"):
+            frame_list = [{"name": "frame1", "png_b64": data["png_b64"]}]
+        saved: list[dict[str, object]] = []
+        for j, fr in enumerate(frame_list or []):
+            b64 = fr.get("png_b64")
+            if not b64:
+                continue
+            png = base64.b64decode(b64)
+            p = op if j == 0 else op.with_name(f"{op.stem}_f{j + 1}{op.suffix}")
+            p.write_bytes(png)
+            saved.append({"path": str(p), "name": fr.get("name") or f"frame{j + 1}", "size": len(png)})
+        if not saved:
+            return {"ok": False, "error": "宿主助手未返回任何帧"}
+        return {"ok": True, "path": saved[0]["path"], "frames": saved, "error": None}
     except Exception as exc:
         return {"ok": False, "error": f"连不上宿主助手({HOST_RUNNER_URL}): {type(exc).__name__}"}
 

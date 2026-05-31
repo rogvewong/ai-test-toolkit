@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -103,6 +104,57 @@ def _login_worker(user):
         _login_running[_uid(user)] = False
 
 
+def _node_from_url(u: str) -> str | None:
+    m = re.search(r"node-id=([0-9A-Za-z%:\-]+)", u or "")
+    return m.group(1) if m else None
+
+
+def _capture_frames(page, max_frames: int = 12) -> list[dict]:
+    """逐帧抽取:用 Tab 在「顶层 Frame」间循环,每帧 Shift+2 缩放充满画布后截图。
+
+    为什么这样:Figma 里无选择时按 Tab 选中第一个顶层对象,再按 Tab 依次选下一个
+    同级对象(不进子层);Shift+2 缩放到选中对象。于是可逐个顶层 Frame 截成单独的图,
+    而不是把整张画布(缩略总览)截成一张读不清的图。
+    结束条件:截图内容重复(循环回到已截过的帧)或 node-id 重复或到上限。
+    """
+    frames: list[dict] = []
+    # 聚焦画布 + 清空选择,回到顶层
+    try:
+        page.mouse.click(760, 460)  # 点画布空白处聚焦
+        time.sleep(0.4)
+    except Exception:
+        pass
+    for _ in range(3):
+        try:
+            page.keyboard.press("Escape")
+            time.sleep(0.25)
+        except Exception:
+            pass
+    seen_nodes: set[str] = set()
+    seen_imgs: set[str] = set()
+    for i in range(max_frames):
+        try:
+            page.keyboard.press("Tab")       # 选中下一个顶层对象
+            time.sleep(0.9)
+            node = _node_from_url(page.url)
+            if node and node in seen_nodes:
+                break                         # 循环回到已截过的帧 → 结束
+            page.keyboard.press("Shift+2")    # 缩放到选中帧充满画布
+            time.sleep(1.1)
+            png = page.screenshot(full_page=False)
+        except Exception:
+            break
+        h = hashlib.md5(png).hexdigest()
+        if h in seen_imgs:
+            break                             # 截图重复 → 已遍历完
+        seen_imgs.add(h)
+        if node:
+            seen_nodes.add(node)
+        frames.append({"name": node or f"frame{i + 1}",
+                       "png_b64": base64.b64encode(png).decode("ascii")})
+    return frames
+
+
 def shot(url: str, user) -> dict:
     from playwright.sync_api import sync_playwright
     if _login_running.get(_uid(user)):
@@ -121,24 +173,33 @@ def shot(url: str, user) -> dict:
             except Exception:
                 pass
             time.sleep(4)
-            # 只截 node-id 指向的那一帧,不要整个编辑器画面:
-            #   node-id URL 打开后该节点已被选中 → Shift+2 缩放到选中节点充满画布;
-            #   Cmd+\ 隐藏左右面板/工具栏,只留画布;再截图 = 干净的单帧设计图。
+            # 隐藏左右面板/工具栏(Cmd+\),让每帧截图只剩画布,干净。
             try:
-                page.mouse.move(760, 460)  # 把焦点移到画布区
-                page.keyboard.press("Shift+2")          # zoom to selection(选中的就是该 node)
-                time.sleep(1.5)
-                page.keyboard.press("Meta+Backslash")    # 隐藏 UI 面板(Figma: Cmd+\)
-                time.sleep(1.5)
+                page.mouse.move(760, 460)
+                page.keyboard.press("Meta+Backslash")
+                time.sleep(1.2)
             except Exception:
                 pass
-            png = page.screenshot(full_page=False)
+            # 逐个顶层 Frame 抽成单独的图(B:不再截整张画布缩略图)。
+            frames = _capture_frames(page, max_frames=12)
+            if not frames:
+                # 兜底:老逻辑 — node-id 预选的单帧 / 整张
+                try:
+                    page.keyboard.press("Shift+2")
+                    time.sleep(1.2)
+                except Exception:
+                    pass
+                png = page.screenshot(full_page=False)
+                frames = [{"name": _node_from_url(url) or "frame1",
+                           "png_b64": base64.b64encode(png).decode("ascii")}]
             try:
                 m = _marker(user); m.parent.mkdir(parents=True, exist_ok=True)
                 m.write_text(str(int(time.time())))
             except Exception:
                 pass
-            return {"ok": True, "png_b64": base64.b64encode(png).decode("ascii"), "error": None}
+            return {"ok": True, "frames": frames,
+                    "png_b64": frames[0]["png_b64"],  # 向后兼容(单帧字段)
+                    "error": None}
         except Exception as exc:
             return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:160]}"}
         finally:
