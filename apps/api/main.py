@@ -4336,6 +4336,77 @@ def _seo_strengths(sd: dict[str, Any]) -> list[str]:
     return out
 
 
+def _build_step5_images(ctx: Any) -> list[dict[str, Any]] | None:
+    """把 ctx.screenshots(设计稿 + 实拍)转成带 role caption 的 images,供逐帧比对。
+    设计稿排前、实拍排后,便于配对;限量防请求过大。"""
+    shots = getattr(ctx, "screenshots", None) or []
+    if not shots:
+        return None
+    sc_dir = Path(settings.evidence_output_dir) / "screenshots"
+    images: list[dict[str, Any]] = []
+    for s in shots:
+        if s.get("error") or not s.get("filename"):
+            continue
+        p = sc_dir / s["filename"]
+        if not p.exists():
+            continue
+        fn = str(s.get("filename", "")); u = str(s.get("url", "") or "")
+        if s.get("is_design") or "figma" in fn.lower() or "figma.com" in u.lower():
+            role = "设计稿(Figma 设计基线 — 目标设计,勿在此图上标问题)"
+        else:
+            role = "实拍(APP/Web 实际界面 — 在此图对照设计稿标偏差)"
+        images.append({
+            "path": p, "mime": "image/png",
+            "caption": (f"role={role} | viewport_filename={s['filename']} | "
+                        f"viewport={s.get('viewport', '?')} | url={u}"),
+        })
+    images.sort(key=lambda im: 0 if "设计稿" in im["caption"] else 1)
+    return images[:26] or None
+
+
+async def _step5_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
+    """step5:一次多模态调用做逐帧设计 vs 实拍比对(替代 5 子步骤,大幅提速)。"""
+    images = _build_step5_images(ctx)
+    if not images:
+        return {"verdict": "不通过", "verdict_summary": "未采集到可比对的实拍/设计图(检查模拟器/Figma token)",
+                "issues": [], "risks": [], "blockers": [], "cases": [], "meta": {}}
+    n_design = sum(1 for im in images if "设计稿" in im["caption"])
+    n_actual = len(images) - n_design
+    try:
+        cmp_md = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "step5_ui" / "_compare.md"
+        sysp = cmp_md.read_text(encoding="utf-8")
+    except Exception:
+        sysp = ("你做 UI 一致性比对:把实拍图和设计稿逐帧配对,在实拍图上标出每处偏差,"
+                "输出 JSON{verdict,verdict_summary,issues:[{title,severity,current_behavior,expected_behavior,viewport_filename,bbox,fix_suggestion}]}。")
+    state["progress"] = f"AI 逐帧比对(设计 {n_design} 帧 × 实拍 {n_actual} 屏)…"
+    resp = await ctx.llm.complete(
+        system=sysp,
+        messages=[{"role": "user", "content": "请把附带的所有图按规则**逐帧配对、一张一张地**比对,把每处偏差找全,输出完整 JSON。"}],
+        images=images, max_tokens=8000, allow_degrade=False)
+    try:
+        ctx.usage.merge(resp.usage)
+    except Exception:
+        pass
+    parsed: dict[str, Any] = {}
+    try:
+        parsed = resp.json() or {}
+    except Exception:
+        parsed = {}
+    state.setdefault("logs", []).append({
+        "ts": _time.time(), "event": "step5.compare",
+        "design_frames": n_design, "actual_screens": n_actual,
+        "pairs": len(parsed.get("pairs_checked") or []), "issues": len(parsed.get("issues") or [])})
+    return {
+        "verdict": parsed.get("verdict") or "有条件通过",
+        "verdict_summary": parsed.get("verdict_summary") or "(见各 issue 明细)",
+        "issues": parsed.get("issues") or [],
+        "pairs_checked": parsed.get("pairs_checked") or [],
+        "risks": [], "blockers": [], "cases": [],
+        "confidence": parsed.get("confidence") or {},
+        "meta": {},
+    }
+
+
 def _seo_synthesis(report: dict[str, Any], seo_data: dict[str, Any]) -> dict[str, Any]:
     """把 LLM 报告(overview/issues/strengths)+ 采集数据,组装成 Excel 需要的 synthesis。
     优先用 LLM 直接产出的 overview/strengths;缺失则从 verdict/issues/采集数据兜底派生。"""
@@ -5563,6 +5634,9 @@ async def _run_tool_async(
             report_dump = await _seo_synthesize(ctx, state)
         elif tool["id"] == "network_resilience":
             report_dump = await _network_synthesize(ctx, state)
+        elif tool["id"] == "step5":
+            # step5:逐帧设计 vs 实拍比对,1 次多模态调用(替代 5 子步骤,~50min→几分钟)
+            report_dump = await _step5_synthesize(ctx, state)
         else:
             report = await orch_cls(ctx).execute()
             report_dump = report.model_dump(mode="json")
