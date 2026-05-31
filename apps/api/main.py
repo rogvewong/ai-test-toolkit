@@ -4351,59 +4351,108 @@ def _build_step5_images(ctx: Any) -> list[dict[str, Any]] | None:
         if not p.exists():
             continue
         fn = str(s.get("filename", "")); u = str(s.get("url", "") or "")
-        if s.get("is_design") or "figma" in fn.lower() or "figma.com" in u.lower():
-            role = "设计稿(Figma 设计基线 — 目标设计,勿在此图上标问题)"
-        else:
-            role = "实拍(APP/Web 实际界面 — 在此图对照设计稿标偏差)"
+        is_design = bool(s.get("is_design") or "figma" in fn.lower() or "figma.com" in u.lower())
+        role = ("设计稿(Figma 设计基线 — 目标设计,勿在此图上标问题)" if is_design
+                else "实拍(APP/Web 实际界面 — 在此图对照设计稿标偏差)")
         images.append({
-            "path": p, "mime": "image/png",
+            "path": p, "mime": "image/png", "_is_design": is_design,
             "caption": (f"role={role} | viewport_filename={s['filename']} | "
                         f"viewport={s.get('viewport', '?')} | url={u}"),
         })
-    images.sort(key=lambda im: 0 if "设计稿" in im["caption"] else 1)
-    return images[:26] or None
+    # 设计稿排前、实拍排后(用显式字段,不靠 caption 文本);保留全部实拍 + 尽量多设计帧
+    images.sort(key=lambda im: 0 if im["_is_design"] else 1)
+    return images[:30] or None
 
 
 async def _step5_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
-    """step5:一次多模态调用做逐帧设计 vs 实拍比对(替代 5 子步骤,大幅提速)。"""
-    images = _build_step5_images(ctx)
-    if not images:
-        return {"verdict": "不通过", "verdict_summary": "未采集到可比对的实拍/设计图(检查模拟器/Figma token)",
+    """step5:逐帧设计 vs 实拍比对 —— 每个实拍配名字最匹配的设计帧,一对(2图)一次调用,
+    多对并行(限并发5),替代 5 子步骤 + 单次塞28图,几分钟出全部差异。"""
+    shots = getattr(ctx, "screenshots", None) or []
+    sc_dir = Path(settings.evidence_output_dir) / "screenshots"
+    designs: list[dict[str, Any]] = []
+    actuals: list[dict[str, Any]] = []
+    for s in shots:
+        if s.get("error") or not s.get("filename"):
+            continue
+        p = sc_dir / s["filename"]
+        if not p.exists():
+            continue
+        fn = str(s.get("filename", "")); u = str(s.get("url", "") or "")
+        is_design = bool(s.get("is_design") or "figma" in fn.lower() or "figma.com" in u.lower())
+        nm = (s.get("node_name") or s.get("viewport") or fn) if is_design else (s.get("viewport") or fn)
+        item = {"path": p, "filename": s["filename"], "name": str(nm)}
+        (designs if is_design else actuals).append(item)
+    if not actuals:
+        return {"verdict": "不通过", "verdict_summary": "未采集到实拍界面,无法比对(检查模拟器/APK运行)",
                 "issues": [], "risks": [], "blockers": [], "cases": [], "meta": {}}
-    n_design = sum(1 for im in images if "设计稿" in im["caption"])
-    n_actual = len(images) - n_design
+
+    _KW = ("漫画", "里番", "动漫", "AV", "搜索", "收藏", "追番", "追漫", "点赞", "我的",
+           "详情", "列表", "阅读", "播放", "首页", "启动", "登录", "登陆", "个人中心", "设置")
+
+    def _score(a, d):
+        return sum(1 for k in _KW if k in a["name"] and k in d["name"])
+
+    pairs: list[tuple] = []
+    for a in actuals:
+        best = max(designs, key=lambda d: _score(a, d)) if designs else None
+        pairs.append((a, best if best and _score(a, best) > 0 else None))
+
     try:
-        cmp_md = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "step5_ui" / "_compare.md"
+        cmp_md = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "step5_ui" / "_compare_pair.md"
         sysp = cmp_md.read_text(encoding="utf-8")
     except Exception:
-        sysp = ("你做 UI 一致性比对:把实拍图和设计稿逐帧配对,在实拍图上标出每处偏差,"
-                "输出 JSON{verdict,verdict_summary,issues:[{title,severity,current_behavior,expected_behavior,viewport_filename,bbox,fix_suggestion}]}。")
-    state["progress"] = f"AI 逐帧比对(设计 {n_design} 帧 × 实拍 {n_actual} 屏)…"
-    resp = await ctx.llm.complete(
-        system=sysp,
-        messages=[{"role": "user", "content": "请把附带的所有图按规则**逐帧配对、一张一张地**比对,把每处偏差找全,输出完整 JSON。"}],
-        images=images, max_tokens=8000, allow_degrade=False)
-    try:
-        ctx.usage.merge(resp.usage)
-    except Exception:
-        pass
-    parsed: dict[str, Any] = {}
-    try:
-        parsed = resp.json() or {}
-    except Exception:
-        parsed = {}
+        sysp = "比对设计稿与实拍这一对,在实拍图上标出每处差异,输出 {issues:[...]}。"
+
+    state["progress"] = f"AI 逐对比对(实拍 {len(actuals)} 屏 × 设计 {len(designs)} 帧,{len(pairs)} 对并行)…"
+    _sem = _asyncio.Semaphore(5)
+
+    async def _cmp(a, d):
+        imgs = []
+        if d:
+            imgs.append({"path": d["path"], "mime": "image/png", "caption": f"role=设计稿(目标设计) | name={d['name']}"})
+        imgs.append({"path": a["path"], "mime": "image/png",
+                     "caption": f"role=实拍(实际界面) | viewport_filename={a['filename']} | name={a['name']}"})
+        async with _sem:
+            try:
+                resp = await ctx.llm.complete(
+                    system=sysp,
+                    messages=[{"role": "user", "content": f"比对:设计『{d['name'] if d else '无对应设计帧'}』 vs 实拍『{a['name']}』。输出该对 issues JSON。"}],
+                    images=imgs, max_tokens=2500, allow_degrade=False)
+                try:
+                    ctx.usage.merge(resp.usage)
+                except Exception:
+                    pass
+                return resp.json() or {}
+            except Exception:
+                return {}
+
+    results = await _asyncio.gather(*[_cmp(a, d) for a, d in pairs])
+    all_issues: list = []
+    pairs_checked: list = []
+    for (a, d), res in zip(pairs, results):
+        iss = (res or {}).get("issues") or []
+        iss = [it for it in iss if isinstance(it, dict)]
+        for it in iss:
+            it.setdefault("module", a["name"])
+            it.setdefault("viewport_filename", a["filename"])
+            it.setdefault("issue_id", f"UI-{len(all_issues) + len(iss):03d}")
+        all_issues.extend(iss)
+        pairs_checked.append({"design": d["name"] if d else "(无对应设计帧)", "actual": a["name"], "diff_count": len(iss)})
+
+    sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    all_issues.sort(key=lambda i: sev_order.get(str(i.get("severity", "")).lower(), 5))
+    has_hi = any(str(i.get("severity", "")).lower() in ("critical", "high") for i in all_issues)
+    real = [i for i in all_issues if str(i.get("severity", "")).lower() != "info"]
+    verdict = "不通过" if has_hi else ("有条件通过" if real else "通过")
     state.setdefault("logs", []).append({
         "ts": _time.time(), "event": "step5.compare",
-        "design_frames": n_design, "actual_screens": n_actual,
-        "pairs": len(parsed.get("pairs_checked") or []), "issues": len(parsed.get("issues") or [])})
+        "design_frames": len(designs), "actual_screens": len(actuals),
+        "pairs": len(pairs), "issues": len(all_issues)})
     return {
-        "verdict": parsed.get("verdict") or "有条件通过",
-        "verdict_summary": parsed.get("verdict_summary") or "(见各 issue 明细)",
-        "issues": parsed.get("issues") or [],
-        "pairs_checked": parsed.get("pairs_checked") or [],
-        "risks": [], "blockers": [], "cases": [],
-        "confidence": parsed.get("confidence") or {},
-        "meta": {},
+        "verdict": verdict,
+        "verdict_summary": f"逐帧比对 {len(pairs)} 对(实拍{len(actuals)}/设计{len(designs)}),共 {len(real)} 处需关注的差异",
+        "issues": all_issues, "pairs_checked": pairs_checked,
+        "risks": [], "blockers": [], "cases": [], "meta": {},
     }
 
 
@@ -4772,6 +4821,120 @@ def _build_markdown_report(r: dict[str, Any], tool: dict[str, Any], report: dict
     return "\n".join(lines)
 
 
+def _step5_sidebyside_html(report: dict[str, Any], sd: Path) -> str:
+    """step5 逐帧并排对照:每个实拍配其对应设计帧,左设计右实拍,实拍上 CSS 红框标差异。"""
+    import base64 as _b64
+    import struct as _struct
+
+    def _esc(x: Any) -> str:
+        return str(x or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def _png_dims(data: bytes):
+        if len(data) >= 24 and data[:8] == b"\x89PNG\r\n\x1a\n":
+            try:
+                return _struct.unpack(">II", data[16:24])
+            except Exception:
+                return None, None
+        return None, None
+
+    def _b64img(fn: str):
+        p = sd / fn
+        if not p.exists():
+            return None, None, None
+        try:
+            if p.stat().st_size > 6 * 1024 * 1024:
+                return None, None, None
+            data = p.read_bytes()
+        except Exception:
+            return None, None, None
+        w, h = _png_dims(data)
+        return _b64.b64encode(data).decode("ascii"), w, h
+
+    meta = report.get("meta") or {}
+    shots = [s for s in (meta.get("screenshots") or []) if not s.get("error") and s.get("filename")]
+    designs = [s for s in shots if s.get("is_design") or "figma" in str(s.get("filename", "")).lower()]
+    actuals = [s for s in shots if s not in designs]
+    if not actuals:
+        return ""
+    issues = report.get("issues") or []
+    pc = {p.get("actual"): p.get("design") for p in (report.get("pairs_checked") or [])}
+    design_by_name: dict[str, Any] = {}
+    for d in designs:
+        nm = str(d.get("node_name") or d.get("viewport") or "")
+        design_by_name.setdefault(nm, d)
+    _sevcls = lambda s: {"critical": "crit", "high": "hi", "medium": "med", "low": "lo", "info": "lo"}.get(str(s or "").lower(), "med")
+
+    blocks = []
+    for act in actuals:
+        an = str(act.get("viewport") or act.get("filename"))
+        afn = act.get("filename")
+        ab64, aw, ah = _b64img(afn)
+        if not ab64:
+            continue
+        dn = pc.get(an)
+        des = design_by_name.get(str(dn)) if dn else None
+        my = [it for it in issues if it.get("viewport_filename") == afn]
+        overlays = ""
+        for i, it in enumerate(my):
+            bb = it.get("bbox") or []
+            if len(bb) == 4 and aw and ah and bb[2] and bb[3]:
+                overlays += (f'<div class="s5-box" style="left:{bb[0]/aw*100:.1f}%;top:{bb[1]/ah*100:.1f}%;'
+                             f'width:{bb[2]/aw*100:.1f}%;height:{bb[3]/ah*100:.1f}%"><span>{i+1}</span></div>')
+        dimg = '<div class="s5-nodesign">无对应设计帧</div>'
+        if des:
+            db64, _, _ = _b64img(des.get("filename"))
+            if db64:
+                dimg = f'<img src="data:image/png;base64,{db64}"/>'
+        ilist = "".join(
+            f'<div class="s5-iss {_sevcls(it.get("severity"))}"><div class="s5-it"><span class="s5-n">{i+1}</span>'
+            f'<b>{_esc(it.get("title"))}</b></div>'
+            f'<div class="s5-r"><span class="l d">设计</span>{_esc(it.get("expected_behavior") or it.get("expected"))}</div>'
+            f'<div class="s5-r"><span class="l a">实际</span>{_esc(it.get("current_behavior") or it.get("current"))}</div>'
+            + (f'<div class="s5-r"><span class="l f">建议</span>{_esc(it.get("fix_suggestion"))}</div>' if it.get("fix_suggestion") else "")
+            + "</div>"
+            for i, it in enumerate(my))
+        if not my:
+            ilist = '<div class="s5-ok">本对未发现明显不一致 ✓</div>'
+        blocks.append(
+            f'<div class="s5-pair"><div class="s5-ph">{_esc(an)} <span class="arr">↔</span> 设计『{_esc(dn or "无")}』'
+            f'<span class="s5-cnt">{len(my)} 处差异</span></div>'
+            f'<div class="s5-cols"><div class="s5-col"><div class="s5-lbl">🎨 设计稿</div>{dimg}</div>'
+            f'<div class="s5-col"><div class="s5-lbl a">📱 实拍 · 红框=不一致</div>'
+            f'<div class="s5-iw"><img src="data:image/png;base64,{ab64}"/>{overlays}</div></div></div>'
+            f'<div class="s5-il">{ilist}</div></div>')
+    if not blocks:
+        return ""
+    css = """<style>
+    .s5-sec h2{font-size:17px;margin:8px 0 14px}
+    .s5-pair{border:1px solid #e3e8ef;border-radius:12px;padding:14px;margin-bottom:18px;background:#fff}
+    .s5-ph{font-size:14px;font-weight:650;margin-bottom:12px;color:#1f2937}
+    .s5-ph .arr{color:#94a3b8;margin:0 4px}
+    .s5-ph .s5-cnt{float:right;font-size:12px;font-weight:600;color:#dc2626;background:rgba(220,38,38,.07);padding:2px 9px;border-radius:20px}
+    .s5-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+    .s5-col{border:1px solid #e3e8ef;border-radius:9px;overflow:hidden;background:#f8fafc}
+    .s5-lbl{font-size:12px;font-weight:600;padding:7px 11px;border-bottom:1px solid #e3e8ef;color:#475569}
+    .s5-lbl.a{color:#dc2626}
+    .s5-col img{display:block;width:100%;height:auto}
+    .s5-nodesign{padding:50px 16px;text-align:center;color:#94a3b8;font-size:13px}
+    .s5-iw{position:relative;line-height:0}
+    .s5-box{position:absolute;border:2px solid #dc2626;background:rgba(220,38,38,.08);box-sizing:border-box;border-radius:2px}
+    .s5-box span{position:absolute;top:-10px;left:-10px;width:18px;height:18px;background:#dc2626;color:#fff;border-radius:50%;font-size:11px;font-weight:700;display:grid;place-items:center;line-height:1}
+    .s5-il{margin-top:12px}
+    .s5-iss{border:1px solid #e3e8ef;border-left:4px solid #cbd5e1;border-radius:0 8px 8px 0;padding:9px 13px;margin-bottom:8px;background:#f8fafc}
+    .s5-iss.crit{border-left-color:#dc2626}.s5-iss.hi{border-left-color:#ea580c}.s5-iss.med{border-left-color:#ca8a04}.s5-iss.lo{border-left-color:#16a34a}
+    .s5-it{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+    .s5-n{width:19px;height:19px;border-radius:50%;background:#1f2937;color:#fff;display:grid;place-items:center;font-size:11px;font-weight:700;flex-shrink:0}
+    .s5-it b{font-size:13.5px;color:#1f2937}
+    .s5-r{display:flex;gap:7px;font-size:12.5px;line-height:1.6;margin-top:2px;color:#374151}
+    .s5-r .l{flex-shrink:0;width:42px;font-size:10px;font-weight:700;text-align:center;padding:1px 5px;border-radius:3px;height:fit-content;background:#eef2f7}
+    .s5-r .l.d{color:#0891b2}.s5-r .l.a{color:#dc2626}.s5-r .l.f{color:#0d9488}
+    .s5-ok{color:#16a34a;font-size:12.5px;padding:6px 2px}
+    @media(max-width:720px){.s5-cols{grid-template-columns:1fr}}
+    </style>"""
+    return ('<section class="s5-sec"><h2><span class="num">⑤</span>逐帧对照(设计 vs 实拍 · 框选差异)</h2>'
+            + css + "".join(blocks) + "</section>")
+
+
 def _build_html_report(r: dict[str, Any], tool: dict[str, Any], report: dict[str, Any]) -> str:
     """中文独立 HTML 报告（含截图、4 块结构、左上「← 返回」）。"""
     summary = _build_executive_summary(report, tool)
@@ -4834,6 +4997,15 @@ def _build_html_report(r: dict[str, Any], tool: dict[str, Any], report: dict[str
                 + "".join(rows)
                 + '</section>'
             )
+
+    # step5:用「逐帧并排对照(设计 vs 实拍 + 框选)」替代普通截图画廊
+    if tool.get("id") == "step5":
+        try:
+            _s5 = _step5_sidebyside_html(report, Path(settings.evidence_output_dir) / "screenshots")
+            if _s5:
+                shots_html = _s5
+        except Exception:
+            pass
 
     # Verdict card
     vmap = {"pass": ("", "通过", "ok"), "warn": ("", "有条件通过", "warn"),
