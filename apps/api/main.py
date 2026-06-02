@@ -6545,29 +6545,6 @@ button{font-family:inherit;cursor:pointer}
   </div>
 </section>
 
-<!-- 核心能力 -->
-<div class="chapter-divider">
-  <span class="label">核 心 能 力</span>
-  <span class="line"></span>
-</div>
-<section class="capabilities">
-  <div class="cap">
-    <div class="num-zh">七</div>
-    <div class="name">智能体覆盖</div>
-    <div class="desc">从需求评审到 SEO 审计的完整测试流程,七个独立 Agent 各司其职、可单独运行也可链式接力。</div>
-  </div>
-  <div class="cap">
-    <div class="num-zh">五</div>
-    <div class="name">统一报告契约</div>
-    <div class="desc">每份报告都按「结论 / 风险 / 阻碍 / Bug 表 / 执行用例」五段结构输出,可直接分派到研发、产品、测试。</div>
-  </div>
-  <div class="cap">
-    <div class="num-zh">上下游</div>
-    <div class="name">接力链路</div>
-    <div class="desc">上一工具的产出可一键导入下一工具作为输入,从 PRD 到上线形成完整闭环。</div>
-  </div>
-</section>
-
 <!-- Footer -->
 <footer class="footer">
   <div class="left"><span class="brand">天枢 · 裁决</span> v0.1.0</div>
