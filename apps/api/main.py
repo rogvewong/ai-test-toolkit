@@ -16718,8 +16718,9 @@ function render(){
       <td>${ts}</td>
       <td>${elapsed}</td>
       <td class="actions">
-        ${r.tool_id === 'step2'
-          ? `<a href="javascript:void(0)" data-runid="${r.run_id}" data-toolid="${r.tool_id}" data-fmt="xlsx" class="dl">用例 Excel</a>`
+        ${['step2','seo_audit','network_resilience'].includes(r.tool_id)
+          ? `<a href="javascript:void(0)" data-runid="${r.run_id}" data-toolid="${r.tool_id}" data-fmt="xlsx" class="dl">Excel</a>
+             <a href="/api/reports/${r.run_id}" target="_blank" class="action-link" onclick="event.stopPropagation()">JSON</a>`
           : `<a href="javascript:void(0)" data-runid="${r.run_id}" data-toolid="${r.tool_id}" data-fmt="html" class="dl">HTML</a>
              <a href="javascript:void(0)" data-runid="${r.run_id}" data-toolid="${r.tool_id}" data-fmt="md" class="dl">MD</a>
              <a href="/api/reports/${r.run_id}" target="_blank" class="action-link" onclick="event.stopPropagation()">JSON</a>`}
@@ -16796,9 +16797,17 @@ async function quickDownload(runId, toolId, fmt){
     }
     // 200 — 拿到 blob 触发下载
     const blob = await resp.blob();
+    // 文件名以服务端 Content-Disposition 为准:SEO/弱网/用例的 html/md 会被后端重定向成 xlsx,
+    // 扩展名必须跟着真实内容走,否则存成 .html 的 xlsx → 双击当 HTML 打开就是乱码。
+    let fn = `${toolId}_${runId.slice(0,8)}.${fmt}`;
+    const cd = resp.headers.get('Content-Disposition') || '';
+    let m = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    if (m) { try { fn = decodeURIComponent(m[1]); } catch(_){} }
+    else if ((m = cd.match(/filename="?([^";]+)"?/i))) { fn = m[1]; }
+    else if ((resp.headers.get('Content-Type')||'').includes('spreadsheet')) { fn = `${toolId}_${runId.slice(0,8)}.xlsx`; }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${toolId}_${runId.slice(0,8)}.${fmt}`;
+    a.download = fn;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   } catch(err){
@@ -17090,10 +17099,11 @@ document.querySelectorAll('.modal-head .download').forEach(b => {
       await quickDownload(r.run_id, r.tool_id, fmt);
       return;
     }
-    // 兜底:没有 quickDownload(其他页面)时走老路径
+    // 兜底:没有 quickDownload(其他页面)时走老路径。
+    // 不设 a.download —— 让服务端 Content-Disposition 决定文件名(扩展名随真实内容,避免 xlsx 存成 .html)。
     const url = `/api/reports/${r.run_id}/export.${fmt}`;
     const a = document.createElement('a');
-    a.href = url; a.download = `${r.tool_id}_${r.run_id.slice(0,8)}.${fmt}`;
+    a.href = url;
     document.body.appendChild(a); a.click(); a.remove();
   };
 });
