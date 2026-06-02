@@ -13068,9 +13068,7 @@ function renderReportTabs(r, active){
   // step2 测试用例工具:产出就是用例,不是"报告" —— tab 叫"用例",只给 Excel 下载。
   const isStep2 = (typeof tool !== 'undefined' && tool && tool.id === 'step2');
   const reportTabLabel = isStep2 ? '用例' : '报告';
-  const dlButtons = isStep2
-    ? `${(r.report && (r.report.cases||[]).length) ? `<button class="export" data-action="download-xlsx">↓ 下载 Excel 用例表</button>` : ''}`
-    : `${r.report ? `<button class="export" data-action="download-html">↓ HTML 报告</button>` : ''}
+  const dlButtons = `${r.report ? `<button class="export" data-action="download-xlsx">↓ 下载 Excel</button>` : ''}
        ${r.report ? `<button class="export" data-action="download-md">↓ Markdown</button>` : ''}
        ${r.report ? `<button class="export" data-action="download-json">↓ JSON</button>` : ''}
        ${r.report ? `<button class="export" data-action="copy">⧉ 复制</button>` : ''}`;
@@ -13138,7 +13136,7 @@ function bindTabClicks(r){
           const blob = await resp.blob();
           const a = document.createElement('a');
           a.href = URL.createObjectURL(blob);
-          a.download = `${tool.id}_${r.run_id.slice(0,8)}_testcases.xlsx`;
+          a.download = `${tool.id}_${r.run_id.slice(0,8)}.xlsx`;
           document.body.appendChild(a); a.click(); a.remove();
           setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
         } catch(e){ toast('Excel 导出出错:' + e.message); }
@@ -16641,7 +16639,7 @@ REPORTS_HTML = r"""<!doctype html>
   <section class="reports-hero">
     <span class="hero-eyebrow">运行档案</span>
     <h2>报告</h2>
-    <p class="sub">所有跑过的任务、生成的用例与漏测分析。本地保存，可导出为 HTML / Markdown / JSON。</p>
+    <p class="sub">所有跑过的任务、生成的用例与漏测分析。本地保存,点开任意一条进入预览,在预览里下载（Excel / Markdown / JSON）。</p>
     <div class="kpi-strip">
       <div class="kpi"><div class="num" id="kpi-total">—</div><div class="lbl">累计运行</div><div class="icon-bg">📊</div></div>
       <div class="kpi"><div class="num ok" id="kpi-success">—</div><div class="lbl">成功</div><div class="icon-bg">✓</div></div>
@@ -16652,7 +16650,6 @@ REPORTS_HTML = r"""<!doctype html>
   <div class="filter-row">
     <input class="search" id="search" placeholder="搜索 run id / 工具 / 项目编号 / 项目名称">
     <div class="filters" id="filters"></div>
-    <a class="refresh" id="export-all" href="/api/reports/export" download>↓ 全部下载</a>
     <button class="refresh" id="refresh">↻ 刷新</button>
   </div>
   <!-- 多选批量操作工具栏 — 只在表格有内容时显示 -->
@@ -16679,9 +16676,8 @@ REPORTS_HTML = r"""<!doctype html>
       <span id="modal-tool" style="font-size:14px;font-weight:500">·</span>
       <span style="font-family:var(--mono);font-size:11px;color:var(--fg-3)" id="modal-id">·</span>
       <span style="margin-left:auto"></span>
-      <button class="download" data-act="html" id="modal-dl-html">↓ HTML</button>
+      <button class="download" data-act="xlsx" id="modal-dl-xlsx">↓ 下载 Excel</button>
       <button class="download" data-act="md" id="modal-dl-md">↓ Markdown</button>
-      <button class="download" data-act="xlsx" id="modal-dl-xlsx" style="display:none">↓ 下载 Excel 用例表</button>
       <button class="download" data-act="json" id="modal-dl-json">↓ JSON</button>
       <button class="close" onclick="closeModal()" title="关闭（Esc）">×</button>
     </div>
@@ -16769,7 +16765,7 @@ function render(){
   if (bulkBar) bulkBar.style.display = '';
   c.innerHTML = `<table><thead><tr>
     <th class="row-pick"></th>
-    <th>状态</th><th>工具</th><th>项目编号</th><th>项目名称</th><th>Run ID</th><th>开始</th><th>用时</th><th>下载</th>
+    <th>状态</th><th>工具</th><th>项目编号</th><th>项目名称</th><th>Run ID</th><th>开始</th><th>用时</th><th>操作</th>
   </tr></thead><tbody id="tbody"></tbody></table>`;
   const tbody = document.getElementById('tbody');
   // 当前页 run_ids 给"全选"用
@@ -16802,12 +16798,7 @@ function render(){
       <td>${ts}</td>
       <td>${elapsed}</td>
       <td class="actions">
-        ${['step2','seo_audit','network_resilience'].includes(r.tool_id)
-          ? `<a href="javascript:void(0)" data-runid="${r.run_id}" data-toolid="${r.tool_id}" data-fmt="xlsx" class="dl">Excel</a>
-             <a href="/api/reports/${r.run_id}" target="_blank" class="action-link" onclick="event.stopPropagation()">JSON</a>`
-          : `<a href="javascript:void(0)" data-runid="${r.run_id}" data-toolid="${r.tool_id}" data-fmt="html" class="dl">HTML</a>
-             <a href="javascript:void(0)" data-runid="${r.run_id}" data-toolid="${r.tool_id}" data-fmt="md" class="dl">MD</a>
-             <a href="/api/reports/${r.run_id}" target="_blank" class="action-link" onclick="event.stopPropagation()">JSON</a>`}
+        <a href="javascript:void(0)" data-runid="${r.run_id}" class="open">预览</a>
         <a href="javascript:void(0)" data-runid="${r.run_id}" class="del">删除</a>
       </td>
     `;
@@ -16824,13 +16815,12 @@ function render(){
     };
   });
   updateBulkBar();
-  // Wire quick-download links
-  tbody.querySelectorAll('a.dl').forEach(a => {
-    a.onclick = async (e) => {
+  // Wire 预览 links — 打开报告预览弹窗(下载在弹窗内)
+  tbody.querySelectorAll('a.open').forEach(a => {
+    a.onclick = (e) => {
       e.stopPropagation();
-      const runId = a.dataset.runid;
-      const toolId = a.dataset.toolid;
-      await quickDownload(runId, toolId, a.dataset.fmt);
+      const rec = allReports.find(x => x.run_id === a.dataset.runid);
+      if (rec) openReport(rec);
     };
   });
   // Wire delete buttons
@@ -16964,10 +16954,9 @@ async function openReport(r){
       const el = document.getElementById(id);
       if (el) el.style.display = show ? '' : 'none';
     };
-    setBtn('modal-dl-xlsx', caseCount > 0);
-    setBtn('modal-dl-html', !isStep2);
-    setBtn('modal-dl-md',   !isStep2);
-    setBtn('modal-dl-json', !isStep2);
+    setBtn('modal-dl-xlsx', true);
+    setBtn('modal-dl-md',   true);
+    setBtn('modal-dl-json', true);
     // step2:tab 标签「报告」→「用例」
     const tabReport = document.getElementById('modal-tab-report');
     if (tabReport) tabReport.textContent = isStep2 ? '用例' : '报告';
