@@ -5532,6 +5532,11 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
 .mr-table .num{font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace}
 .mr-table .pc{font-family:ui-monospace,monospace;font-size:12px;color:var(--accent)}
 .mr-empty{padding:30px;text-align:center;color:var(--ink-4);font-size:13px}
+.mr-names{max-width:240px;color:var(--ink-2);font-size:12.5px;line-height:1.6;white-space:normal}
+.mr-pager{display:flex;align-items:center;justify-content:flex-end;gap:14px;padding:14px 4px;font-size:12.5px;color:var(--ink-3)}
+.mr-pager button{font:inherit;font-size:12.5px;padding:5px 12px;border:1px solid var(--line);border-radius:7px;background:transparent;cursor:pointer;color:var(--ink-2)}
+.mr-pager button:hover:not(:disabled){background:var(--paper-2)}
+.mr-pager button:disabled{opacity:.4;cursor:not-allowed}
 @media(max-width:760px){.mr-kpis{grid-template-columns:repeat(2,1fr)}.wrap{padding:24px 18px}header.topbar{padding:12px 18px;overflow-x:auto}}
 </style></head>
 <body>
@@ -5571,7 +5576,9 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
 (function(){
   const sec = document.getElementById('multi-report');
   if (!sec) return;
-  let _days = 0, _tab = 'person', _data = null;
+  let _days = 0, _tab = 'person', _data = null, _page = 1;
+  const PS = 15;
+  const names = a => (!a||!a.length) ? '—' : a.join('、');
   const fmtT = ts => ts ? new Date(ts*1000).toLocaleDateString('zh-CN') : '—';
   const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const money = v => v ? ('$'+v) : '—';
@@ -5580,19 +5587,33 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
   const tbl = (head, rows) => rows.length
     ? `<table class="mr-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
     : '<div class="mr-empty">该时间范围内暂无记录</div>';
+  function pager(total, pages){
+    if (total <= PS) return '<div class="mr-pager"><span>共 '+total+' 条</span></div>';
+    return '<div class="mr-pager">'
+      + '<button id="pg-prev"'+(_page<=1?' disabled':'')+'>← 上一页</button>'
+      + '<span>第 '+_page+' / '+pages+' 页 · 共 '+total+' 条</span>'
+      + '<button id="pg-next"'+(_page>=pages?' disabled':'')+'>下一页 →</button></div>';
+  }
   function renderTab(){
     const d = _data; if (!d) return;
+    let head, rows;
+    if (_tab==='person'){ head=['执行人','运行次数','涉及项目','最常用工具','Tokens','成本','最近活跃'];
+      rows = d.by_person.map(p=>`<tr><td><strong>${esc(p.owner)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.projects}</td><td>${esc(p.top_tool)}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.last)}</td></tr>`); }
+    else if (_tab==='project'){ head=['产品编号','产品名称','运行次数','参与人','涉及工具','Tokens','成本','时间跨度'];
+      rows = d.by_project.map(p=>`<tr><td class="pc">${esc(p.code)}</td><td>${esc(p.name||'—')}</td><td class="num">${p.runs}</td><td class="mr-names">${esc(names(p.user_names))}</td><td class="num">${p.tools}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.first)} ~ ${fmtT(p.last)}</td></tr>`); }
+    else if (_tab==='tool'){ head=['测试类型','运行次数','使用人','涉及项目','Tokens','成本'];
+      rows = d.by_tool.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td class="num">${p.runs}</td><td class="mr-names">${esc(names(p.user_names))}</td><td class="num">${p.projects}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td></tr>`); }
+    else if (_tab==='model'){ head=['模型','运行次数','使用人','Tokens','成本'];
+      rows = (d.by_model||[]).map(p=>`<tr><td><strong>${esc(p.model)}</strong></td><td class="num">${p.runs}</td><td class="mr-names">${esc(names(p.user_names))}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td></tr>`); }
+    else { head=['时间','执行人','产品编号','测试类型','模型','Tokens','成本','结果'];
+      rows = d.detail.map(r=>`<tr><td>${fmtT(r.ts)}</td><td>${esc(r.owner)}</td><td class="pc">${esc(r.project_code||'—')}</td><td>${esc(r.tool_name)}</td><td>${esc(r.model_label||'—')}</td><td class="num">${fmtTok(r.tokens)}</td><td class="num">${money(r.cost_usd)}</td><td>${r.status==='succeeded'?'成功':esc(r.status)}</td></tr>`); }
+    const total = rows.length, pages = Math.max(1, Math.ceil(total/PS));
+    if (_page > pages) _page = pages;
     const b = document.getElementById('mr-body');
-    if (_tab==='person') b.innerHTML = tbl(['执行人','运行次数','涉及项目','最常用工具','Tokens','成本','最近活跃'],
-      d.by_person.map(p=>`<tr><td><strong>${esc(p.owner)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.projects}</td><td>${esc(p.top_tool)}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.last)}</td></tr>`));
-    else if (_tab==='project') b.innerHTML = tbl(['产品编号','产品名称','运行次数','参与人数','涉及工具','Tokens','成本','时间跨度'],
-      d.by_project.map(p=>`<tr><td class="pc">${esc(p.code)}</td><td>${esc(p.name||'—')}</td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.tools}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.first)} ~ ${fmtT(p.last)}</td></tr>`));
-    else if (_tab==='tool') b.innerHTML = tbl(['测试类型','运行次数','使用人数','涉及项目','Tokens','成本'],
-      d.by_tool.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.projects}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td></tr>`));
-    else if (_tab==='model') b.innerHTML = tbl(['模型','运行次数','使用人数','Tokens','成本'],
-      (d.by_model||[]).map(p=>`<tr><td><strong>${esc(p.model)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td></tr>`));
-    else b.innerHTML = tbl(['时间','执行人','产品编号','测试类型','模型','Tokens','成本','结果'],
-      d.detail.map(r=>`<tr><td>${fmtT(r.ts)}</td><td>${esc(r.owner)}</td><td class="pc">${esc(r.project_code||'—')}</td><td>${esc(r.tool_name)}</td><td>${esc(r.model_label||'—')}</td><td class="num">${fmtTok(r.tokens)}</td><td class="num">${money(r.cost_usd)}</td><td>${r.status==='succeeded'?'成功':esc(r.status)}</td></tr>`));
+    b.innerHTML = tbl(head, rows.slice((_page-1)*PS, _page*PS)) + pager(total, pages);
+    const pv = document.getElementById('pg-prev'), nx = document.getElementById('pg-next');
+    if (pv) pv.onclick = ()=>{ if(_page>1){ _page--; renderTab(); } };
+    if (nx) nx.onclick = ()=>{ if(_page<pages){ _page++; renderTab(); } };
   }
   async function loadStats(){
     try {
@@ -5606,12 +5627,12 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
     } catch(e){}
   }
   sec.querySelectorAll('#mr-filters button').forEach(btn=>btn.onclick=()=>{
-    _days = parseInt(btn.dataset.days);
+    _days = parseInt(btn.dataset.days); _page = 1;
     sec.querySelectorAll('#mr-filters button').forEach(b=>b.classList.toggle('active', b===btn));
     loadStats();
   });
   sec.querySelectorAll('#mr-tabs button').forEach(btn=>btn.onclick=()=>{
-    _tab = btn.dataset.tab;
+    _tab = btn.dataset.tab; _page = 1;
     sec.querySelectorAll('#mr-tabs button').forEach(b=>b.classList.toggle('active', b===btn));
     renderTab();
   });
@@ -7705,19 +7726,20 @@ def _usage_aggregate(days: int = 0) -> dict[str, Any]:
     for code, e in agg(lambda r: r["project_code"] or "(无编号)").items():
         pn = next((r["project_name"] for r in recs if (r["project_code"] or "(无编号)") == code and r["project_name"]), "")
         by_project.append({"code": code, "name": pn, "runs": e["runs"], "users": len(e["users"]),
+                          "user_names": sorted(e["users"]),
                           "tools": len(e["tools"]), "tokens": e["tokens"], "cost": round(e["cost"], 2), "first": e["first"], "last": e["last"]})
     by_project.sort(key=lambda x: -x["runs"])
 
     by_tool = []
     for tid, e in agg(lambda r: r["tool_id"]).items():
         by_tool.append({"tool_id": tid, "name": tname.get(tid, tid), "runs": e["runs"],
-                       "users": len(e["users"]), "projects": len(e["projects"]), "tokens": e["tokens"], "cost": round(e["cost"], 2)})
+                       "users": len(e["users"]), "user_names": sorted(e["users"]), "projects": len(e["projects"]), "tokens": e["tokens"], "cost": round(e["cost"], 2)})
     by_tool.sort(key=lambda x: -x["runs"])
 
     by_model = []
     for mid, e in agg(lambda r: r["model"] or "").items():
         by_model.append({"model": _usage_model_label(mid), "runs": e["runs"],
-                        "users": len(e["users"]), "tokens": e["tokens"], "cost": round(e["cost"], 2)})
+                        "users": len(e["users"]), "user_names": sorted(e["users"]), "tokens": e["tokens"], "cost": round(e["cost"], 2)})
     by_model.sort(key=lambda x: -x["cost"])
 
     totals = {"runs": len(recs), "users": len({r["owner"] for r in recs}),
