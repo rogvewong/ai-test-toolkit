@@ -6279,7 +6279,7 @@ TOOLS_INDEX_HTML = """<!doctype html>
 html,body{margin:0;background:var(--paper);color:var(--ink);
   font-family:var(--sans);font-weight:300;font-size:15px;line-height:1.85;
   -webkit-font-smoothing:antialiased;font-feature-settings:"palt" on}
-body{min-height:100vh}
+body{height:100vh;display:flex;flex-direction:column;overflow:hidden}
 a{color:inherit;text-decoration:none}
 button{font-family:inherit;cursor:pointer}
 ::selection{background:rgba(196,90,58,.22);color:var(--accent)}
@@ -6324,7 +6324,7 @@ button{font-family:inherit;cursor:pointer}
   color:var(--ink-3);margin-top:8px;white-space:pre-wrap;max-height:120px;overflow:auto}
 
 /* ======= Hero ======= */
-.hero{min-height:88vh;display:flex;flex-direction:column;justify-content:center;
+.hero{flex:1;min-height:0;display:flex;flex-direction:column;justify-content:center;
   padding:0 48px;max-width:1080px;margin:0 auto}
 .hero .eyebrow{font-family:var(--mono);font-size:11px;color:var(--ink-3);
   letter-spacing:.24em;text-transform:uppercase;margin-bottom:22px}
@@ -6419,7 +6419,7 @@ button{font-family:inherit;cursor:pointer}
   padding:48px 0;font-family:var(--serif);letter-spacing:.04em}
 
 /* ======= Footer ======= */
-.footer{max-width:1080px;margin:160px auto 0;padding:48px 48px 48px;
+.footer{width:100%;max-width:1080px;margin:0 auto;padding:20px 48px;
   border-top:1px solid var(--line);
   display:flex;align-items:baseline;justify-content:space-between;
   font-family:var(--mono);font-size:11px;color:var(--ink-3);
