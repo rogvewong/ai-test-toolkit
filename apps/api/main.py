@@ -5223,9 +5223,9 @@ def _auth_page_shell(*, kind: str) -> str:
                 "现在为这个实例创建第一位管理员账号 — 之后由你掌控用户、凭据与报告。")
     else:
         eyebrow = "AI VERDICT MANUAL · 0.1"
-        headline = '回到你的<em>裁决工作台</em>'
-        lede = ("用户名 + 密码进入。"
-                "所有报告、审计与凭据都已经为你保留。")
+        headline = '面向软件质量的<br><em>AI 裁决平台</em>'
+        lede = ("把研发各环节的质量把关交给 AI 智能体 —— "
+                "逐项查验,出具可分派、可追溯的裁决报告。")
 
     pillars = (
         '<div class="pillar"><div class="pillar-no">评审</div>需求质量</div>'
