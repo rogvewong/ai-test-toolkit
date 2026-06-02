@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import io
+import re
 from typing import Any
 
 from openpyxl import Workbook
@@ -63,6 +64,12 @@ def _flat(v: Any) -> Any:
 def _row_safe(ws, row: int, values: list[Any], status_cols=None, zebra=False):
     """_row 的安全版:写入前把每个值拍平(防 list/dict 触发 openpyxl 报错)。"""
     _row(ws, row, [_flat(v) for v in values], status_cols=status_cols, zebra=zebra)
+
+
+def _ws(wb, name: str):
+    """创建 sheet,净化非法字符(/ \\ ? * [ ] :)并截断到 31 字符(Excel 限制)。"""
+    safe = re.sub(r'[/\\?*\[\]:]', '·', str(name)).strip()[:31] or "Sheet"
+    return wb.create_sheet(safe)
 
 
 def _steps_text(steps: Any) -> str:
@@ -131,7 +138,7 @@ def build_exec_xlsx(summary: dict[str, Any], report: dict[str, Any],
     if summary.get("风险结论"):
         _sheet_risks(wb, f"{_idx()} 风险清单", summary["风险结论"])
     if summary.get("阻碍"):
-        _sheet_blockers(wb, f"{_idx()} 阻碍/待澄清", summary["阻碍"], cfg)
+        _sheet_blockers(wb, f"{_idx()} 阻碍·待澄清", summary["阻碍"], cfg)
     if raw_cases and not cfg.get("cases_primary"):
         _sheet_cases(wb, f"{_idx()} 测试用例", raw_cases)
 
@@ -143,14 +150,14 @@ def build_exec_xlsx(summary: dict[str, Any], report: dict[str, Any],
         _sheet_shots(wb, f"{_idx()} 截图索引", shots)
 
     if not wb.sheetnames:
-        wb.create_sheet("概览")
+        _ws(wb, "概览")
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
 def _sheet_overview(wb, idx, summary, report, tool, meta, cfg):
-    ws = wb.create_sheet(f"{idx} 概览")
+    ws = _ws(wb, f"{idx} 概览")
     _widths(ws, [16, 26, 22, 20, 22])
     tname = tool.get("name") or tool.get("id") or "报告"
     title = cfg.get("title") or f"{tname}报告"
@@ -197,7 +204,7 @@ def _sheet_overview(wb, idx, summary, report, tool, meta, cfg):
 
 
 def _sheet_issues(wb, title, summary, cfg):
-    ws = wb.create_sheet(title)
+    ws = _ws(wb, title)
     issues = summary.get("问题描述") or []
     biz = bool(cfg.get("biz"))
     if biz:
@@ -244,7 +251,7 @@ def _sheet_issues(wb, title, summary, cfg):
 
 
 def _sheet_risks(wb, title, risks):
-    ws = wb.create_sheet(title)
+    ws = _ws(wb, title)
     _widths(ws, [12, 10, 40, 40, 40])
     r = _title_row(ws, "风险清单", 5)
     _header(ws, r, ["编号", "严重度", "风险", "影响", "原因 / 说明"])
@@ -259,7 +266,7 @@ def _sheet_risks(wb, title, risks):
 
 
 def _sheet_blockers(wb, title, blockers, cfg):
-    ws = wb.create_sheet(title)
+    ws = _ws(wb, title)
     _widths(ws, [12, 36, 44, 44, 12, 8])
     label = "待澄清问题" if cfg.get("biz") else "阻碍项"
     r = _title_row(ws, f"{label}(需先解决才能继续)", 6)
@@ -275,7 +282,7 @@ def _sheet_blockers(wb, title, blockers, cfg):
 
 
 def _sheet_cases(wb, title, cases):
-    ws = wb.create_sheet(title)
+    ws = _ws(wb, title)
     headers = ["用例编号", "所属模块", "用例标题", "优先级", "用例类型", "前置条件",
                "测试步骤", "预期结果", "自动化", "执行结果", "实际结果"]
     _widths(ws, [14, 14, 30, 8, 10, 24, 40, 36, 10, 12, 22])
@@ -304,7 +311,7 @@ def _sheet_cases(wb, title, cases):
 
 def _sheet_h5_matrix(wb, title, shots):
     """H5 适配:按 视口 × 页面 的实拍矩阵。"""
-    ws = wb.create_sheet(title)
+    ws = _ws(wb, title)
     _widths(ws, [30, 16, 14, 12, 12])
     r = _title_row(ws, "浏览器 / 视口适配实测矩阵", 5)
     _header(ws, r, ["页面 / URL", "视口", "尺寸", "问题数", "判定"])
@@ -319,7 +326,7 @@ def _sheet_h5_matrix(wb, title, shots):
 
 
 def _sheet_shots(wb, title, shots):
-    ws = wb.create_sheet(title)
+    ws = _ws(wb, title)
     _widths(ws, [40, 16, 14, 10, 36])
     r = _title_row(ws, f"截图证据索引(共 {len(shots)} 张 · 图片见 evidence/screenshots 目录)", 5)
     _header(ws, r, ["页面 / URL", "视口", "尺寸", "问题数", "文件名"])
