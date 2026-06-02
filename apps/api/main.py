@@ -1166,7 +1166,7 @@ import re as _re
 import time as _time
 import traceback as _tb
 
-# Tool catalog: 8 个 AI 工具
+# Tool catalog: AI 工具集
 # 每个工具：id / step / name / icon / description / fields / output / 提示词跳转
 #
 # 命名说明:8 步 SOP 里的 step3(原"开发自测")在本工具集合并到 step4 接口测试,
@@ -3832,7 +3832,7 @@ button{font-family:inherit;cursor:pointer}
 <section class="hero">
   <div class="eyebrow">天枢 · 裁决 ── AI Verdict Manual · Edition 0.1</div>
   <h1>AI 驱动的<br>软件<em>质量裁决</em>手册</h1>
-  <p class="lede">把需求拆解、用例设计、接口测试、H5 适配 到 SEO 审计 — 全流程交给 AI 智能体,出具可分派的裁决报告。</p>
+  <p class="lede">把软件质量把关交给 AI 智能体 —— 覆盖研发各环节,逐项查验,出具可分派、可追溯的裁决报告。</p>
   <div class="actions">
     <a class="btn primary" href="/catalog">进入工具 <span class="arrow">→</span></a>
     <a class="btn" href="/reports">查看报告</a>
@@ -3841,7 +3841,7 @@ button{font-family:inherit;cursor:pointer}
   </div>
   <div class="hero-foot">
     <span class="dot"></span>
-    <span>覆盖七个测试环节</span>
+    <span>贯穿研发质量全流程</span>
     <span class="claude-status" id="claude-status">检测中…</span>
   </div>
 </section>
@@ -5228,10 +5228,10 @@ def _auth_page_shell(*, kind: str) -> str:
                 "所有报告、审计与凭据都已经为你保留。")
 
     pillars = (
-        '<div class="pillar"><div class="pillar-no">章 一</div>需求评审</div>'
-        '<div class="pillar"><div class="pillar-no">章 二</div>用例设计</div>'
-        '<div class="pillar"><div class="pillar-no">章 三</div>接口测试</div>'
-        '<div class="pillar"><div class="pillar-no">章 四</div>UI 一致性</div>'
+        '<div class="pillar"><div class="pillar-no">评审</div>需求质量</div>'
+        '<div class="pillar"><div class="pillar-no">设计</div>用例覆盖</div>'
+        '<div class="pillar"><div class="pillar-no">测试</div>功能 · 接口</div>'
+        '<div class="pillar"><div class="pillar-no">审计</div>体验 · SEO</div>'
     )
 
     if is_login:
@@ -5295,7 +5295,7 @@ def _auth_page_shell(*, kind: str) -> str:
     </div>
     <div class="brand-foot">
       <span>EDITION 0.1</span>
-      <span>八章测评 · 一份裁决</span>
+      <span>全流程查验 · 一份裁决</span>
     </div>
   </aside>
 
@@ -5433,7 +5433,7 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
 </header>
 <div class="wrap">
   <h1>工具</h1>
-  <p class="sub">七个 AI 测试智能体 · 点击进入，可单独运行，也可链式接力</p>
+  <p class="sub">AI 测试智能体 · 点击进入，可单独运行，也可链式接力</p>
   <div class="grid" id="grid"><div style="color:var(--ink-3);font-size:13px">加载中…</div></div>
 </div>
 <script>
@@ -5511,7 +5511,7 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
 </header>
 <div class="wrap">
   <h1>使用说明</h1>
-  <p class="sub">七个工具各自的用法 · 都支持单独运行,上一步产出可一键接力给下一步</p>
+  <p class="sub">每个工具的用法 · 都支持单独运行,上一步产出可一键接力给下一步</p>
 
   <div class="g-tool">
     <div class="g-head"><span class="g-num">1</span><span class="g-icon">📋</span><h2>需求评审</h2></div>
