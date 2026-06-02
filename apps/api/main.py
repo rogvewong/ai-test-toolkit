@@ -14709,51 +14709,19 @@ SETTINGS_HTML = r"""<!doctype html>
   </div>
 
   <div class="sec">
-    <div class="sec-head">
-      <span class="dot" id="figma-dot"></span>
-      <h3>Figma 设计图接入（UI 比对用）</h3>
-    </div>
-    <div class="sec-body" style="padding:14px 18px">
-      <p style="font-size:12.5px;color:var(--fg-2);line-height:1.7;margin:0 0 10px">
-        UI 比对(step5)上传 APK + 粘贴 Figma 链接时,自动读取设计图做对比。
-        <b>推荐填账号密码</b>(走浏览器持久登录,读私有文件);也可用 PAT(API)。仅本机明文保存。
-      </p>
-      <div style="font-size:11px;color:var(--fg-3);letter-spacing:.08em;text-transform:uppercase;margin:4px 0 6px">方式一 · 账号密码(浏览器读图,推荐)</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
-        <input id="figma-email-input" type="text" placeholder="Figma 登录邮箱"
-          style="flex:1;min-width:200px;padding:8px 12px;border:1px solid var(--line-2);border-radius:6px;
-            font-family:var(--mono);font-size:12.5px;background:var(--surface);color:var(--fg)">
-        <input id="figma-pass-input" type="password" placeholder="Figma 密码"
-          style="flex:1;min-width:160px;padding:8px 12px;border:1px solid var(--line-2);border-radius:6px;
-            font-family:var(--mono);font-size:12.5px;background:var(--surface);color:var(--fg)">
-        <button id="figma-login-save" style="background:var(--ac);color:#fff;border:none;padding:8px 16px;
-          border-radius:6px;font-size:12.5px;cursor:pointer">保存</button>
-      </div>
-      <div style="font-size:11px;color:var(--fg-3);letter-spacing:.08em;text-transform:uppercase;margin:10px 0 6px">方式二 · Personal Access Token(备选)</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <input id="figma-token-input" type="password" placeholder="figd_... (figma.com/settings 生成,勾 File content: Read)"
-          style="flex:1;min-width:260px;padding:8px 12px;border:1px solid var(--line-2);border-radius:6px;
-            font-family:var(--mono);font-size:12.5px;background:var(--surface);color:var(--fg)">
-        <label style="font-size:11.5px;color:var(--fg-3);display:inline-flex;align-items:center;gap:4px">
-          <input id="figma-token-show" type="checkbox">明文</label>
-        <button id="figma-token-save" style="background:transparent;color:var(--fg-2);border:1px solid var(--line-2);padding:8px 16px;
-          border-radius:6px;font-size:12.5px;cursor:pointer">保存</button>
-      </div>
-      <div id="figma-token-status" style="font-size:11.5px;color:var(--fg-3);margin-top:8px;font-family:var(--mono)"></div>
-    </div>
-  </div>
-
-  <div class="sec">
-    <div class="sec-head">
+    <div class="sec-head" id="env-head" style="cursor:pointer;user-select:none">
       <span class="dot ok"></span>
       <h3>每个工具的环境需求</h3>
+      <span id="env-chevron" style="margin-left:8px;color:var(--fg-3);font-size:12px;display:inline-block;transition:transform .15s">▸</span>
       <button id="env-refresh" style="margin-left:auto;background:transparent;border:1px solid var(--line-2);color:var(--fg-2);padding:4px 12px;border-radius:5px;font-family:var(--mono);font-size:11px;cursor:pointer">↻ 重新检测</button>
     </div>
-    <div id="system-info" style="padding:10px 18px;border-bottom:1px solid var(--line);
-      font-family:var(--mono);font-size:11.5px;color:var(--fg-3);background:var(--surface-2)"></div>
-    <table id="tool-env-table"><thead>
-      <tr><th>工具</th><th>包</th><th>必需</th><th>已安装</th><th>版本</th><th>用途</th><th></th></tr>
-    </thead><tbody id="tool-env-tbody"></tbody></table>
+    <div id="env-body" hidden>
+      <div id="system-info" style="padding:10px 18px;border-bottom:1px solid var(--line);
+        font-family:var(--mono);font-size:11.5px;color:var(--fg-3);background:var(--surface-2)"></div>
+      <table id="tool-env-table"><thead>
+        <tr><th>工具</th><th>包</th><th>必需</th><th>已安装</th><th>版本</th><th>用途</th><th></th></tr>
+      </thead><tbody id="tool-env-tbody"></tbody></table>
+    </div>
   </div>
 
   <div class="sec">
@@ -14801,44 +14769,7 @@ function fmtDate(s){
   return d.toLocaleString('zh-CN', {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
 }
 
-// ── Figma 设计图接入(账号密码 / token)──
-async function loadFigmaStatus(){
-  const dot=document.getElementById('figma-dot');
-  const st=document.getElementById('figma-token-status');
-  let login={configured:false}, tok={configured:false};
-  try{ login=await fetch('/api/settings/figma-login').then(r=>r.json()); }catch(e){}
-  try{ tok=await fetch('/api/settings/figma-token').then(r=>r.json()); }catch(e){}
-  if(login.configured){
-    dot.className='dot ok'; st.textContent='已配置账号(浏览器读图)· '+(login.email||'');
-    const ei=document.getElementById('figma-email-input'); if(ei&&!ei.value) ei.value=login.email||'';
-  } else if(tok.configured){
-    dot.className='dot ok'; st.textContent='已配置 Token(API)· '+(tok.masked||'');
-  } else {
-    dot.className='dot warn'; st.textContent='未配置 — 比对时读不到 Figma 设计图';
-  }
-}
-(function initFigma(){
-  const tInp=document.getElementById('figma-token-input');
-  const tShow=document.getElementById('figma-token-show');
-  const tBtn=document.getElementById('figma-token-save');
-  const lBtn=document.getElementById('figma-login-save');
-  const eInp=document.getElementById('figma-email-input');
-  const pInp=document.getElementById('figma-pass-input');
-  if(tShow&&tInp) tShow.addEventListener('change',()=>{tInp.type=tShow.checked?'text':'password';});
-  if(tBtn) tBtn.addEventListener('click', async ()=>{
-    tBtn.disabled=true; const o=tBtn.textContent; tBtn.textContent='保存中…';
-    try{ const r=await fetch('/api/settings/figma-token',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({token:tInp.value})}).then(r=>r.json()); tBtn.textContent=r.configured?'✓ 已保存':'✓ 已清空'; tInp.value=''; await loadFigmaStatus(); }
-    catch(e){ tBtn.textContent='失败'; } setTimeout(()=>{tBtn.textContent=o;tBtn.disabled=false;},1600);
-  });
-  if(lBtn) lBtn.addEventListener('click', async ()=>{
-    lBtn.disabled=true; const o=lBtn.textContent; lBtn.textContent='保存中…';
-    try{ const r=await fetch('/api/settings/figma-login',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({email:eInp.value,password:pInp.value})}).then(r=>r.json()); lBtn.textContent=r.configured?'✓ 已保存':'✓ 已清空'; pInp.value=''; await loadFigmaStatus(); }
-    catch(e){ lBtn.textContent='失败'; } setTimeout(()=>{lBtn.textContent=o;lBtn.disabled=false;},1600);
-  });
-  loadFigmaStatus();
-})();
+// ── Figma 设计图接入区块已移除（UI 比对工具已下线）──
 
 async function load(){
   const ci = await fetch('/api/claude/info').then(r=>r.json());
@@ -15369,7 +15300,16 @@ async function installPackage(target, btn){
   }
 }
 
-document.getElementById('env-refresh').onclick = renderToolEnv;
+document.getElementById('env-refresh').onclick = (e)=>{ e.stopPropagation(); renderToolEnv(); };
+(function initEnvCollapse(){
+  const head=document.getElementById('env-head'), body=document.getElementById('env-body'), chev=document.getElementById('env-chevron');
+  if(!head||!body) return;
+  head.addEventListener('click',()=>{
+    const willOpen=body.hasAttribute('hidden');
+    if(willOpen){ body.removeAttribute('hidden'); if(chev) chev.style.transform='rotate(90deg)'; }
+    else { body.setAttribute('hidden',''); if(chev) chev.style.transform=''; }
+  });
+})();
 
 load();
 </script>
