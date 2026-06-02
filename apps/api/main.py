@@ -1344,7 +1344,7 @@ TDR_WORKBENCH_HTML = r"""<!doctype html>
 <section id="tab-pipeline" class="tab">
   <div class="card">
     <h2>Pipeline 运行报告</h2>
-    <p class="muted">5 步流水线的 run 报告（step1 需求拆解 → step2 用例设计 → step4 接口测试 → step5 UI 一致性 → step6 Agent 执行）。</p>
+    <p class="muted">流水线的 run 报告（step1 需求拆解 → step2 用例设计 → step4 接口测试 → step6 Agent 执行）。</p>
     <p><a href="/pipeline" target="_blank">打开 Pipeline Dashboard →</a></p>
   </div>
 </section>
@@ -3159,37 +3159,6 @@ TOOL_CATALOG: list[dict[str, Any]] = [
         "input": {
             "label": "接口与场景",
             "hint": "粘贴 API 文档 / OpenAPI / Postman / 接口清单 / 业务说明 — 直接出功能/性能/安全/边界/契约用例",
-            "primary_key": "documents",
-            "format": "text",
-        },
-    },
-    {
-        "id": "step5",
-        "step": "step5",
-        "prompt_dir": "step5_ui",
-        "name": "UI 一致性比对",
-        "icon": "🎨",
-        "tagline": "对照 PRD/UI 检查实现偏差，超 20% 退回",
-        "description": (
-            "分析页面结构、入口、按钮、文案、交互流程、状态反馈、双端一致性。"
-            "统计每个核心页面/模块的不符合率，超过 20% 阈值的关键页面直接退回提测。"
-        ),
-        "responsible": "AI + 测试",
-        "output": "《需求/UI 一致性评估报告》",
-        "gate": "核心页面/模块偏差 > 20% 或主流程交互不一致 → 退回提测",
-        "prompts": ["step5.1", "step5.2", "step5.3", "step5.4", "step5.5"],
-        "endpoint": "/api/tools/step5/run",
-        "substeps_optional": True,
-        "input": {
-            "label": "UI 材料（设计稿 + 实际页面）",
-            "hint": (
-                "建议按下面两段格式贴：\n\n"
-                "## 设计稿\n"
-                "<Figma URL / 设计稿描述 / 设计 token / 配色规约>\n\n"
-                "## 实际页面\n"
-                "<线上 URL（系统自动截图）/ 页面状态描述 / 已发现的差异>\n\n"
-                "工具会自动截取「实际页面」URL（Mobile 375×812 + Desktop 1440×900），LLM 对照「设计稿」做图片比对并给出 bbox 框选坐标。"
-            ),
             "primary_key": "documents",
             "format": "text",
         },
