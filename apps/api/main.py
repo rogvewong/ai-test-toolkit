@@ -4113,6 +4113,31 @@ def _build_executive_summary(report: dict[str, Any], tool: dict[str, Any]) -> di
     }
 
 
+# 各工具的 Excel 差异化配置(标题 / 问题表名 / 编号前缀 / 业务语言 / 用例主表 / H5矩阵)
+_EXEC_CFG: dict[str, dict[str, Any]] = {
+    "step1":    {"title": "需求评审报告",          "issue_sheet": "需求问题清单", "issue_prefix": "REQ", "biz": True},
+    "step2":    {"title": "测试用例设计报告",       "issue_sheet": "设计问题",     "issue_prefix": "TC",  "cases_primary": True},
+    "step4":    {"title": "接口测试报告",          "issue_sheet": "接口问题清单", "issue_prefix": "API"},
+    "step6":    {"title": "Agent 自动化执行报告",   "issue_sheet": "问题清单",     "issue_prefix": "AG"},
+    "h5_adapt": {"title": "H5 适配初审报告",        "issue_sheet": "适配问题清单", "issue_prefix": "H5",  "h5_matrix": True},
+}
+
+
+def _build_exec_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, Any]) -> bytes:
+    """统一执行报告 Excel:概览 + 问题清单 + 风险 + 阻碍 + 用例 + 截图(+ 按工具特化表)。"""
+    from packages.reporting.exec_excel import build_exec_xlsx
+    summary = _build_executive_summary(report, tool)
+    m = report.get("meta") or {}
+    meta = {
+        "run_id": r.get("run_id") or "",
+        "produced_at": m.get("produced_at_utc") or m.get("produced_at") or "",
+        "model": m.get("model") or m.get("model_label") or "",
+        "project_name": m.get("project_name") or "",
+        "project_code": m.get("project_code") or "",
+    }
+    return build_exec_xlsx(summary, report, tool, meta, _EXEC_CFG.get(tool.get("id"), {}))
+
+
 @app.get("/api/reports/{run_id}/export.{fmt}")
 async def api_report_export(run_id: str, fmt: str, request: Request) -> Any:
     """Server-side export — guarantees download dialog in webview.
@@ -4150,10 +4175,8 @@ async def api_report_export(run_id: str, fmt: str, request: Request) -> Any:
     tool = next((t for t in TOOL_CATALOG if t["id"] == tool_id), None) or {"id": tool_id, "name": tool_id, "icon": "?"}
     fname_base = f"{tool_id}_{run_id[:8]}"
 
-    # 这些工具只产出 Excel(step2 用例 / seo_audit SEO审计 / network_resilience 弱网):
-    # 请求 export.html / export.md 一律重定向到 Excel。
-    _XLSX_ONLY = {"step2", "seo_audit", "network_resilience"}
-    if tool_id in _XLSX_ONLY and fmt in ("html", "md"):
+    # HTML 报告已下线:任何工具的 export.html 一律重定向到 Excel(MD/JSON 仍可在预览页下载)。
+    if fmt == "html":
         return RedirectResponse(f"/api/reports/{run_id}/export.xlsx", status_code=302)
 
     if fmt == "json":
@@ -4177,8 +4200,8 @@ async def api_report_export(run_id: str, fmt: str, request: Request) -> Any:
             xlsx_bytes = _build_network_xlsx(r, tool, report)
             suffix = "_弱网断网测试报告"
         else:
-            xlsx_bytes = _build_testcase_xlsx(r, tool, report)
-            suffix = "_testcases"
+            xlsx_bytes = _build_exec_xlsx(r, tool, report)
+            suffix = "_" + (tool.get("name") or "报告").replace(" ", "")
         # 文件名含中文 → 必须 RFC 5987 编码(HTTP 头只能 latin-1),
         # 同时给纯 ASCII 回退名,兼容老浏览器。
         from urllib.parse import quote as _q
@@ -4189,12 +4212,8 @@ async def api_report_export(run_id: str, fmt: str, request: Request) -> Any:
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": disp},
         )
-    # html
-    body = _build_html_report(r, tool, report)
-    return Response(
-        content=body, media_type="text/html; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{fname_base}.html"'},
-    )
+    # 兜底:未知格式 → Excel
+    return RedirectResponse(f"/api/reports/{run_id}/export.xlsx", status_code=302)
 
 
 # ══════════════════ SEO 深度审计:真实采集 → Excel ══════════════════
