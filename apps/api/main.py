@@ -78,6 +78,23 @@ async def _seed_admin_from_env() -> None:
 
 
 @app.on_event("startup")
+async def _ensure_superadmin() -> None:
+    """启动时确保存在超级管理员(idempotent)。
+    默认把 zhangyafeng 升为 superadmin;可用 $AITK_SUPERADMIN_USER 覆盖。
+    仅当该用户存在且尚非 superadmin 时升级;不创建账号、不改密码。
+    """
+    import os as _os
+    name = (_os.environ.get("AITK_SUPERADMIN_USER") or "zhangyafeng").strip().lower()
+    try:
+        u = user_store.get_user_by_username(name)
+        if u and not u.is_superadmin():
+            user_store.set_role(u.id, "superadmin")
+            print(f"[bootstrap] promoted superadmin: {name}")
+    except Exception as exc:
+        print(f"[bootstrap] ensure superadmin failed: {exc}")
+
+
+@app.on_event("startup")
 async def _start_oauth_refresh_loop() -> None:
     """后台周期性刷新 OAuth token — 每 20 分钟查一次,过期前 5 分钟自动续。
     这样即使没人跑工具、或一个 run 跑很久,token 也不会过期。
@@ -166,6 +183,13 @@ def require_admin(request: Request) -> UserRecord:
     user = require_user(request)
     if not user.is_admin():
         raise HTTPException(403, "需要管理员权限")
+    return user
+
+
+def require_superadmin(request: Request) -> UserRecord:
+    user = require_user(request)
+    if not user.is_superadmin():
+        raise HTTPException(403, "需要超级管理员权限")
     return user
 
 
@@ -297,8 +321,11 @@ async def api_auth_admin_create_user(req: AdminCreateUserReq, request: Request) 
     """管理员创建新用户。
     Body: {username, password, display_name?, role?}
     """
-    require_admin(request)
-    role = req.role if req.role in ("admin", "user") else "user"
+    actor = require_admin(request)
+    role = req.role if req.role in ("user", "admin", "superadmin") else "user"
+    # 非超管只能创建普通用户
+    if role != "user" and not actor.is_superadmin():
+        raise HTTPException(403, "只有超级管理员能创建管理员 / 超级管理员")
     try:
         user = user_store.create_user(
             username=req.username,
@@ -343,8 +370,10 @@ async def api_auth_admin_bulk_create_users(
     - created 列表里会把刚才用的密码原文带回去(后端不会留明文,只是这一次响应有),
       admin 复制下来发给员工即可
     """
-    require_admin(request)
-    default_role = req.default_role if req.default_role in ("admin", "user") else "user"
+    actor = require_admin(request)
+    default_role = req.default_role if req.default_role in ("user", "admin", "superadmin") else "user"
+    if not actor.is_superadmin():
+        default_role = "user"  # 非超管批量只能建普通用户
     created: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
     seen_in_batch: set[str] = set()
@@ -362,7 +391,9 @@ async def api_auth_admin_bulk_create_users(
         if not pwd:
             pwd = _gen_random_password(max(8, req.default_password_length))
             was_auto = True
-        role = raw.role if raw.role in ("admin", "user") else default_role
+        role = raw.role if raw.role in ("user", "admin", "superadmin") else default_role
+        if not actor.is_superadmin():
+            role = "user"
         try:
             u = user_store.create_user(
                 username=uname,
@@ -391,10 +422,13 @@ async def api_auth_admin_reset_password(
     user_id: int, req: AdminResetPasswordReq, request: Request,
 ) -> dict[str, Any]:
     """管理员给某用户重置密码(不验旧密码)。"""
-    require_admin(request)
+    actor = require_admin(request)
     target = user_store.get_user(user_id)
     if not target:
         raise HTTPException(404, "用户不存在")
+    # 非超管只能重置普通用户的密码
+    if not actor.is_superadmin() and target.role != "user":
+        raise HTTPException(403, "只有超级管理员能重置管理员 / 超级管理员的密码")
     try:
         user_store.admin_reset_password(user_id, req.new_password)
     except ValueError as exc:
@@ -405,19 +439,40 @@ async def api_auth_admin_reset_password(
 @app.delete("/api/auth/users/{user_id}")
 async def api_auth_admin_delete_user(user_id: int, request: Request) -> dict[str, Any]:
     """管理员删除用户。禁止自删,禁止删最后一个 admin。"""
-    admin = require_admin(request)
-    if user_id == admin.id:
+    actor = require_admin(request)
+    if user_id == actor.id:
         raise HTTPException(400, "不能删除自己")
     target = user_store.get_user(user_id)
     if not target:
         raise HTTPException(404, "用户不存在")
-    # 检查是不是最后一个 admin
-    if target.is_admin():
-        all_admins = [u for u in user_store.list_users() if u.is_admin()]
-        if len(all_admins) <= 1:
-            raise HTTPException(400, "不能删除最后一个管理员")
+    # 非超管只能删普通用户
+    if not actor.is_superadmin() and target.role != "user":
+        raise HTTPException(403, "只有超级管理员能删除管理员 / 超级管理员")
+    # 不能删最后一个超级管理员
+    if target.is_superadmin() and user_store.count_by_role("superadmin") <= 1:
+        raise HTTPException(400, "不能删除最后一个超级管理员")
     user_store.delete_user(user_id)
     return {"ok": True, "msg": f"已删除用户 {target.username}"}
+
+
+class SetRoleReq(BaseModel):
+    role: str
+
+
+@app.post("/api/auth/users/{user_id}/role")
+async def api_auth_set_role(user_id: int, req: SetRoleReq, request: Request) -> dict[str, Any]:
+    """超级管理员修改用户角色(user / admin / superadmin)。改后该用户需重新登录。"""
+    require_superadmin(request)
+    if req.role not in ("user", "admin", "superadmin"):
+        raise HTTPException(400, "非法角色")
+    target = user_store.get_user(user_id)
+    if not target:
+        raise HTTPException(404, "用户不存在")
+    # 不能把最后一个超级管理员降级
+    if target.is_superadmin() and req.role != "superadmin" and user_store.count_by_role("superadmin") <= 1:
+        raise HTTPException(400, "不能降级最后一个超级管理员")
+    user_store.set_role(user_id, req.role)
+    return {"ok": True, "msg": f"已将 {target.username} 设为 {req.role};该用户需重新登录生效"}
 
 
 # ---------------------------------------------------------------------
@@ -5379,11 +5434,12 @@ async def api_tool_run_stop(run_id: str, request: Request) -> dict[str, Any]:
 
 
 def _user_can_see(user: UserRecord, owner_user_id: int | None) -> bool:
-    """权限判定:admin 可看所有;user 只能看自己的;legacy (owner_user_id 缺失) 当作 admin 可见。"""
-    if user.is_admin():
+    """报告可见性:仅超级管理员可看所有;管理员与普通用户只能看自己的。
+    legacy (owner_user_id 缺失) 仅对超级管理员可见。"""
+    if user.is_superadmin():
         return True
     if owner_user_id is None:
-        return False  # 旧数据,普通用户看不到
+        return False  # 旧数据,非超管看不到
     return int(owner_user_id) == int(user.id)
 
 
@@ -5701,7 +5757,7 @@ button{font-family:inherit;cursor:pointer}
     <a href="/tools" class="active">开始</a>
     <a href="/catalog">工具</a>
     <a href="/reports">报告</a>
-    <a href="/settings">设置</a>
+    <a href="/settings" class="superadmin-only" style="display:none">设置</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
   </nav>
   <span class="kbd-hint" id="cmd-trigger" title="打开命令面板"><kbd>⌘</kbd><kbd>K</kbd></span>
@@ -6863,9 +6919,12 @@ _SHARED_OVERLAY_SNIPPET = """
   fetch('/api/auth/me').then(r => r.json()).then(d => {
     if (!d || !d.authenticated || !d.user) return;
     const u = d.user;
-    // admin-only 元素可见(放在最前,确保即使 widget 注入失败这一步也跑了)
-    if (u.role === 'admin'){
+    // 角色门禁:admin/superadmin 显示 .admin-only;仅 superadmin 显示 .superadmin-only
+    if (u.role === 'admin' || u.role === 'superadmin'){
       document.querySelectorAll('.admin-only').forEach(el => { el.style.display = ''; });
+    }
+    if (u.role === 'superadmin'){
+      document.querySelectorAll('.superadmin-only').forEach(el => { el.style.display = ''; });
     }
     // 如果页面已经有自己的用户信息区(如 /admin/users 的 user-chip),跳过 widget 注入
     if (document.getElementById('user-chip') || document.getElementById('user-badge')){
@@ -6874,8 +6933,9 @@ _SHARED_OVERLAY_SNIPPET = """
     const wrap = document.createElement('div');
     wrap.className = 'shared-auth-widget';
     wrap.id = 'shared-auth-widget';
-    const tag = u.role === 'admin'
-      ? '<span class="admin-tag">[admin]</span>' : '';
+    const tag = u.role === 'superadmin'
+      ? '<span class="admin-tag">[超管]</span>'
+      : (u.role === 'admin' ? '<span class="admin-tag">[admin]</span>' : '');
     wrap.innerHTML = `${tag}<span class="name">${u.display_name || u.username}</span>` +
       `<button class="logout" title="退出登录">登出</button>`;
     // 找 topbar 把 widget 塞进去成自然元素 — 优先级:header.topbar > .topbar > header
@@ -7233,7 +7293,7 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
     <a href="/tools">开始</a>
     <a href="/catalog" class="active">工具</a>
     <a href="/reports">报告</a>
-    <a href="/settings">设置</a>
+    <a href="/settings" class="superadmin-only" style="display:none">设置</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
   </nav>
 </header>
@@ -7311,7 +7371,7 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
     <a href="/catalog">工具</a>
     <a href="/reports">报告</a>
     <a href="/guide" class="active">使用说明</a>
-    <a href="/settings">设置</a>
+    <a href="/settings" class="superadmin-only" style="display:none">设置</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
   </nav>
 </header>
@@ -8370,7 +8430,7 @@ async def api_settings_auth() -> dict[str, Any]:
 
 @app.put("/api/settings/auth")
 async def api_settings_auth_put(req: AuthModeReq, request: Request) -> dict[str, Any]:
-    require_admin(request)
+    require_superadmin(request)
     """切换认证模式 + 可选保存 API key。
 
     Body 示例：
@@ -8576,7 +8636,7 @@ def _billing_label(billing_type: str | None) -> str:
 @app.delete("/api/settings/auth/api-key")
 async def api_settings_auth_clear_key(request: Request) -> dict[str, Any]:
     """清掉已存的 API Key（不切模式）。"""
-    require_admin(request)
+    require_superadmin(request)
     try:
         from packages.core.auth_config import clear_api_key
         clear_api_key()
@@ -8598,7 +8658,7 @@ class DisconnectReq(BaseModel):
 
 @app.post("/api/settings/auth/disconnect")
 async def api_settings_auth_disconnect(req: DisconnectReq, request: Request) -> dict[str, Any]:
-    require_admin(request)
+    require_superadmin(request)
     """断开当前认证 — 只清 toolkit 自身存的凭据，不动本机 claude。
 
     - api_key 模式: 清掉本工具保存的 sk-ant-... + 切回 unset
@@ -8772,7 +8832,7 @@ async def api_auth_oauth_start(request: Request) -> dict[str, Any]:
     Anthropic OAuth client_id 锁死 redirect_uri 在 console.anthropic.com 的
     OOB callback,授权完成后用户会看到 code 显示在网页上,需要手动复制粘贴。
     """
-    require_admin(request)
+    require_superadmin(request)
     import secrets as _secrets
     _gc_oauth_pending()
     verifier, challenge = _make_pkce()
@@ -8815,7 +8875,7 @@ async def api_auth_oauth_exchange(req: OAuthExchangeReq, request: Request) -> di
 
     code 格式可能是 "abc-def#state=xxx" 或纯 "abc-def" — 都接受。
     """
-    require_admin(request)
+    require_superadmin(request)
     _gc_oauth_pending()
     code_raw = (req.code or "").strip()
     state = (req.state or "").strip()
@@ -9198,8 +9258,9 @@ async def _run_claude_cli_install(job: dict[str, Any]) -> None:
 
 
 @app.post("/api/settings/install")
-async def api_settings_install(req: InstallReq) -> dict[str, Any]:
-    """一键安装某个工具依赖。返回 job_id 后异步轮询。"""
+async def api_settings_install(req: InstallReq, request: Request) -> dict[str, Any]:
+    """一键安装某个工具依赖。返回 job_id 后异步轮询。仅超级管理员。"""
+    require_superadmin(request)
     target = req.target.strip()
     # System-level targets we can self-install on macOS:
     #   claude_cli   — curl pipe → ~/.local/bin/claude
@@ -10858,7 +10919,7 @@ TOOL_DETAIL_HTML = r"""<!doctype html>
     <span class="stat cost"><span class="lbl">$</span><span class="v" id="s-cost">—</span></span>
     <span class="stat" id="s-elapsed-wrap" style="display:none"><span class="v" id="s-elapsed"></span></span>
   </div>
-  <a href="/settings" class="set">设置</a>
+  <a href="/settings" class="set superadmin-only" style="display:none">设置</a>
   <button class="run" id="btn-run">▶ 运行<kbd>⌘↵</kbd></button>
 </div>
 
@@ -14257,7 +14318,11 @@ load();
 
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings_page() -> str:
+async def settings_page(request: Request):
+    # 「设置」整页仅超级管理员可见;管理员/普通用户访问直接回工具页
+    user = getattr(request.state, "current_user", None)
+    if not user or not user.is_superadmin():
+        return RedirectResponse("/tools", status_code=302)
     return _inject_shared_overlays(SETTINGS_HTML)
 
 
@@ -14349,7 +14414,9 @@ table.users tr:hover{background:var(--paper-2)}
 .role-tag{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;padding:2px 8px;
   border-radius:3px;text-transform:uppercase}
 .role-tag.admin{color:#fff;background:var(--accent)}
+.role-tag.superadmin{color:#fff;background:#b91c1c}
 .role-tag.user{color:var(--ink-3);border:1px solid var(--line)}
+.role-sel{font-family:var(--mono);font-size:11.5px;padding:3px 6px;border:1px solid var(--line);border-radius:5px;background:#fff;color:var(--ink,#111);cursor:pointer}
 .row-actions{display:flex;gap:8px;justify-content:flex-end}
 .row-actions button{padding:5px 10px;font-family:var(--mono);font-size:11px;
   border-radius:3px;border:1px solid var(--line);background:#fff;color:var(--ink-2);
@@ -14397,7 +14464,7 @@ table.users tr:hover{background:var(--paper-2)}
     <a href="/tools">开始</a>
     <a href="/catalog">工具</a>
     <a href="/reports">报告</a>
-    <a href="/settings">设置</a>
+    <a href="/settings" class="superadmin-only" style="display:none">设置</a>
     <a href="/admin/users" class="active">用户管理</a>
   </nav>
   <div class="spacer"></div>
@@ -14440,6 +14507,7 @@ table.users tr:hover{background:var(--paper-2)}
         <select id="c-role">
           <option value="user" selected>普通用户</option>
           <option value="admin">管理员</option>
+          <option value="superadmin">超级管理员</option>
         </select>
       </div>
       <div class="submit-cell">
@@ -14618,10 +14686,16 @@ function toast(msg, kind){
 async function fetchMe(){
   const r = await fetch('/api/auth/me').then(r=>r.json());
   if (!r.authenticated){ location.href = '/login'; return; }
-  if (r.user.role !== 'admin'){ alert('需要管理员权限'); location.href = '/tools'; return; }
+  if (r.user.role !== 'admin' && r.user.role !== 'superadmin'){ alert('需要管理员权限'); location.href = '/tools'; return; }
   currentUser = r.user;
-  const tag = r.user.role === 'admin' ? '<span class="admin-tag">[admin]</span>' : '';
+  const isSuper = r.user.role === 'superadmin';
+  const tag = isSuper ? '<span class="admin-tag">[超管]</span>' : '<span class="admin-tag">[admin]</span>';
   document.getElementById('user-chip').innerHTML = tag + (r.user.display_name || r.user.username);
+  // 非超管(管理员):创建用户只能选「普通用户」
+  if (!isSuper){
+    const sel = document.getElementById('c-role');
+    if (sel) sel.innerHTML = '<option value="user" selected>普通用户</option>';
+  }
 }
 
 async function loadUsers(){
@@ -14639,21 +14713,37 @@ function renderUsers(){
     w.innerHTML = '<div class="empty">暂无用户</div>';
     return;
   }
+  const amSuper = currentUser && currentUser.role === 'superadmin';
+  const roleLabel = {user:'USER', admin:'ADMIN', superadmin:'SUPER'};
   const rows = users.map(u => {
     const isMe = currentUser && u.id === currentUser.id;
-    const isLastAdmin = u.role === 'admin' && users.filter(x => x.role === 'admin').length === 1;
-    const delDisabled = isMe || isLastAdmin;
-    const delTitle = isMe ? '不能删除自己' : (isLastAdmin ? '不能删除最后一个管理员' : '删除用户');
+    const isLastSuper = u.role === 'superadmin' && users.filter(x => x.role === 'superadmin').length === 1;
+    // 非超管只能操作普通用户
+    const canManage = amSuper || u.role === 'user';
+    const delDisabled = isMe || isLastSuper || !canManage;
+    const delTitle = isMe ? '不能删除自己'
+      : (isLastSuper ? '不能删除最后一个超级管理员'
+      : (!canManage ? '只有超级管理员能操作管理员/超管' : '删除用户'));
+    const manageTitle = !canManage ? '只有超级管理员能操作管理员/超管' : '';
+    // 角色:超管用下拉直接改;其余只读标签
+    const roleCell = amSuper
+      ? `<select class="role-sel" onchange="changeRole(${u.id}, this.value, '${escapeHtml(u.username)}')"${isLastSuper ? ' title="最后一个超管不能降级"' : ''}>
+           <option value="user"${u.role==='user'?' selected':''}>普通用户</option>
+           <option value="admin"${u.role==='admin'?' selected':''}>管理员</option>
+           <option value="superadmin"${u.role==='superadmin'?' selected':''}>超级管理员</option>
+         </select>`
+      : `<span class="role-tag ${u.role}">${roleLabel[u.role] || 'USER'}</span>`;
     return `<tr>
       <td class="mono">${u.id}</td>
       <td><strong>${escapeHtml(u.username)}</strong></td>
       <td class="muted">${escapeHtml(u.display_name || '—')}</td>
-      <td><span class="role-tag ${u.role}">${u.role === 'admin' ? 'ADMIN' : 'USER'}</span></td>
+      <td>${roleCell}</td>
       <td class="mono muted">${fmtTs(u.created_at)}</td>
       <td class="mono muted">${fmtTs(u.last_login_at)}</td>
       <td>
         <div class="row-actions">
-          <button onclick="openReset(${u.id}, '${escapeHtml(u.username)}')">重置密码</button>
+          <button onclick="openReset(${u.id}, '${escapeHtml(u.username)}')"
+                  ${!canManage ? `disabled style="opacity:.4;cursor:not-allowed" title="${manageTitle}"` : ''}>重置密码</button>
           <button class="danger" onclick="deleteUser(${u.id}, '${escapeHtml(u.username)}')"
                   ${delDisabled ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}
                   title="${delTitle}">删除</button>
@@ -14750,6 +14840,20 @@ document.getElementById('reset-ok').onclick = async () => {
     err.classList.add('show');
   }
 };
+
+async function changeRole(id, role, username){
+  const label = {user:'普通用户', admin:'管理员', superadmin:'超级管理员'}[role] || role;
+  if (!confirm('确认把「' + username + '」改为「' + label + '」?\n改后该用户需重新登录才生效。')){ await loadUsers(); return; }
+  try {
+    const r = await fetch('/api/auth/users/' + id + '/role', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({role})
+    });
+    const d = await r.json().catch(()=>({}));
+    if (!r.ok){ toast('改角色失败:' + (d.detail || r.status), 'bad'); await loadUsers(); return; }
+    toast('✓ ' + (d.msg || ('已将 ' + username + ' 设为 ' + label)), 'ok');
+    await loadUsers();
+  } catch(e){ toast('改角色请求失败:' + e.message, 'bad'); await loadUsers(); }
+}
 
 async function deleteUser(id, username){
   if (!confirm('确认删除 ' + username + '?\n该用户的所有报告归属也会留在系统里,但他无法再登录。')) return;
@@ -14982,7 +15086,8 @@ function renderBulkResults(created, failed){
   if (created.length){
     html += '<table><thead><tr><th>用户名</th><th>密码 (一次性显示)</th><th>角色</th></tr></thead><tbody>';
     created.forEach(u => {
-      const role = u.role === 'admin' ? '<span class="role-tag admin">ADMIN</span>' : '<span class="role-tag user">USER</span>';
+      const role = u.role === 'superadmin' ? '<span class="role-tag superadmin">SUPER</span>'
+        : (u.role === 'admin' ? '<span class="role-tag admin">ADMIN</span>' : '<span class="role-tag user">USER</span>');
       html += `<tr>
         <td><strong>${escapeHtml(u.username)}</strong></td>
         <td class="pwd-cell">${escapeHtml(u.password)}${u.password_auto_generated ? ' <span style="color:var(--ink-3);font-weight:400">(自动)</span>' : ''}</td>
@@ -15540,7 +15645,7 @@ REPORTS_HTML = r"""<!doctype html>
   <nav>
     <a href="/tools">工具</a>
     <a href="/reports" class="active">报告</a>
-    <a href="/settings">设置</a>
+    <a href="/settings" class="superadmin-only" style="display:none">设置</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
   </nav>
   <div class="right" style="margin-left:auto">

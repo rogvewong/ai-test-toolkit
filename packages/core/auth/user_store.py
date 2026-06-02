@@ -73,7 +73,11 @@ class UserRecord:
     last_login_at: float | None
 
     def is_admin(self) -> bool:
-        return self.role == "admin"
+        # 管理员或超级管理员都算 admin(用于「用户管理」类门禁)
+        return self.role in ("admin", "superadmin")
+
+    def is_superadmin(self) -> bool:
+        return self.role == "superadmin"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -159,14 +163,14 @@ class UserStore:
         display_name: str = "",
         role: str | None = None,
     ) -> UserRecord:
-        """创建用户。第一个创建的自动 admin。"""
+        """创建用户。第一个创建的自动成为超级管理员。"""
         username = self._normalize_username(username)
         self._validate_username(username)
         if len(password) < 6:
             raise ValueError("密码至少 6 位")
         pwd_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        actual_role = role if role in ("admin", "user") else (
-            "admin" if self.count_users() == 0 else "user"
+        actual_role = role if role in ("user", "admin", "superadmin") else (
+            "superadmin" if self.count_users() == 0 else "user"
         )
         now = time.time()
         with self._lock, self._conn() as c:
@@ -228,6 +232,22 @@ class UserStore:
     def admin_reset_password(self, user_id: int, new_password: str) -> None:
         """admin 给用户重置密码 — 不验旧密码。"""
         self.change_password(user_id, new_password)
+
+    def set_role(self, user_id: int, role: str) -> bool:
+        """改用户角色。role ∈ {user, admin, superadmin}。改角色后撤销其会话以重置权限。"""
+        if role not in ("user", "admin", "superadmin"):
+            raise ValueError("非法角色")
+        with self._lock, self._conn() as c:
+            cur = c.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+            if (cur.rowcount or 0) > 0:
+                c.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+                return True
+            return False
+
+    def count_by_role(self, role: str) -> int:
+        with self._lock, self._conn() as c:
+            row = c.execute("SELECT COUNT(*) AS n FROM users WHERE role=?", (role,)).fetchone()
+            return int(row["n"])
 
     def delete_user(self, user_id: int) -> bool:
         with self._lock, self._conn() as c:
