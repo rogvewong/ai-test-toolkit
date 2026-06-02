@@ -4447,7 +4447,8 @@ async def _step5_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
                             images=[{"path": str(montage), "mime": "image/png", "caption": "设计稿拼图(每格#编号)"},
                                     {"path": a["path"], "mime": "image/png", "caption": f"实拍:{a['name']}"}],
                             max_tokens=200, allow_degrade=False)
-                        m = (resp.json() or {}).get("match")
+                        _jm = resp.json()
+                        m = _jm.get("match") if isinstance(_jm, dict) else None
                         try:
                             ctx.usage.merge(resp.usage)
                         except Exception:
@@ -4484,7 +4485,10 @@ async def _step5_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
                     ctx.usage.merge(resp.usage)
                 except Exception:
                     pass
-                return resp.json() or {}
+                _j = resp.json()
+                if isinstance(_j, list):
+                    return {"issues": _j}        # LLM 直接返回数组 → 包成 {issues:[...]}
+                return _j if isinstance(_j, dict) else {}
             except Exception:
                 return {}
 
@@ -4492,7 +4496,8 @@ async def _step5_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
     all_issues: list = []
     pairs_checked: list = []
     for (a, d), res in zip(pairs, results):
-        iss = (res or {}).get("issues") or []
+        iss = (res.get("issues") if isinstance(res, dict)
+               else (res if isinstance(res, list) else [])) or []
         iss = [it for it in iss if isinstance(it, dict)]
         for it in iss:
             it.setdefault("module", a["name"])
