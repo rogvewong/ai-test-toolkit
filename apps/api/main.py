@@ -16648,7 +16648,7 @@ REPORTS_HTML = r"""<!doctype html>
     </div>
   </section>
   <div class="filter-row">
-    <input class="search" id="search" placeholder="搜索 run id / 工具 / 项目编号 / 项目名称">
+    <input class="search" id="search" placeholder="搜索 报告名称 / 测试类型 / 产品编号 / 产品名称 / 执行人 / run id">
     <div class="filters" id="filters"></div>
     <button class="refresh" id="refresh">↻ 刷新</button>
   </div>
@@ -16749,7 +16749,8 @@ function render(){
   const filtered = allReports.filter(r => {
     if (currentFilter !== 'all' && r.tool_id !== currentFilter) return false;
     if (q) {
-      const hay = (r.run_id + ' ' + (r.tool_name||'') + ' ' + (r.project_code||'') + ' ' + (r.project_name||'')).toLowerCase();
+      const _tn = (toolMap[r.tool_id]||{}).name || r.tool_name || '';
+      const hay = (r.run_id + ' ' + _tn + ' ' + (r.project_code||'') + ' ' + (r.project_name||'') + ' ' + (r.owner_username||'')).toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -16765,7 +16766,7 @@ function render(){
   if (bulkBar) bulkBar.style.display = '';
   c.innerHTML = `<table><thead><tr>
     <th class="row-pick"></th>
-    <th>状态</th><th>工具</th><th>项目编号</th><th>项目名称</th><th>Run ID</th><th>开始</th><th>用时</th><th>操作</th>
+    <th>状态</th><th>报告名称</th><th>测试类型</th><th>产品编号</th><th>产品名称</th><th>执行人</th><th>时间</th><th>操作</th>
   </tr></thead><tbody id="tbody"></tbody></table>`;
   const tbody = document.getElementById('tbody');
   // 当前页 run_ids 给"全选"用
@@ -16776,7 +16777,11 @@ function render(){
     const elapsed = (r.finished_at && r.started_at) ? ((r.finished_at - r.started_at).toFixed(1) + 's') : '—';
     const status = r.kind === 'memory' ? r.status : 'saved';
     const tm = toolMap[r.tool_id];
+    const typePlain = tm ? tm.name : r.tool_id;
     const name = tm ? `${tm.icon} ${tm.name}` : r.tool_id;
+    // 报告名称 = 产品名称 · 测试类型(都缺则退化为 run_id 短码)
+    const reportName = [r.project_name, typePlain].filter(Boolean).join(' · ') || (r.run_id || '').slice(0,8);
+    const executor = r.owner_username ? escapeHtml(r.owner_username) : '<span class="muted">—</span>';
     const pc = r.project_code ? `<code class="proj-code">${escapeHtml(r.project_code)}</code>` : '<span class="muted">—</span>';
     const pn = r.project_name ? `<span class="proj-name">${escapeHtml(r.project_name)}</span>` : '<span class="muted">—</span>';
     const row = document.createElement('tr');
@@ -16791,12 +16796,12 @@ function render(){
     row.innerHTML = `
       <td class="row-pick"><input type="checkbox" class="row-cb" data-runid="${r.run_id}" ${checked}></td>
       <td><span class="status-pill ${status}">${status}</span></td>
+      <td class="report-name" title="${escapeHtml(reportName)}" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500">${escapeHtml(reportName)}</td>
       <td class="name">${name}</td>
       <td>${pc}</td>
       <td>${pn}</td>
-      <td><span class="id">${r.run_id}</span></td>
+      <td class="executor">${executor}</td>
       <td>${ts}</td>
-      <td>${elapsed}</td>
       <td class="actions">
         <a href="javascript:void(0)" data-runid="${r.run_id}" class="open">预览</a>
         <a href="javascript:void(0)" data-runid="${r.run_id}" class="del">删除</a>
