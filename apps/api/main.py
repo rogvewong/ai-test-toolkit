@@ -14691,6 +14691,9 @@ async function fetchMe(){
   const isSuper = r.user.role === 'superadmin';
   const tag = isSuper ? '<span class="admin-tag">[超管]</span>' : '<span class="admin-tag">[admin]</span>';
   document.getElementById('user-chip').innerHTML = tag + (r.user.display_name || r.user.username);
+  // 本页不经 _inject_shared_overlays,手动按角色显隐顶部导航链接
+  document.querySelectorAll('.admin-only').forEach(el => { el.style.display = ''; });
+  if (isSuper){ document.querySelectorAll('.superadmin-only').forEach(el => { el.style.display = ''; }); }
   // 非超管(管理员):创建用户只能选「普通用户」
   if (!isSuper){
     const sel = document.getElementById('c-role');
