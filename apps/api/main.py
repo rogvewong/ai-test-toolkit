@@ -6537,6 +6537,7 @@ button{font-family:inherit;cursor:pointer}
   <div class="actions">
     <a class="btn primary" href="/catalog">进入工具 <span class="arrow">→</span></a>
     <a class="btn" href="/reports">查看报告</a>
+    <a class="btn" href="/guide">使用说明</a>
   </div>
   <div class="hero-foot">
     <span class="dot"></span>
@@ -6549,7 +6550,7 @@ button{font-family:inherit;cursor:pointer}
 <footer class="footer">
   <div class="left"><span class="brand">天枢 · 裁决</span> v0.1.0</div>
   <div class="right">
-    <span>本地 Claude 驱动</span>
+    <span>Claude 驱动</span>
     <span>· 二〇二六</span>
   </div>
 </footer>
@@ -8078,6 +8079,134 @@ fetch('/api/tools',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
 @app.get("/catalog", response_class=HTMLResponse)
 async def catalog_page() -> str:
     return _inject_shared_overlays(CATALOG_HTML)
+
+
+# 二级页:使用说明（每个工具的详细用法）
+GUIDE_HTML = """<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>使用说明 · 天枢 · 裁决</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#fff;--paper-2:#f4f3f1;--ink:#0a0a0a;--ink-2:#3a3a3a;--ink-3:#6e6e6e;--line:#dcdad6;--accent:#a8401f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'Noto Sans SC',-apple-system,BlinkMacSystemFont,sans-serif}
+header.topbar{display:flex;align-items:center;gap:6px;padding:15px 40px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(255,255,255,.94);backdrop-filter:blur(8px);z-index:20}
+.brand-link{display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:inherit;margin-right:20px}
+.brand-link svg{color:var(--accent);width:22px;height:22px;flex-shrink:0}
+.brand{font-family:'Noto Serif SC',serif;font-size:18px;font-weight:600;letter-spacing:.16em;color:var(--ink)}
+.brand .sep{color:var(--accent);margin:0 6px;font-weight:400}
+header.topbar nav{display:flex;gap:2px}
+header.topbar nav a{padding:6px 14px;border-radius:7px;color:var(--ink-3);text-decoration:none;font-size:14px;transition:.14s}
+header.topbar nav a:hover{color:var(--ink);background:var(--paper-2)}
+header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weight:500}
+.wrap{max-width:880px;margin:0 auto;padding:44px 40px 80px}
+.wrap h1{font-family:'Noto Serif SC',serif;font-size:27px;font-weight:500;margin:0 0 6px}
+.wrap .sub{color:var(--ink-3);font-size:13.5px;margin:0 0 36px}
+.g-tool{padding:26px 0;border-top:1px solid var(--line)}
+.g-tool:first-of-type{border-top:none;padding-top:0}
+.g-head{display:flex;align-items:center;gap:13px;margin-bottom:16px}
+.g-num{font-family:'Noto Serif SC',serif;font-size:22px;font-weight:500;color:var(--accent);min-width:24px}
+.g-icon{font-size:24px;line-height:1}
+.g-head h2{font-family:'Noto Serif SC',serif;font-size:20px;font-weight:500;margin:0}
+.g-tool dl{margin:0;display:grid;grid-template-columns:72px 1fr;gap:9px 18px}
+.g-tool dt{font-size:13px;font-weight:600;color:var(--ink-3);padding-top:1px}
+.g-tool dd{margin:0;font-size:14px;line-height:1.78;color:var(--ink-2)}
+.g-tool dd b{color:var(--ink);font-weight:500}
+.g-tip{color:var(--accent)!important}
+@media(max-width:600px){.wrap{padding:28px 18px 60px}.g-tool dl{grid-template-columns:1fr;gap:4px}.g-tool dt{padding-top:8px}}
+</style></head>
+<body>
+<header class="topbar">
+  <a class="brand-link" href="/tools"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.5L13.4 10.6L22.5 12L13.4 13.4L12 22.5L10.6 13.4L1.5 12L10.6 10.6Z"/></svg><span class="brand">天枢<span class="sep">·</span>裁决</span></a>
+  <nav>
+    <a href="/tools">开始</a>
+    <a href="/catalog">工具</a>
+    <a href="/reports">报告</a>
+    <a href="/guide" class="active">使用说明</a>
+    <a href="/settings">设置</a>
+    <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
+  </nav>
+</header>
+<div class="wrap">
+  <h1>使用说明</h1>
+  <p class="sub">七个工具各自的用法 · 都支持单独运行,上一步产出可一键接力给下一步</p>
+
+  <div class="g-tool">
+    <div class="g-head"><span class="g-num">1</span><span class="g-icon">📋</span><h2>需求评审</h2></div>
+    <dl>
+      <dt>用途</dt><dd>把 <b>PRD / 原型 / UI 稿</b>拆成可测结构,提前揪出需求遗漏、歧义与提测门禁。</dd>
+      <dt>怎么用</dt><dd>进入工具 → 把需求材料(PRD 文档、原型或 UI 链接/说明)<b>粘贴或上传</b>到输入框 → 选模型 → 点运行。</dd>
+      <dt>产出</dt><dd>《需求拆解报告》:模块拆解、主流程/异常流程、风险与遗漏清单、提测门禁。</dd>
+      <dt class="g-tip">提示</dt><dd class="g-tip">材料越完整(含验收标准、边界规则)拆得越准;产出可一键接力给「测试用例设计」。</dd>
+    </dl>
+  </div>
+
+  <div class="g-tool">
+    <div class="g-head"><span class="g-num">2</span><span class="g-icon">✏️</span><h2>测试用例设计</h2></div>
+    <dl>
+      <dt>用途</dt><dd>基于需求,自动生成分优先级(<b>P0/P1/P2</b>)的测试用例集。</dd>
+      <dt>怎么用</dt><dd>粘贴<b>需求拆解报告 / 业务场景 / 接口清单</b> → 运行;也可直接接力上一步「需求评审」的产出。</dd>
+      <dt>产出</dt><dd>P0/P1/P2 用例表(步骤、预期、数据)+ <b>Excel 下载</b>。</dd>
+      <dt class="g-tip">提示</dt><dd class="g-tip">想覆盖异常/边界,材料里写清规则与约束。</dd>
+    </dl>
+  </div>
+
+  <div class="g-tool">
+    <div class="g-head"><span class="g-num">3</span><span class="g-icon">🔌</span><h2>接口测试</h2></div>
+    <dl>
+      <dt>用途</dt><dd>对接口做<b>功能 / 安全 / 边界 / 契约</b>校验,给放量结论。AI 会<b>真发 HTTP 请求</b>看真实响应。</dd>
+      <dt>怎么用</dt><dd>粘贴 <b>API 文档 / OpenAPI / Postman 集合 / 接口清单</b> + 环境信息(base URL、鉴权)→ 运行。</dd>
+      <dt>产出</dt><dd>接口测试报告(功能/安全/边界/契约)+ 缺陷清单 + Excel。</dd>
+      <dt class="g-tip">提示</dt><dd class="g-tip">请求由真实客户端发起,需保证环境可达、鉴权有效。</dd>
+    </dl>
+  </div>
+
+  <div class="g-tool">
+    <div class="g-head"><span class="g-num">4</span><span class="g-icon">🤖</span><h2>Agent 自动化执行</h2></div>
+    <dl>
+      <dt>用途</dt><dd>Agent 在<b>真机/模拟器</b>上跑 P0 + 关键 P1/P2,自动归因失败、列阻塞。</dd>
+      <dt>怎么用</dt><dd><b>上传 APK</b> + 提供用例/场景,确保 MuMu 模拟器已开机;默认 dry-run,要真跑手动开 <b>--live</b>。</dd>
+      <dt>产出</dt><dd>《Agent 自动化执行报告》:执行结果、失败归因(前端/后端/接口/数据/环境)、阻塞清单。</dd>
+      <dt class="g-tip">提示</dt><dd class="g-tip">真机执行需模拟器在线、APK 可安装。</dd>
+    </dl>
+  </div>
+
+  <div class="g-tool">
+    <div class="g-head"><span class="g-num">5</span><span class="g-icon">📶</span><h2>弱网/断网测试</h2></div>
+    <dl>
+      <dt>用途</dt><dd>在 <b>WiFi / 4G / 3G / 弱网 / 2G / 断网</b> 各档下测页面表现 + 断网恢复能力。</dd>
+      <dt>怎么用</dt><dd>填<b>目标页面 URL</b> → 运行,工具自动逐档切换网络采集。</dd>
+      <dt>产出</dt><dd>弱网深度测试报告(各档表现 + 容错 + 退回判定)+ Excel。</dd>
+    </dl>
+  </div>
+
+  <div class="g-tool">
+    <div class="g-head"><span class="g-num">6</span><span class="g-icon">📱</span><h2>H5 适配初审</h2></div>
+    <dl>
+      <dt>用途</dt><dd>检查 H5 在不同视口/浏览器的适配:<b>安全区、浏览器矩阵、交互、性能</b>。</dd>
+      <dt>怎么用</dt><dd>填 <b>H5 页面 URL</b> +(可选)figma 设计稿链接 → 运行。</dd>
+      <dt>产出</dt><dd>H5 适配报告(页面盘点 + 视口/安全区/浏览器矩阵 + 性能)。</dd>
+    </dl>
+  </div>
+
+  <div class="g-tool">
+    <div class="g-head"><span class="g-num">7</span><span class="g-icon">🔍</span><h2>SEO 深度审计</h2></div>
+    <dl>
+      <dt>用途</dt><dd><b>全站抓取 + 元数据 + 内容 + Core Web Vitals</b> 四维深度审计。</dd>
+      <dt>怎么用</dt><dd>填<b>站点 URL</b> → 运行,工具自动 BFS 爬取 + 逐页解析 + 实测 CWV。</dd>
+      <dt>产出</dt><dd>SEO 深度审计报告(10 个 sheet 的 Excel)。</dd>
+    </dl>
+  </div>
+
+</div>
+</body></html>"""
+
+
+@app.get("/guide", response_class=HTMLResponse)
+async def guide_page() -> str:
+    return _inject_shared_overlays(GUIDE_HTML)
 
 
 @app.get("/tools/{tool_id}", response_class=HTMLResponse)
