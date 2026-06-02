@@ -5845,6 +5845,7 @@ button{font-family:inherit;cursor:pointer}
     <button data-tab="person" class="active">按个人</button>
     <button data-tab="project">按项目(编号)</button>
     <button data-tab="tool">按工具</button>
+    <button data-tab="model">按模型</button>
     <button data-tab="detail">明细</button>
   </div>
   <div id="mr-body"></div>
@@ -6121,6 +6122,7 @@ function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>]/g, c =>
   const fmtT = ts => ts ? new Date(ts*1000).toLocaleDateString('zh-CN') : '—';
   const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
   const money = v => v ? ('$'+v) : '—';
+  const fmtTok = n => !n ? '—' : (n>=1e6 ? (n/1e6).toFixed(1)+'M' : (n>=1e3 ? Math.round(n/1e3)+'K' : ''+n));
   const kpi = (v,l) => `<div class="mr-kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`;
   const tbl = (head, rows) => rows.length
     ? `<table class="mr-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
@@ -6128,14 +6130,16 @@ function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>]/g, c =>
   function renderTab(){
     const d = _data; if (!d) return;
     const b = document.getElementById('mr-body');
-    if (_tab==='person') b.innerHTML = tbl(['执行人','运行次数','涉及项目','最常用工具','成本','最近活跃'],
-      d.by_person.map(p=>`<tr><td><strong>${esc(p.owner)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.projects}</td><td>${esc(p.top_tool)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.last)}</td></tr>`));
-    else if (_tab==='project') b.innerHTML = tbl(['产品编号','产品名称','运行次数','参与人数','涉及工具','成本','时间跨度'],
-      d.by_project.map(p=>`<tr><td class="pc">${esc(p.code)}</td><td>${esc(p.name||'—')}</td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.tools}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.first)} ~ ${fmtT(p.last)}</td></tr>`));
-    else if (_tab==='tool') b.innerHTML = tbl(['测试类型','运行次数','使用人数','涉及项目','成本'],
-      d.by_tool.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.projects}</td><td class="num">${money(p.cost)}</td></tr>`));
-    else b.innerHTML = tbl(['时间','执行人','产品编号','测试类型','结果'],
-      d.detail.map(r=>`<tr><td>${fmtT(r.ts)}</td><td>${esc(r.owner)}</td><td class="pc">${esc(r.project_code||'—')}</td><td>${esc(r.tool_name)}</td><td>${r.status==='succeeded'?'成功':esc(r.status)}</td></tr>`));
+    if (_tab==='person') b.innerHTML = tbl(['执行人','运行次数','涉及项目','最常用工具','Tokens','成本','最近活跃'],
+      d.by_person.map(p=>`<tr><td><strong>${esc(p.owner)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.projects}</td><td>${esc(p.top_tool)}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.last)}</td></tr>`));
+    else if (_tab==='project') b.innerHTML = tbl(['产品编号','产品名称','运行次数','参与人数','涉及工具','Tokens','成本','时间跨度'],
+      d.by_project.map(p=>`<tr><td class="pc">${esc(p.code)}</td><td>${esc(p.name||'—')}</td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.tools}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.first)} ~ ${fmtT(p.last)}</td></tr>`));
+    else if (_tab==='tool') b.innerHTML = tbl(['测试类型','运行次数','使用人数','涉及项目','Tokens','成本'],
+      d.by_tool.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.projects}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td></tr>`));
+    else if (_tab==='model') b.innerHTML = tbl(['模型','运行次数','使用人数','Tokens','成本'],
+      (d.by_model||[]).map(p=>`<tr><td><strong>${esc(p.model)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td></tr>`));
+    else b.innerHTML = tbl(['时间','执行人','产品编号','测试类型','模型','Tokens','成本','结果'],
+      d.detail.map(r=>`<tr><td>${fmtT(r.ts)}</td><td>${esc(r.owner)}</td><td class="pc">${esc(r.project_code||'—')}</td><td>${esc(r.tool_name)}</td><td>${esc(r.model_label||'—')}</td><td class="num">${fmtTok(r.tokens)}</td><td class="num">${money(r.cost_usd)}</td><td>${r.status==='succeeded'?'成功':esc(r.status)}</td></tr>`));
   }
   async function loadStats(){
     try {
@@ -9525,10 +9529,26 @@ def _usage_parse_ts(meta: dict[str, Any], mtime: float) -> float:
 
 def _collect_usage_records() -> list[dict[str, Any]]:
     """扫描当前全部报告(磁盘 + 内存)→ 扁平用量记录。跨用户(供 admin+ 聚合);
-    删除的报告因文件已不在,自然不计入。"""
+    删除的报告因文件已不在,自然不计入。
+    成本 = 模型档位单价 × token 数(走 packages.core.llm.pricing.cost_usd,
+    opus $15/$75、sonnet $3/$15、haiku $1/$5 每百万 token,缓存另计)。"""
+    from packages.core.llm.pricing import cost_usd as _price
     recs: list[dict[str, Any]] = []
     seen: set[str] = set()
     valid = {t["id"] for t in TOOL_CATALOG}
+
+    def _mk(model: str, u: dict[str, Any]):
+        it = int(u.get("input_tokens") or 0)
+        ot = int(u.get("output_tokens") or 0)
+        cw = int(u.get("cache_write_tokens") or u.get("cache_creation_tokens") or 0)
+        cr = int(u.get("cache_read_tokens") or 0)
+        # 有模型 + 有 token → 按模型单价实算;否则退回已存 cost_usd(兜底)
+        if model and (it or ot or cr):
+            cost = _price(model, it, ot, cw, cr)
+        else:
+            cost = float(u.get("cost_usd") or 0)
+        return it, ot, cr, round(cost, 4)
+
     out_dir = Path(settings.report_output_dir)
     if out_dir.exists():
         for p in out_dir.glob("*.json"):
@@ -9547,27 +9567,41 @@ def _collect_usage_records() -> list[dict[str, Any]]:
             except Exception:
                 continue
             m = (d or {}).get("meta") or {}
-            u = m.get("usage") or {}
+            model = m.get("model_id") or m.get("model_version") or ""
+            it, ot, cr, cost = _mk(model, m.get("usage") or {})
             seen.add(run_id)
             recs.append({
                 "run_id": run_id, "tool_id": tool_id,
                 "owner": m.get("owner_username") or m.get("owner_email") or "(未知)",
                 "project_code": m.get("project_code") or "", "project_name": m.get("project_name") or "",
                 "ts": _usage_parse_ts(m, p.stat().st_mtime), "status": "succeeded",
-                "cost_usd": float(u.get("cost_usd") or 0), "tokens": int(u.get("input_tokens") or 0) + int(u.get("output_tokens") or 0),
+                "model": model, "in_tok": it, "out_tok": ot, "tokens": it + ot, "cost_usd": cost,
             })
     for r in _RUNS.values():
         if r.get("run_id") in seen:
             continue
-        u = r.get("usage") or {}
+        model = r.get("model_id") or r.get("model") or ""
+        it, ot, cr, cost = _mk(model, r.get("usage") or {})
         recs.append({
             "run_id": r.get("run_id"), "tool_id": r.get("tool_id"),
             "owner": r.get("owner_username") or "(未知)",
             "project_code": r.get("project_code") or "", "project_name": r.get("project_name") or "",
             "ts": r.get("started_at") or 0, "status": r.get("status") or "running",
-            "cost_usd": float(u.get("cost_usd") or 0), "tokens": int(u.get("input_tokens") or 0) + int(u.get("output_tokens") or 0),
+            "model": model, "in_tok": it, "out_tok": ot, "tokens": it + ot, "cost_usd": cost,
         })
     return recs
+
+
+def _usage_model_label(mid: str) -> str:
+    """claude-opus-4-8 → Opus 4.8;claude-sonnet-4-6 → Sonnet 4.6。"""
+    if not mid:
+        return "(未知模型)"
+    s = str(mid); low = s.lower()
+    tier = "Opus" if "opus" in low else ("Sonnet" if "sonnet" in low else ("Haiku" if "haiku" in low else ""))
+    mm = _re.search(r"(\d+)[-.](\d+)", s)
+    if tier and mm:
+        return f"{tier} {mm.group(1)}.{mm.group(2)}"
+    return tier or s
 
 
 def _usage_aggregate(days: int = 0) -> dict[str, Any]:
@@ -9580,8 +9614,8 @@ def _usage_aggregate(days: int = 0) -> dict[str, Any]:
     def agg(keyf):
         g: dict[Any, dict[str, Any]] = {}
         for r in recs:
-            e = g.setdefault(keyf(r), {"runs": 0, "cost": 0.0, "users": set(), "projects": set(), "tools": {}, "first": None, "last": None})
-            e["runs"] += 1; e["cost"] += r["cost_usd"]; e["users"].add(r["owner"])
+            e = g.setdefault(keyf(r), {"runs": 0, "cost": 0.0, "tokens": 0, "users": set(), "projects": set(), "tools": {}, "first": None, "last": None})
+            e["runs"] += 1; e["cost"] += r["cost_usd"]; e["tokens"] += r["tokens"]; e["users"].add(r["owner"])
             if r["project_code"]:
                 e["projects"].add(r["project_code"])
             e["tools"][r["tool_id"]] = e["tools"].get(r["tool_id"], 0) + 1
@@ -9594,21 +9628,27 @@ def _usage_aggregate(days: int = 0) -> dict[str, Any]:
     for owner, e in agg(lambda r: r["owner"]).items():
         tt = max(e["tools"].items(), key=lambda x: x[1])[0] if e["tools"] else ""
         by_person.append({"owner": owner, "runs": e["runs"], "projects": len(e["projects"]),
-                          "top_tool": tname.get(tt, tt), "cost": round(e["cost"], 2), "last": e["last"]})
-    by_person.sort(key=lambda x: -x["runs"])
+                          "top_tool": tname.get(tt, tt), "tokens": e["tokens"], "cost": round(e["cost"], 2), "last": e["last"]})
+    by_person.sort(key=lambda x: -x["cost"] if x["cost"] else -x["runs"])
 
     by_project = []
     for code, e in agg(lambda r: r["project_code"] or "(无编号)").items():
         pn = next((r["project_name"] for r in recs if (r["project_code"] or "(无编号)") == code and r["project_name"]), "")
         by_project.append({"code": code, "name": pn, "runs": e["runs"], "users": len(e["users"]),
-                          "tools": len(e["tools"]), "cost": round(e["cost"], 2), "first": e["first"], "last": e["last"]})
+                          "tools": len(e["tools"]), "tokens": e["tokens"], "cost": round(e["cost"], 2), "first": e["first"], "last": e["last"]})
     by_project.sort(key=lambda x: -x["runs"])
 
     by_tool = []
     for tid, e in agg(lambda r: r["tool_id"]).items():
         by_tool.append({"tool_id": tid, "name": tname.get(tid, tid), "runs": e["runs"],
-                       "users": len(e["users"]), "projects": len(e["projects"]), "cost": round(e["cost"], 2)})
+                       "users": len(e["users"]), "projects": len(e["projects"]), "tokens": e["tokens"], "cost": round(e["cost"], 2)})
     by_tool.sort(key=lambda x: -x["runs"])
+
+    by_model = []
+    for mid, e in agg(lambda r: r["model"] or "").items():
+        by_model.append({"model": _usage_model_label(mid), "runs": e["runs"],
+                        "users": len(e["users"]), "tokens": e["tokens"], "cost": round(e["cost"], 2)})
+    by_model.sort(key=lambda x: -x["cost"])
 
     totals = {"runs": len(recs), "users": len({r["owner"] for r in recs}),
               "projects": len({r["project_code"] for r in recs if r["project_code"]}),
@@ -9618,8 +9658,9 @@ def _usage_aggregate(days: int = 0) -> dict[str, Any]:
     detail = sorted(recs, key=lambda r: -(r["ts"] or 0))[:1000]
     for r in detail:
         r["tool_name"] = tname.get(r["tool_id"], r["tool_id"])
+        r["model_label"] = _usage_model_label(r["model"])
     return {"totals": totals, "by_person": by_person, "by_project": by_project,
-            "by_tool": by_tool, "detail": detail, "days": days}
+            "by_tool": by_tool, "by_model": by_model, "detail": detail, "days": days}
 
 
 @app.get("/api/usage/stats")
@@ -9664,14 +9705,19 @@ async def api_usage_export(request: Request, days: int = 0) -> Any:
     r = _title_row(ws, "按项目(编号)", 7); _header(ws, r, ["产品编号", "产品名称", "运行次数", "参与人数", "涉及工具", "成本USD", "时间跨度"]); r += 1
     for p in data["by_project"]:
         _row(ws, r, [p["code"], p["name"], p["runs"], p["users"], p["tools"], p["cost"], f'{_d(p["first"])} ~ {_d(p["last"])}']); r += 1
-    ws = wb.create_sheet("04 按工具"); _widths(ws, [22, 12, 12, 12, 12])
-    r = _title_row(ws, "按工具(测试类型)", 5); _header(ws, r, ["测试类型", "运行次数", "使用人数", "涉及项目", "成本USD"]); r += 1
+    ws = wb.create_sheet("04 按工具"); _widths(ws, [22, 12, 12, 12, 14, 12])
+    r = _title_row(ws, "按工具(测试类型)", 6); _header(ws, r, ["测试类型", "运行次数", "使用人数", "涉及项目", "Tokens", "成本USD"]); r += 1
     for p in data["by_tool"]:
-        _row(ws, r, [p["name"], p["runs"], p["users"], p["projects"], p["cost"]]); r += 1
-    ws = wb.create_sheet("05 明细"); _widths(ws, [18, 18, 20, 22, 10])
-    r = _title_row(ws, "逐条明细(近 1000 条)", 5); _header(ws, r, ["时间", "执行人", "产品编号", "测试类型", "结果"]); r += 1
+        _row(ws, r, [p["name"], p["runs"], p["users"], p["projects"], p["tokens"], p["cost"]]); r += 1
+    ws = wb.create_sheet("05 按模型"); _widths(ws, [20, 12, 12, 14, 12])
+    r = _title_row(ws, "按模型(成本 = 模型单价 × token 数)", 5); _header(ws, r, ["模型", "运行次数", "使用人数", "Tokens", "成本USD"]); r += 1
+    for p in data.get("by_model", []):
+        _row(ws, r, [p["model"], p["runs"], p["users"], p["tokens"], p["cost"]]); r += 1
+    ws = wb.create_sheet("06 明细"); _widths(ws, [17, 16, 18, 20, 16, 12, 10, 8])
+    r = _title_row(ws, "逐条明细(近 1000 条)", 8); _header(ws, r, ["时间", "执行人", "产品编号", "测试类型", "模型", "Tokens", "成本USD", "结果"]); r += 1
     for d in data["detail"]:
         _row(ws, r, [_d(d["ts"]), d["owner"], d["project_code"] or "—", d.get("tool_name") or d["tool_id"],
+                     d.get("model_label") or "—", d.get("tokens") or 0, d.get("cost_usd") or 0,
                      "成功" if d["status"] == "succeeded" else d["status"]]); r += 1
     buf = _io.BytesIO(); wb.save(buf)
     fn = f"多维报告_使用统计_{rng}.xlsx"
