@@ -3331,6 +3331,58 @@ _RUNS: dict[str, dict[str, Any]] = {}
 # run_id → asyncio.Task,用于「停止执行」时取消任务(与 _RUNS 分开,避免 Task 进 JSON)
 _RUN_TASKS: dict[str, Any] = {}
 
+_RUN_TOOL_NAMES = {"step1": "需求评审", "step2": "测试用例", "step4": "接口测试",
+                   "step5": "UI 一致性比对", "step6": "Agent 自动化", "seo_audit": "SEO 审计",
+                   "network_resilience": "弱网/断网", "h5_adapt": "H5 适配"}
+
+
+def _hydrate_runs_from_disk(only_run_id: str | None = None) -> int:
+    """把磁盘历史报告(stepN_<run_id>.json 等)补进 _RUNS,使重启后仍能在 app 内查看
+    历史运行(否则内存只读 → 重启就 404)。只补不覆盖;only_run_id 给定时只补那一个。"""
+    import re as _re
+    import json as _json   # 模块级无全局 json,必须局部导入(否则 json.loads → NameError 被 except 吞掉)
+    base = settings.report_output_dir
+    if not base.exists():
+        return 0
+    pat = _re.compile(r"^(step[12456]|seo_audit|network_resilience|h5_adapt)_(.+)\.json$")
+    n = 0
+    for p in sorted(base.glob("*.json"), key=lambda x: x.stat().st_mtime):
+        m = pat.match(p.name)
+        if not m:
+            continue
+        tool_id, run_id = m.group(1), m.group(2)
+        if only_run_id and run_id != only_run_id:
+            continue
+        if run_id in _RUNS:
+            continue
+        try:
+            rep = _json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        meta = rep.get("meta") or {}
+        mt = p.stat().st_mtime
+        _RUNS[run_id] = {
+            "run_id": run_id, "tool_id": tool_id, "tool_name": _RUN_TOOL_NAMES.get(tool_id, tool_id),
+            "status": "succeeded", "progress": "完成(历史报告)",
+            "started_at": mt, "finished_at": mt,
+            "tenant_id": meta.get("tenant_id", "default"), "project_id": meta.get("project_id", "default"),
+            "project_code": meta.get("project_code", ""), "project_name": meta.get("project_name", ""),
+            "owner_user_id": meta.get("owner_user_id"), "owner_username": meta.get("owner_username", ""),
+            "report": rep, "_from_disk": True,
+        }
+        n += 1
+    return n
+
+
+@app.on_event("startup")
+async def _startup_hydrate_runs():
+    try:
+        cnt = _hydrate_runs_from_disk()
+        if cnt:
+            print(f"[startup] 从磁盘恢复 {cnt} 条历史运行报告")
+    except Exception as exc:
+        print(f"[startup] 历史报告恢复失败: {exc}")
+
 
 _KNOWN_INPUT_KEYS = {
     "prd", "prototype", "ui_design", "flow_chart", "api_doc", "business_rules",
@@ -6132,6 +6184,9 @@ def _promote_contract_fields(report: dict[str, Any]) -> dict[str, Any]:
 @app.get("/api/tools/runs/{run_id}")
 async def api_tool_run_status(run_id: str, request: Request) -> dict[str, Any]:
     state = _RUNS.get(run_id)
+    if not state:
+        _hydrate_runs_from_disk(only_run_id=run_id)   # 重启后内存丢失 → 从磁盘报告补加载
+        state = _RUNS.get(run_id)
     if not state:
         raise HTTPException(404, f"run {run_id} not found (server may have restarted)")
     user = require_user(request)
