@@ -6512,7 +6512,8 @@ button{font-family:inherit;cursor:pointer}
 <header class="topbar">
   <a class="brand-link" href="/tools" style="display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:inherit;margin-right:24px;padding:6px 0"><svg class="brand-mark" viewBox="0 0 24 24" fill="currentColor" width="24" height="24" aria-hidden="true" style="color:var(--accent);opacity:1;filter:drop-shadow(0 1px 3px rgba(212,103,74,.3))"><path d="M12 1.5L13.4 10.6L22.5 12L13.4 13.4L12 22.5L10.6 13.4L1.5 12L10.6 10.6Z"/></svg><span class="brand" style="font-family:'Noto Serif SC',Georgia,serif;font-size:19px;font-weight:600;letter-spacing:.18em;color:var(--ink)">天枢<span class="sep" style="color:var(--accent);margin:0 6px;font-weight:400">·</span>裁决</span></a>
   <nav>
-    <a href="/tools" class="active">工具</a>
+    <a href="/tools" class="active">开始</a>
+    <a href="/catalog">工具</a>
     <a href="/reports">报告</a>
     <a href="/settings">设置</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
@@ -6532,14 +6533,14 @@ button{font-family:inherit;cursor:pointer}
 <section class="hero">
   <div class="eyebrow">天枢 · 裁决 ── AI Verdict Manual · Edition 0.1</div>
   <h1>AI 驱动的<br>软件<em>质量裁决</em>手册</h1>
-  <p class="lede">把需求拆解、用例设计、接口测试、UI 比对、H5 适配 到 SEO 审计 — 全流程交给 AI 智能体,出具可分派的裁决报告。</p>
+  <p class="lede">把需求拆解、用例设计、接口测试、H5 适配 到 SEO 审计 — 全流程交给 AI 智能体,出具可分派的裁决报告。</p>
   <div class="actions">
-    <a class="btn primary" href="#directory">开始 <span class="arrow">→</span></a>
-    <a class="btn" href="/reports">查看报告索引</a>
+    <a class="btn primary" href="/catalog">进入工具 <span class="arrow">→</span></a>
+    <a class="btn" href="/reports">查看报告</a>
   </div>
   <div class="hero-foot">
     <span class="dot"></span>
-    <span>覆盖八个测试环节</span>
+    <span>覆盖七个测试环节</span>
     <span class="claude-status" id="claude-status">检测中…</span>
   </div>
 </section>
@@ -6551,9 +6552,9 @@ button{font-family:inherit;cursor:pointer}
 </div>
 <section class="capabilities">
   <div class="cap">
-    <div class="num-zh">八</div>
+    <div class="num-zh">七</div>
     <div class="name">智能体覆盖</div>
-    <div class="desc">从需求评审到 SEO 审计的完整测试流程,八个独立 Agent 各司其职、可单独运行也可链式接力。</div>
+    <div class="desc">从需求评审到 SEO 审计的完整测试流程,七个独立 Agent 各司其职、可单独运行也可链式接力。</div>
   </div>
   <div class="cap">
     <div class="num-zh">五</div>
@@ -6565,33 +6566,6 @@ button{font-family:inherit;cursor:pointer}
     <div class="name">接力链路</div>
     <div class="desc">上一工具的产出可一键导入下一工具作为输入,从 PRD 到上线形成完整闭环。</div>
   </div>
-</section>
-
-<!-- 工具目录 -->
-<div class="chapter-divider">
-  <span class="label">工 具 目 录</span>
-  <span class="line"></span>
-</div>
-<section class="directory" id="directory">
-  <div class="directory-group" id="dir-pre">
-    <div class="group-label">提 测 前</div>
-    <div id="dir-pre-rows"></div>
-  </div>
-  <div class="directory-group" id="dir-post">
-    <div class="group-label">提 测 后</div>
-    <div id="dir-post-rows"></div>
-  </div>
-</section>
-
-<!-- 最近报告 -->
-<div class="chapter-divider">
-  <span class="label">最 近 报 告</span>
-  <span class="line"></span>
-</div>
-<section class="recent">
-  <h3 class="recent-month" id="recent-month">最近运行</h3>
-  <table class="recent-table"><tbody id="recent-rows"></tbody></table>
-  <div class="recent-foot"><a href="/reports">查看全部索引 →</a></div>
 </section>
 
 <!-- Footer -->
@@ -6630,10 +6604,8 @@ async function load() {
   try {
     const cat = await fetch('/api/tools').then(r => r.json());
     tools = cat.tools || [];
-    renderDirectory();
     checkClaude();
     pollRuns();
-    loadRecent();
     setInterval(pollRuns, 4000);
     checkEnvironment();
   } catch(e) {
@@ -8053,6 +8025,82 @@ async def register_page():
 async def tools_index_page() -> str:
     # 注入共享 overlay:右上角 admin 徽标 + 登出 + admin-only 元素显示逻辑
     return _inject_shared_overlays(TOOLS_INDEX_HTML)
+
+
+# 二级页:工具列表(平铺网格)。首页只放「开始」,工具/报告各自独立二级页。
+CATALOG_HTML = """<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>工具 · 天枢 · 裁决</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#fff;--paper-2:#f4f3f1;--ink:#0a0a0a;--ink-2:#3a3a3a;--ink-3:#6e6e6e;--line:#dcdad6;--accent:#a8401f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'Noto Sans SC',-apple-system,BlinkMacSystemFont,sans-serif}
+header.topbar{display:flex;align-items:center;gap:6px;padding:15px 40px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);z-index:20}
+.brand-link{display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:inherit;margin-right:20px}
+.brand-link svg{color:var(--accent);width:22px;height:22px;flex-shrink:0}
+.brand{font-family:'Noto Serif SC',serif;font-size:18px;font-weight:600;letter-spacing:.16em;color:var(--ink)}
+.brand .sep{color:var(--accent);margin:0 6px;font-weight:400}
+header.topbar nav{display:flex;gap:2px}
+header.topbar nav a{padding:6px 14px;border-radius:7px;color:var(--ink-3);text-decoration:none;font-size:14px;transition:.14s}
+header.topbar nav a:hover{color:var(--ink);background:var(--paper-2)}
+header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weight:500}
+.wrap{max-width:1140px;margin:0 auto;padding:40px}
+.wrap h1{font-family:'Noto Serif SC',serif;font-size:27px;font-weight:500;margin:0 0 6px;letter-spacing:-.01em}
+.wrap .sub{color:var(--ink-3);font-size:13.5px;margin:0 0 30px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px}
+.tile{position:relative;display:flex;flex-direction:column;padding:24px 24px 22px;border:1px solid var(--line);border-radius:14px;background:var(--paper);text-decoration:none;color:inherit;transition:.18s;overflow:hidden}
+.tile:hover{border-color:var(--accent);box-shadow:0 8px 26px rgba(168,64,31,.10);transform:translateY(-3px)}
+.tile .num{position:absolute;top:14px;right:20px;font-family:'Noto Serif SC',serif;font-size:46px;font-weight:500;line-height:1;color:#efece8}
+.tile:hover .num{color:rgba(168,64,31,.16)}
+.tile .icon{font-size:32px;line-height:1}
+.tile h3{font-family:'Noto Serif SC',serif;font-size:20px;font-weight:500;margin:16px 0 8px}
+.tile p{font-size:13px;color:var(--ink-2);line-height:1.7;margin:0;flex:1}
+.tile .go{margin-top:16px;font-size:13px;color:var(--accent);opacity:.55;transition:.18s}
+.tile:hover .go{opacity:1;transform:translateX(3px)}
+@media(max-width:640px){.wrap{padding:24px 18px}header.topbar{padding:12px 18px;overflow-x:auto}}
+</style></head>
+<body>
+<header class="topbar">
+  <a class="brand-link" href="/tools"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.5L13.4 10.6L22.5 12L13.4 13.4L12 22.5L10.6 13.4L1.5 12L10.6 10.6Z"/></svg><span class="brand">天枢<span class="sep">·</span>裁决</span></a>
+  <nav>
+    <a href="/tools">开始</a>
+    <a href="/catalog" class="active">工具</a>
+    <a href="/reports">报告</a>
+    <a href="/settings">设置</a>
+    <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
+  </nav>
+</header>
+<div class="wrap">
+  <h1>工具</h1>
+  <p class="sub">七个 AI 测试智能体 · 点击进入，可单独运行，也可链式接力</p>
+  <div class="grid" id="grid"><div style="color:var(--ink-3);font-size:13px">加载中…</div></div>
+</div>
+<script>
+const ORDER=['step1','step2','step4','step6','network_resilience','h5_adapt','seo_audit'];
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+fetch('/api/tools',{credentials:'same-origin'}).then(r=>r.json()).then(d=>{
+  const tools=d.tools||[];const byId={};tools.forEach(t=>byId[t.id]=t);
+  const ordered=ORDER.map(id=>byId[id]).filter(Boolean);
+  tools.forEach(t=>{if(ORDER.indexOf(t.id)<0)ordered.push(t);});
+  document.getElementById('grid').innerHTML=ordered.map((t,i)=>
+    '<a class="tile" href="/tools/'+t.id+'">'+
+      '<span class="num">'+(i+1)+'</span>'+
+      '<span class="icon">'+(t.icon||'🔧')+'</span>'+
+      '<h3>'+esc(t.name)+'</h3>'+
+      '<p>'+esc(t.tagline||t.description||'')+'</p>'+
+      '<div class="go">进入 →</div>'+
+    '</a>').join('');
+}).catch(function(e){document.getElementById('grid').innerHTML='<div style="color:#a40e26;font-size:13px">工具加载失败</div>';});
+</script>
+</body></html>"""
+
+
+@app.get("/catalog", response_class=HTMLResponse)
+async def catalog_page() -> str:
+    return _inject_shared_overlays(CATALOG_HTML)
 
 
 @app.get("/tools/{tool_id}", response_class=HTMLResponse)
@@ -14502,7 +14550,8 @@ SETTINGS_HTML = r"""<!doctype html>
   <a class="brand-link" href="/tools" title="天枢 · 裁决 · 返回主页" style="text-decoration:none;display:inline-flex;align-items:center;gap:10px;font-family:'Noto Serif SC',Georgia,serif;font-size:19px;font-weight:600;letter-spacing:.18em;color:var(--fg);margin-right:24px;padding:4px 0"><svg viewBox="0 0 24 24" fill="currentColor" width="24" height="24" aria-hidden="true" style="color:var(--ac);opacity:1;flex-shrink:0;filter:drop-shadow(0 1px 2px rgba(196,90,58,.28))"><path d="M12 1.5L13.4 10.6L22.5 12L13.4 13.4L12 22.5L10.6 13.4L1.5 12L10.6 10.6Z"/></svg><span>天枢</span><span style="color:var(--ac);margin:0 6px;font-weight:400">·</span><span>裁决</span></a>
   
   <nav>
-    <a href="/tools">工具</a>
+    <a href="/tools">开始</a>
+    <a href="/catalog">工具</a>
     <a href="/reports">报告</a>
     <a href="/settings" class="active">设置</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
@@ -15360,7 +15409,8 @@ table.users tr:hover{background:var(--paper-2)}
     <span class="brand">天枢<span class="sep">·</span>裁决</span>
   </a>
   <nav>
-    <a href="/tools">工具</a>
+    <a href="/tools">开始</a>
+    <a href="/catalog">工具</a>
     <a href="/reports">报告</a>
     <a href="/settings">设置</a>
     <a href="/admin/users" class="active">用户管理</a>
