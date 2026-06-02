@@ -1,21 +1,41 @@
 step_id: network_resilience
 name: 弱网与断网测试
-version: 1.0.0
+version: 3.0.0
+# 工具定性：交互型。Claude 亲自用 set_network 切真网络档(底层 CDP Network.emulateNetworkConditions)、
+# navigate/reload 真加载、inspect/screenshot/console 观察真实表现，基于真实观察下结论。
+# 能力边界(诚实)：只读加载观察探针——不提交订单/不触发写操作。
+# 因此「幂等 / 重复扣款 / 离线写入队列 / 断网提交丢数据 / 重连只同步一次」等写操作语义无法直接断言，
+# 只能作为 risk 列出并注明「需 step4_api(接口测试) 或 step6_agent(执行验证) 验证」。
 order:
-  - net_1_scope.md
-  - net_2_weak.md
-  - net_3_offline.md
-  - net_4_resilience.md
-  - net_5_finalize.md
+  - net_1_scope.md         # 第1步 范围与档位规划：盘点待测页面 + 只读路径 + 定义 5 个真实可跑的网络档位
+  - net_2_weak.md          # 第2步 弱网逐档真测：4g/slow_3g/2g 下逐页真加载，记录加载态/白屏/可见内容/图片到位/控制台错误/加载感知时长
+  - net_3_offline.md       # 第3步 断网行为真测：offline 下友好错误页+重试 vs 白屏崩溃，离线缓存，断网只读导航
+  - net_4_resilience.md    # 第4步 恢复与韧性真测：offline→online 完整序列(是否自愈)，弱网下可观察的重试/超时行为
+  - net_5_finalize.md      # 第5步 容错定稿：按统一报告契约汇总真实实测，看不见的写语义降为 risk 转交
 common_system_suffix: |
   通用规则：
   - 所有输出必须是合法 JSON，禁止任何前后说明文字。
-  - 严重度（severity）使用枚举：critical / high / medium / low。
-  - 网络档位枚举：offline / poor_2g / slow_3g / 3g / 4g / wifi / high_latency / packet_loss / unstable。
-  - operation_id 必须遵循 NET-{MODULE:3}-{SERIAL:0000}。
-  - case_id 必须遵循 NTC-{MODULE:3}-{SERIAL:0000}。
+  - 严重度（severity）使用枚举：critical / high / medium / low / info。
+  - 【网络档位枚举（仅这 5 档，与底层 CDP Network.emulateNetworkConditions 能力一一对应）】：
+    online / 4g / slow_3g / 2g / offline。
+    · online   = 不节流（基线 / 恢复目标）
+    · 4g       = 下行~4Mbps 上行~3Mbps RTT~20ms（良好移动网）
+    · slow_3g  = 下行~400kbps 上行~400kbps RTT~400ms（慢3G）
+    · 2g       = 下行~280kbps 上行~256kbps RTT~800ms（2G/极弱网）
+    · offline  = 完全断网，所有请求失败
+    CDP 无法模拟丢包率 / 网络抖动 / DNS 失败 / TLS 错误 / captive portal / 真机切网 / 双卡 / VPN，
+    禁止出现 packet_loss / unstable / high_latency / poor_2g / 3g / wifi / dns_failure / tls_failure 等档位，
+    这些场景只能作为「需真机或其他工具验证」的 risk 列出，本工具不真测、不据此下结论。
+  - operation_id 必须遵循 NET-{AREA:3}-{SERIAL:0000}（AREA = SCP/WEAK/OFFL/RECV/FIN）。
+  - case_id（cases[].id）必须遵循 NTC-{AREA:3}-{SERIAL:0000}（AREA 同上）。issue_id 用 NET-{AREA:3}-{SERIAL:0000}。
+    全工具仅这一套 ID 规则，禁止再出现 NTW- / NTW-CHK / NTW-CON / NTW-RTY / NTW-CCH / NTW-QUE 等旧前缀。
+  - 【证据铁律 · 交互型】结论只能基于 Claude 亲自动作观察到的真实结果；evidence 必须写「动作序号 + 网络档位 profile + 实测值或截图 label」。
+    凡未真实切档真测到的页/档，标 unknown 或留待测，禁止凭训练知识编造毫秒数/加载表现，示例 JSON 里的数字均为占位 <实测后填>。
+    cases.status 标 executed_pass/executed_fail 时 evidence 必须指向真实执行记录；没真跑到的只能 designed，不得进 issues、不得影响 verdict。
+  - 【只读安全护栏】本工具只做 navigate/reload/inspect/screenshot/console；绝不点击或提交任何写操作
+    （提交/下单/支付/付款/删除/发布/注销/清空），不输入真实凭据，截图避开密码/token 明文。prod 默认只读。
   - confidence.score 在 [0,1]，自我保守评估。
-  - 如材料不足，应在 gate_decision 中置 reject_with_report，不要臆造内容。
+  - 如材料不足（如缺真实可访问 URL 导致无法切档真测），应在 gate_decision 中置 reject_with_report，不要臆造内容。
 
   【统一报告契约 · 所有 finalize 步骤强制遵守】
   最终步（_5_*）输出必须包含以下五个顶层字段，缺一不可；中间步可以只输出本步关心的子部分。

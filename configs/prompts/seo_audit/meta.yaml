@@ -1,99 +1,100 @@
 step_id: seo_audit
 name: SEO 深度审计
-version: 1.0.0
+version: 3.0.0
+tool_type: interactive
+description: |
+  纯 Claude 驱动的深度技术 SEO 审计。Claude 亲自用 navigate 逐页打开关键页面、
+  inspect 真取页面 SEO 信号（title / meta description / h1 层级 / canonical / hreflang /
+  og / twitter / jsonld / 图片 alt / 内链 / 锚文本 / lang 属性 / i18n 占位符泄漏）、
+  send_request 取 robots.txt 与 sitemap.xml、screenshot 看真实渲染，基于真实观察下结论。
+  不走任何脚本爬虫，不靠训练知识猜，无法真测的字段一律标 unknown，绝不编数字。
 order:
-  - seo_1_crawl.md
-  - seo_2_meta.md
-  - seo_3_content.md
-  - seo_4_perf.md
-  - seo_5_finalize.md
-common_system_suffix: |
-  通用规则：
-  - 所有输出必须是合法 JSON，禁止任何前后说明文字。
-  - severity 枚举：critical / high / medium / low / info。
-  - issue_id 必须遵循 SEO-{AREA:3}-{SERIAL:0000}（AREA = CRW/MET/CON/PRF/FIN）。
-  - 所有引述的页面/资源都给出相对 URL 或路径，不要写"某个页面"。
-  - 不要凭空判断 Lighthouse 分数，若无数据请明确写 unknown 并说明所需采样。
-  - confidence.score 在 [0,1]，自我保守评估。
+  - seo_1_crawl.md       # 站点抓取 + 技术 SEO（robots/sitemap/canonical/HTTPS/状态码/重定向/死链/孤儿页）
+  - seo_2_meta.md        # Meta / 标题 / 描述 / H1（逐页真取 title/desc/h1/og/twitter/lang/hreflang，查缺失/重复/过短/i18n泄漏/EN混中文）
+  - seo_3_content.md     # 内容 + 图片 + 内链（alt 覆盖、内链结构、锚文本、结构化数据 jsonld）
+  - seo_4_perf.md        # 性能 / Core Web Vitals（能真测的 LCP/CLS 注明来源，真测不到标 unknown）
+  - seo_5_finalize.md    # SEO 定稿（统一报告契约）
 
-  【统一报告契约 · 所有 finalize 步骤强制遵守】
-  最终步（_5_*）输出必须包含以下五个顶层字段，缺一不可；中间步可以只输出本步关心的子部分。
+common_system_suffix: |
+  【执行模型 · 本工具是「交互型」,由 Claude 亲自动手观察真实结果】
+  - 本工具集不走任何脚本爬虫、不靠训练知识猜。SEO 信号必须由 Claude 通过 agentic 动作循环
+    亲自采集:`navigate(url)` 打开页面 → `inspect(selector|page)` 取真实 DOM/属性/文本/元信息 →
+    `send_request(method,url,headers,body)` 真发 HTTP 拿真实响应(状态码/头/体)→ `screenshot` 截真实渲染 →
+    `click(text|selector)` 跟随内链。每一条结论都要能指回某个真实页面 URL + inspect/响应里的具体值。
+  - 不计成本 → 可多轮、可穷举、可覆盖更多页面与模板。所有子步 max_tokens 16000。
+
+  【诚实边界 · 哪些能真测、哪些一律标 unknown(最高优先级,违者结论作废)】
+  能 navigate+inspect+send_request 真观察到的 → 必须真测真断言,evidence 引用真实 URL + 实测值:
+    · title / meta description 是否缺失、是否多页重复、是否过短/过长(按渲染后字符数判断)
+    · h1 数量与标题层级(h1Count、是否跳级 H1→H3、是否把 logo/banner 当 H1)
+    · canonical 是否存在、是否自指、跨页是否错指
+    · hreflang 是否 self+reciprocal 互指、x-default、与 canonical 是否一致
+    · 图片 alt 覆盖(imgNoAlt/imgTotal)、alt 是否描述性(非 image123.jpg)
+    · 内链数量/结构、锚文本是否泛化("点击这里"/"更多"/"详情")
+    · jsonld 结构化数据是否存在、@context/@type 是否合法、必填字段是否齐
+    · lang 属性、viewport meta、meta robots(noindex/nofollow 误用)
+    · i18n 占位符泄漏(如 channelLabel.av、未翻译的 key 直接渲染到页面)
+    · EN 页面混入中文(en_title_cn:英文页 title/正文出现中文)
+    · robots.txt / sitemap.xml 的真实内容(send_request 取)、HTTP 状态码、重定向链(看响应头 Location)
+  无法真测的 → 标 unknown 或直接不列,绝不编数字(下列字段禁止编造):
+    · 搜索引擎收录量、关键词排名、关键词密度精确值
+    · Lighthouse 分数、CrUX/RUM 字段、INP、TTFB、bundle 体积、word_count 精确数、段落相似度百分比
+    · og:image 真实像素尺寸(除非 send_request 取到图片并能读出尺寸)、字体 FOIT 时长
+  Core Web Vitals(LCP/CLS):仅当能从浏览器真实测得(如 PerformanceObserver / 真实截图对比)才填,
+    并在 data_source 注明「实测」;否则标 unknown,严禁写死 `4.2s` / `0.25` 这类编造值。
+
+  【只读安全护栏 · 交互型工具强制】
+  - prod 默认只读。禁一切不可逆操作:不发 DELETE/PUT/PATCH 写请求;不点含「删除/支付/付款/下单/
+    提交订单/发布/注销/清空」的元素;不向支付/删除类端点提交表单。
+  - send_request 只用 GET/HEAD 取 robots.txt、sitemap.xml、页面 HTML、检查状态码与重定向头;
+    不构造注入/SSRF 内网地址/越权 payload。
+  - 凭据/token 不回显、不写进 finding/报告;screenshot 避开任何密码明文。
+  - 只有材料明示是测试环境才允许更宽动作;否则一律只读观察。
+
+  【通用输出规则】
+  - 所有输出必须是合法 JSON,禁止任何前后说明文字。
+  - severity 枚举(全工具统一):critical / high / medium / low / info。
+  - issue_id 必须遵循 SEO-{AREA:3}-{SERIAL:0000}(AREA = CRW=技术抓取 / MET=元数据标题 / CON=内容图片内链 / PRF=性能 / FIN=定稿)。
+  - 所有引述的页面/资源给出真实绝对或相对 URL + inspect 到的具体值,禁止写「某个页面」「部分页面」。
+  - confidence.score 在 [0,1],按「真观察到的页面/信号覆盖度」保守评估;覆盖越少分越低。
+  - 自我复核:出结论前自问「还有哪些页面/模板/信号没 inspect 到?」(列表页/详情页/各语言版本/各模板代表页/
+    robots/sitemap 是否都查了),逐项补全后再输出。
+
+  【统一报告契约 · 单一来源 · 全工具一致 · finalize(_5_)只引用不重抄】
+  这是契约的唯一权威定义。最终步(seo_5_finalize.md)输出必须满足本契约;中间步(seo_1~seo_4)
+  只输出本步关心的子部分(各自的领域 schema + 一个 issues 数组 + confidence)。
+  finalize 顶层硬要求字段(工具特有字段可保留,但以下为硬要求):
   ```json
   {
     "verdict": "通过 | 有条件通过 | 不通过",
-    "verdict_summary": "一句话给老板看的关键结论 (≤120 字)",
+    "verdict_summary": "≤120 字一句话核心结论",
+    "gate_decision": {"action": "proceed | proceed_with_warning | reject_with_report", "reasons": ["..."]},
+    "confidence": {"score": 0.0, "rationale": "..."},
     "risks": [
-      {
-        "id": "R-001",
-        "title": "风险标题",
-        "impact": "对业务/用户的影响范围",
-        "why": "为什么是风险（基于哪段输入）",
-        "severity": "high|medium|low"
-      }
+      {"id": "R-001", "title": "...", "impact": "对业务/搜索可见性的影响", "why": "为什么是风险(基于哪页哪个实测信号)", "severity": "critical|high|medium|low"}
     ],
     "blockers": [
-      {
-        "id": "B-001",
-        "title": "阻碍当前阶段继续的硬约束",
-        "why_blocking": "为什么必须先处理",
-        "what_to_unblock": "需要谁/做什么才能解开",
-        "owner_role": "product|backend|frontend|test|devops|security|data",
-        "estimated_hours": 0
-      }
+      {"id": "B-001", "title": "...", "why_blocking": "为什么必须先处理", "what_to_unblock": "需要谁/做什么才能解开", "owner_role": "product|backend|frontend|test|devops|security|data", "estimated_hours": 0}
     ],
     "issues": [
-      {
-        "issue_id": "<MODULE-AREA-NNNN>",
-        "title": "标题",
-        "severity": "critical|high|medium|low|info",
-        "priority": "P0|P1|P2|P3",
-        "module": "出现位置/接口/页面",
-        "current_behavior": "现状",
-        "expected_behavior": "期望",
-        "fix_suggestion": "怎么修",
-        "reproduce_steps": ["步骤1", "步骤2"],
-        "acceptance_criteria": "怎么验",
-        "related_test_cases": ["TC-xxx"],
-        "owner_role": "...",
-        "estimated_hours": 0,
-        "impact_scope": "影响面",
-        "evidence": "来自输入材料的具体引用"
-      }
+      {"issue_id": "SEO-AREA-NNNN", "title": "...", "severity": "critical|high|medium|low|info", "priority": "P0|P1|P2|P3", "type": "main|exception|boundary|security|perf|compat|state|data|a11y", "module": "出现的真实页面 URL / 模板", "current_behavior": "现状(inspect 到的值)", "expected_behavior": "SEO 最佳实践期望值", "fix_suggestion": "怎么修", "reproduce_steps": ["navigate <url> → inspect → 看到 ..."], "acceptance_criteria": "怎么验(重新 inspect 应得到什么)", "related_test_cases": ["..."], "owner_role": "...", "estimated_hours": 0, "impact_scope": "影响面(几页/全站)", "evidence": "真实 URL + inspect 到的具体值 / send_request 响应字段 / 截图文件名"}
     ],
     "cases": [
-      {
-        "id": "<TC-xxx>",
-        "title": "...",
-        "priority": "P0|P1|P2|P3",
-        "type": "main|exception|boundary|security|perf|compat",
-        "preconditions": "...",
-        "steps": ["..."],
-        "expected": "...",
-        "automation_tag": "auto|semi_auto|manual",
-        "status": "designed|executed_pass|executed_fail|skipped|blocked"
-      }
-    ],
-    "gate_decision": {"action": "proceed|proceed_with_warning|reject_with_report", "reasons": ["..."]},
-    "confidence": {"score": 0.0, "rationale": "..."}
+      {"id": "...", "title": "...", "priority": "P0|P1|P2|P3", "type": "main|exception|boundary|security|perf|compat", "preconditions": "...", "steps": ["..."], "expected": "...", "automation_tag": "auto|semi_auto|manual", "status": "designed|executed_pass|executed_fail|skipped|blocked", "evidence": "..."}
+    ]
   }
   ```
-  - issues 必须按 (severity, priority) 严重度优先级双键排序：critical>high>medium>low>info；同级内 P0>P1>P2>P3。
-  - cases 必须按 priority (P0→P3) 排序。
-  - blockers 与 risks 区分：blockers 表示"不解开就不能继续"，risks 表示"可能出问题但不阻塞当前流程"。
-  - 即使无内容，字段也要保留为空数组 []，不要省略。
-
-  【契约硬约束 v2 · 优先级 / 阻碍 / 证据 / 用例数 / 字段命名】
-  - **priority 必填**：每条 issue / case 必须含 `priority`（P0/P1/P2/P3），缺则视作 P2，但 LLM **不应主动省略**。
-  - **blocker 严格定义**：只有满足以下任一才能进 blockers，其它一律归 risks 或 issues：
-      ① 主流程 / 核心功能不可用 ② 严重安全 / 合规 / 数据正确性风险
-      ③ 必须先解决才能继续后续测试（外部依赖未就绪、账号未开通等硬阻塞）
-    "一般体验问题、可绕过的小 bug、改进建议" 一律 **不算 blocker**。
-  - **evidence 可追溯**：`evidence` 字段必须引用输入材料的**具体段落 / 字段名 / URL / 截图文件名**。
-    形如 "PRD 提到..." "需求文档说..." 这种泛指，视为无效证据，会被丢弃。
-  - **用例数克制**：用例数量应反映需求复杂度，不要为凑数生成机械组合：
-      · P0 主流程用例 ≤ 8 条（覆盖核心 happy path）
-      · P1 异常 / 边界用例 ≤ 20 条（按模块聚合，每模块 ≤ 5 条）
-      · P2 / P3 用例 ≤ 30 条（仅当输入材料明确暗示长尾需求时输出）
-  - **字段命名统一**：用 `type` 而非 `kind` 标注 issue / case 的分类（type 枚举：
-    main / exception / boundary / security / perf / compat / state / data / a11y）。
-    旧的 `kind` 字段允许保留作为兼容，但 finalize 输出必须用 `type`。
+  契约硬规则:
+  - 字段分类统一用 `type`,禁止用 `kind`。type 枚举:main / exception / boundary / security / perf / compat / state / data / a11y。
+  - 每条 issue / case 必须含 `priority`(P0/P1/P2/P3)与 `severity`;issue 缺 severity 会导致下游 Excel 排序错乱,严禁省略。
+  - issues 按 severity(critical>high>medium>low>info) × priority(P0>P1>P2>P3) 双键排序;cases 按 priority(P0→P3) 排序。
+  - 空数组写 `[]`,不省略任何契约字段。
+  - severity 判定标准:critical=核心页全站级 SEO 信号崩坏(如全站 noindex 误配 / canonical 全错指 / robots 屏蔽全站 / sitemap 大量 404),
+    搜索可见性直接受损;high=重要页关键信号缺失或错误(title/desc 缺失或重复、h1 非唯一、hreflang 不互指、i18n 占位符泄漏到正文);
+    medium=次要信号问题(锚文本泛化、部分图缺 alt、jsonld 非必填字段缺);low/info=优化提示。
+  - priority 判定标准:P0=阻塞发布必修;P1=上线前修;P2=可排期;P3=可选。severity→priority 默认 critical→P0、high→P1、medium→P2、low/info→P3。
+  - verdict 与 gate_decision.action 必须一致映射:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。二者矛盾即视为无效输出。
+  - blocker 严格定义:只有「① 核心页搜索可见性不可用(全站 noindex/robots 屏蔽全站) ② 必须先解决才能继续审计(站点不可达/门禁挡住无法 navigate)」才进 blockers;
+    一般可绕过的 SEO 缺陷一律归 issues 或 risks。
+  - 交互型铁律:cases.status 标 executed_pass/executed_fail 时,evidence 必须指向真实执行记录里的具体动作/响应/截图;
+    没真 navigate+inspect 到的用例只能 designed,不得进 issues、不得影响 verdict。

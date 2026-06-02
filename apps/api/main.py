@@ -2387,31 +2387,66 @@ async def _seo_run_collect(ctx: Any, state: dict[str, Any]) -> None:
         "cwv": len([k for k, v in data.cwv.items() if isinstance(v, dict)]) if isinstance(data.cwv, dict) else 0})
 
 
+def _verdict_to_gate(verdict: str) -> str:
+    """verdict → gate_decision.action 一致映射(统一报告契约)。"""
+    return {
+        "通过": "proceed",
+        "有条件通过": "proceed_with_warning",
+        "不通过": "reject_with_report",
+    }.get((verdict or "").strip(), "proceed_with_warning")
+
+
 async def _seo_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
     """SEO:基于真实采集数据,1 次 LLM 调用产出审计结论(替代 5 子步骤,大幅提速)。"""
     sd = state.get("seo_data") or {}
     data_text = _seo_data_to_prompt(sd)
     system = (
-        "你是资深 SEO 审计专家。下面是对某站点的【真实全站采集数据】(已确定性测得,不是猜测)。"
-        "请只基于这些真实数据,产出一份审计结论的合法 JSON。要求:\n"
-        "1) 问题清单必须可执行——让开发照着就能修:fix_suggestion 写清楚改哪里、怎么改;\n"
-        "2) 按 P0(致命)→P2 排优先级;只列真实存在的问题,数据没体现的不要编;\n"
-        "3) 全部中文。响应必须以 { 开头、是合法 JSON,无任何前后缀、无 markdown 代码块。\n\n"
-        "输出格式:\n"
+        "你是资深 SEO 审计专家。下面是对某站点的【真实全站采集数据】"
+        "(确定性爬取 + 逐页解析真实测得,不是猜测)。只基于这些真实数据,**逐维度穷尽分析**,"
+        "产出一份可执行的审计结论(合法 JSON)。这是细节中的细节工作,必须挖到底。\n\n"
+        "【深度铁律 · 逐维度穷尽,禁止用『等/类似/若干』含糊带过,适用必列尽】\n"
+        "1) 技术 SEO:HTTPS 与 HTTP 版本;robots.txt(可达性 / 是否误封搜索引擎或 AI 爬虫 / 是否声明 sitemap);"
+        "sitemap(存在性 / URL 数 / lastmod 覆盖 / 声明数与实际可抓取覆盖率之差);canonical(缺失 / 自指错误 / 跨域 / 参数页未归一);"
+        "状态码与重定向(3xx 链路是否过长、死链 4xx/5xx 逐条列出 URL);孤儿页(无内链指入);索引可见性(noindex/nofollow 误用);"
+        "安全与可抓取响应头(CSP / HSTS / X-Frame-Options / X-Content-Type-Options / content-encoding)。\n"
+        "2) Meta 与国际化:逐页核 title(缺失 / 全站重复 / 过长>60 / 过短<10 / 英文标题混中文 en_title_cn);"
+        "description(缺失 / 重复 / 过短);h1(缺失 / 多个 / i18n 文案泄漏 h1_i18n_leak,如中文站漏英文占位);"
+        "lang 声明是否与内容语种一致;hreflang 互指是否完整对称;og / twitter 卡片字段完整性。\n"
+        "3) 内容与链接结构:图片 alt 覆盖率(逐模板列 <80% 的页面);标题层级是否跳级(h1→h3 漏 h2);"
+        "内链数量与深度分布(过深页面);锚文本质量(generic_anchor 占比,如『点击这里 / 更多 / read more』);"
+        "结构化数据 JSON-LD(类型分布 / 关键页缺失 / 语法或必填字段缺失)。\n"
+        "4) 性能(Core Web Vitals):**仅当采集数据里有真实 cwv 实测值才下结论并注明来源(实测/采集)**;"
+        "无实测值标 unknown,**绝不编造毫秒数或评级**。\n\n"
+        "【接地气 · 零幻觉】只列采集数据真实体现的问题;每条 issue 的 current_behavior / evidence "
+        "必须引用采集数据里的**具体字段名与值**(如 `summary.dead_links=3`、`pages[].title_len`);"
+        "数据没覆盖到的(真实收录量 / 竞品对比 / 关键词排名 / 外链)一律不臆测,需要时标 unknown。\n"
+        "【自我复核】出结论前自问:还有哪些页面 / 模板 / 技术维度 / i18n 泄漏没核到?逐项补全再输出。\n\n"
+        "【严重度与优先级判定】severity:critical=站点不可被收录或核心页不可索引 / 大面积死链;"
+        "high=重要 SEO 能力受损(title 大面积重复或缺失、canonical 错误、sitemap 与实际严重不符);"
+        "medium=次要优化(alt 覆盖偏低、锚文本通用);low/info=轻微提示。"
+        "priority 默认 critical→P0、high→P1、medium→P2、low/info→P3。"
+        "verdict 与 gate_decision.action 一致映射:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。\n\n"
+        "【输出 · 合法 JSON,以 { 开头,无前后缀、无 markdown 代码块,全部中文】\n"
         "{\n"
         '  "verdict": "通过|有条件通过|不通过",\n'
         '  "verdict_summary": "≤120字一句话核心结论",\n'
+        '  "gate_decision": {"action":"proceed|proceed_with_warning|reject_with_report","reasons":["..."]},\n'
+        '  "confidence": {"score": 0.0, "rationale": "基于采集覆盖率的保守自评"},\n'
         '  "overview": {"评定":"2-4句总体评定", "核心问题":"最关键的1-3个问题", "后续动作":"按优先级的下一步动作"},\n'
-        '  "issues": [{"issue_id":"SEO-01","priority":"P0|P1|P2","module":"领域(如 内容/i18n/sitemap/性能/技术SEO)",'
-        '"title":"一句话问题","current_behavior":"实测现状(引采集数据)","expected_behavior":"应做到什么",'
-        '"impact_scope":"对 SEO/收录/排名的影响","fix_suggestion":"具体怎么修(改哪个文件/标签/响应头/字段)"}],\n'
-        '  "strengths": ["已验证的优点(基于通过项)"]\n'
-        "}"
+        '  "risks": [{"id":"R-001","title":"...","impact":"对收录/排名的影响","why":"基于哪条采集数据","severity":"critical|high|medium|low"}],\n'
+        '  "issues": [{"issue_id":"SEO-AREA-0001","priority":"P0|P1|P2|P3","severity":"critical|high|medium|low|info",'
+        '"module":"领域(技术SEO/Meta/i18n/内容/链接/结构化数据/性能)",'
+        '"title":"一句话问题","current_behavior":"实测现状(引采集字段与值)","expected_behavior":"应做到什么",'
+        '"impact_scope":"对 SEO/收录/排名的影响","fix_suggestion":"具体怎么修(改哪个文件/标签/响应头/字段)",'
+        '"evidence":"采集数据具体字段名:值"}],\n'
+        '  "strengths": ["已验证的优点(基于通过项,引采集数据)"]\n'
+        "}\n"
+        "issues 按 (severity, priority) 双键排序;空数组写 []。"
     )
     state["progress"] = "AI 综合分析 SEO 采集结果…"
     resp = await ctx.llm.complete(
         system=system, messages=[{"role": "user", "content": data_text}],
-        max_tokens=8000, allow_degrade=False)
+        max_tokens=16000, allow_degrade=False)
     try:
         ctx.usage.merge(resp.usage)
     except Exception:
@@ -2421,12 +2456,15 @@ async def _seo_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
         parsed = resp.json() or {}
     except Exception:
         parsed = {}
+    verdict = parsed.get("verdict") or "有条件通过"
     return {
-        "verdict": parsed.get("verdict") or "有条件通过",
+        "verdict": verdict,
         "verdict_summary": parsed.get("verdict_summary") or "(见各 sheet 明细)",
+        "gate_decision": parsed.get("gate_decision") or {"action": _verdict_to_gate(verdict), "reasons": []},
+        "confidence": parsed.get("confidence") or {},
         "overview": parsed.get("overview") or {},
         "issues": parsed.get("issues") or [],
-        "risks": [],
+        "risks": parsed.get("risks") or [],
         "cases": [],
         "strengths": parsed.get("strengths") or _seo_strengths(sd),
         "meta": {},
@@ -2739,25 +2777,47 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
     nd = state.get("network_data") or {}
     data_text = _netdata_to_prompt(nd)
     system = (
-        "你是资深性能/容错测试专家。下面是对某页面在不同网络档位下的【真实实测数据】"
-        "(Playwright CDP 真实限速/断网测得)。请只基于这些真实数据产出审计结论的合法 JSON。要求:\n"
-        "1) 重点关注弱网与断网体验:加载态反馈、超时处理、错误提示、降级、断网恢复;\n"
-        "2) 问题清单要让开发照着就能修:fix_suggestion 写清楚改哪里、怎么改(如接 Service Worker/骨架屏/重试);\n"
-        "3) 按 P0→P2 排;只列数据体现的真实问题;全部中文;\n"
-        "4) 响应以 { 开头、合法 JSON、无 markdown 代码块。\n\n"
-        "输出格式:\n"
+        "你是资深性能 / 容错测试专家。下面是对某页面在不同网络档位下的【真实实测数据】"
+        "(Playwright CDP 真实限速 / 断网测得)。只基于这些真实数据,**逐档位、逐场景穷尽分析**,"
+        "产出审计结论(合法 JSON)。弱网容错是细节中的细节,必须挖到底。\n\n"
+        "【深度铁律 · 逐档位逐场景穷尽,禁止用『等/类似』含糊带过,适用必列尽】\n"
+        "1) 逐网络档位(online / 4g / slow_3g / 2g / offline 凡实测到的)分别核:"
+        "是否可达 reached、HTTP status、加载耗时 load_ms、首屏 fcp_ms、正文长度 text_len、资源数 resources、控制台报错 console_errors。"
+        "对比各档位之间的劣化是否可接受(如 2g 下是否长时间白屏、是否超时无反馈)。\n"
+        "2) 加载态反馈:弱网下是否有 loading / 骨架屏 / spinner(has_spinner);慢档位首屏前是否长时间空白无任何提示。\n"
+        "3) 超时与错误处理:请求超时 timed_out 是否被捕获;是否有明确错误 UI(has_error_ui)还是静默白屏 / 卡死。\n"
+        "4) 断网态(offline):是否给出明确『网络不可用』提示(offline_has_error_ui)还是空白(offline_text_len 过小);"
+        "是否有缓存 / Service Worker 兜底内容。\n"
+        "5) 断网恢复:恢复网络后页面是否自动重连 / 重新加载 / 数据恢复(recovered / recovered_text_len),还是需手动刷新、卡在错误态。\n"
+        "6) 资损与幂等风险:弱网超时重试、断网重连可能导致的重复提交 / 重复扣款 / 数据不一致——**页面加载实测看不到后端幂等**,"
+        "这类一律写入 risks(需后端确认),**不要凭空判定为已发现 issue**。\n\n"
+        "【接地气 · 零幻觉】只列实测数据真实体现的问题;每条 issue 的 current_behavior / evidence 必须引用"
+        "**具体档位与实测字段值**(如 `profiles[slow_3g].load_ms`、`recovery.offline_has_error_ui=false`);"
+        "实测没覆盖的(后端幂等、真实弱网下用户主观感受、真机弱网)一律不臆测,标 unknown 或入 risks。\n"
+        "【自我复核】出结论前自问:还有哪些档位 / 场景(断网中操作、恢复时机、重复提交)没核到?逐项补全再输出。\n\n"
+        "【严重度与优先级判定】severity:critical=断网或极弱网下核心页卡死 / 白屏无任何提示且不可恢复 / 有资损风险;"
+        "high=弱网下长时间无加载反馈或超时无错误提示但可恢复;medium=次要体验(无骨架屏、文案不友好);low/info=轻微提示。"
+        "priority 默认 critical→P0、high→P1、medium→P2、low/info→P3。"
+        "verdict 与 gate_decision.action 一致映射:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。\n\n"
+        "【输出 · 合法 JSON,以 { 开头,无前后缀、无 markdown 代码块,全部中文】\n"
         "{\n"
         '  "verdict": "通过|有条件通过|不通过",\n'
         '  "verdict_summary": "≤120字核心结论",\n'
-        '  "issues": [{"issue_id":"NET-01","priority":"P0|P1|P2","module":"档位/场景(如 断网态/弱网加载)",'
-        '"title":"一句话问题","current_behavior":"实测现状","expected_behavior":"应做到什么",'
-        '"impact_scope":"对用户的影响","fix_suggestion":"具体怎么修"}]\n'
-        "}"
+        '  "gate_decision": {"action":"proceed|proceed_with_warning|reject_with_report","reasons":["..."]},\n'
+        '  "confidence": {"score": 0.0, "rationale": "基于实测档位覆盖的保守自评"},\n'
+        '  "risks": [{"id":"R-001","title":"...","impact":"对用户/数据的影响","why":"基于哪条实测或为何需后端确认","severity":"critical|high|medium|low"}],\n'
+        '  "issues": [{"issue_id":"NET-AREA-0001","priority":"P0|P1|P2|P3","severity":"critical|high|medium|low|info",'
+        '"module":"档位/场景(如 断网态/弱网加载/恢复)",'
+        '"title":"一句话问题","current_behavior":"实测现状(引档位与字段值)","expected_behavior":"应做到什么",'
+        '"impact_scope":"对用户的影响","fix_suggestion":"具体怎么修(如接 Service Worker/骨架屏/超时重试/离线提示)",'
+        '"evidence":"档位:字段名:值"}]\n'
+        "}\n"
+        "issues 按 (severity, priority) 双键排序;空数组写 []。"
     )
     state["progress"] = "AI 综合分析弱网/断网实测结果…"
     resp = await ctx.llm.complete(
         system=system, messages=[{"role": "user", "content": data_text}],
-        max_tokens=6000, allow_degrade=False)
+        max_tokens=16000, allow_degrade=False)
     try:
         ctx.usage.merge(resp.usage)
     except Exception:
@@ -2767,11 +2827,14 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
         parsed = resp.json() or {}
     except Exception:
         parsed = {}
+    verdict = parsed.get("verdict") or "有条件通过"
     return {
-        "verdict": parsed.get("verdict") or "有条件通过",
+        "verdict": verdict,
         "verdict_summary": parsed.get("verdict_summary") or "(见各 sheet 明细)",
+        "gate_decision": parsed.get("gate_decision") or {"action": _verdict_to_gate(verdict), "reasons": []},
+        "confidence": parsed.get("confidence") or {},
         "issues": parsed.get("issues") or [],
-        "risks": [],
+        "risks": parsed.get("risks") or [],
         "cases": [],
         "meta": {},
     }

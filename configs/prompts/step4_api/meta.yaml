@@ -1,98 +1,101 @@
 step_id: step4
 name: 接口测试
-version: 2.0.0
+version: 3.0.0
+tool_type: interactive
+description: |
+  交互型接口测试工具。Claude 通过 send_request(method,url,headers,body) **亲自真发 HTTP 请求**,
+  拿到真实响应(状态码/头/体)后据此找 bug。一切结论必须基于 Claude 自己发出的真实请求与真实响应,
+  严禁凭文档脑补。真发请求的执行循环见 _execute.md。本工具不测性能(send_request 不返回耗时)。
 order:
-  - 4_1_interface_list.md
-  - 4_2_functional.md
-  - 4_3_security.md
-  - 4_4_boundary.md
-  - 4_5_conclusion.md
+  - 4_1_interface_list.md   # 接口清单 + 鉴权前置:盘点所有接口/参数/鉴权,真发探活确认可调地址与登录态
+  - 4_2_functional.md       # 功能 + 契约逐接口真测:正常入参/必填/类型/枚举/响应字段契约/状态码语义/幂等
+  - 4_3_security.md         # 安全真测:鉴权缺失/错误/越权读、注入(只读级)、敏感泄漏、CORS、限流、错误信息泄漏
+  - 4_4_boundary.md         # 边界/异常/容错真测:超长/空/极值/非法/并发/超时/重试
+  - 4_5_conclusion.md       # 结论定稿:汇总真测结果,统一报告契约 + 提测门禁
+execute_script: _execute.md
+
 common_system_suffix: |
-  通用规则：
-  - 输出必须是合法 JSON，禁止任何前后说明文字。
-  - case_id：AC-{MODULE:3}-{SERIAL:0000}（功能）/ PERF-{MODULE:3}-{SERIAL:0000}（性能）/ SEC-{MODULE:3}-{SERIAL:0000}（安全）/ BND-{MODULE:3}-{SERIAL:0000}（边界）/ CTR-{MODULE:3}-{SERIAL:0000}（契约）。
-  - 严禁生成真实攻击 payload；安全用例只输出合规测试构造。
-  - 涉及性能数字必须给出测试条件（并发 / RPS / 数据规模），禁裸列指标。
+  通用规则:
+  - 输出必须是合法 JSON,禁止任何前后说明文字。
+  - 本工具为**交互型**:Claude 通过 send_request 真发 HTTP 请求,结论只能基于真实请求与真实响应,严禁脑补。
+  - case_id:AC-{MODULE:3}-{SERIAL:0000}(功能+契约)/ SEC-{MODULE:3}-{SERIAL:0000}(安全)/ BND-{MODULE:3}-{SERIAL:0000}(边界异常)/ EP-{MODULE:3}-{SERIAL:0000}(接口清单条目)。
+  - 本工具**不测性能/时延**:send_request 不返回耗时,禁止输出 p50/p95/p99、吞吐量、QPS、RPS、错误率百分比等任何性能数字。
+  - 注入类安全用例只用温和、只读、不破坏的探测向量,且仅在材料明示的测试环境真发;严禁对真实目标发破坏性 payload。
   - confidence.score 在 [0,1]。
 
-  【统一报告契约 · 所有 finalize 步骤强制遵守】
-  最终步（_5_*）输出必须包含以下五个顶层字段，缺一不可；中间步可以只输出本步关心的子部分。
+  【安全护栏 · 交互型工具发任何请求前必须遵守】
+  - prod 默认**只读**:除非材料明示是 test/staging 且允许写,否则只真发 GET/HEAD/OPTIONS。
+  - 禁一切不可逆破坏写:不真发会真实删/改/扣的 DELETE/PUT/PATCH,不真发"下单/支付/付款/提交订单/发布/注销/清空/转账"类 POST;
+    写类/幂等用例仅在测试环境真发,否则降级为 cases.status=designed(只设计不执行)。
+  - 注入(SQLi/NoSQL/命令注入)、SSRF(内网地址如 169.254.169.254 / 127.0.0.1)、XXE、越权探测:
+    只设计、只在材料明示的测试环境做**只读级**验证(看服务是否过滤),绝不对真实/生产目标发破坏性或打内网的 payload;越权仅取相邻 1-2 个 ID 证明问题,不批量、不修改他人数据。
+  - 凭据保护:真实 token/密码/key 不回显、不写进任何 finding/用例/报告字段,用 <token> 占位脱敏;响应若回显凭据,只描述事实不抄原值。
+
+  【统一报告契约 · 所有 finalize 步骤(4_5)强制遵守】
+  最终步(4_5_conclusion.md)输出顶层必须包含以下字段,缺一不可;中间步(4_1~4_4)只输出本步关心的子部分(cases/issues/not_executed 等)。
   ```json
   {
     "verdict": "通过 | 有条件通过 | 不通过",
     "verdict_summary": "一句话给老板看的关键结论 (≤120 字)",
+    "gate_decision": {"action": "proceed|proceed_with_warning|reject_with_report", "reasons": ["..."]},
+    "confidence": {"score": 0.0, "rationale": "..."},
     "risks": [
-      {
-        "id": "R-001",
-        "title": "风险标题",
-        "impact": "对业务/用户的影响范围",
-        "why": "为什么是风险（基于哪段输入）",
-        "severity": "high|medium|low"
-      }
+      {"id": "R-001", "title": "风险标题", "impact": "对业务/用户的影响范围", "why": "为什么是风险(基于哪条真测结果)", "severity": "critical|high|medium|low"}
     ],
     "blockers": [
-      {
-        "id": "B-001",
-        "title": "阻碍当前阶段继续的硬约束",
-        "why_blocking": "为什么必须先处理",
-        "what_to_unblock": "需要谁/做什么才能解开",
-        "owner_role": "product|backend|frontend|test|devops|security|data",
-        "estimated_hours": 0
-      }
+      {"id": "B-001", "title": "阻碍当前阶段继续的硬约束", "why_blocking": "为什么必须先处理", "what_to_unblock": "需要谁/做什么才能解开", "owner_role": "product|backend|frontend|test|devops|security|data", "estimated_hours": 0}
     ],
     "issues": [
       {
-        "issue_id": "<MODULE-AREA-NNNN>",
-        "title": "标题",
+        "issue_id": "<MODULE-AREA-NNNN>", "title": "标题",
         "severity": "critical|high|medium|low|info",
         "priority": "P0|P1|P2|P3",
-        "module": "出现位置/接口/页面",
-        "current_behavior": "现状",
+        "module": "出现位置/接口(METHOD path)",
+        "current_behavior": "现状(真实响应:HTTP 码 + 关键字段)",
         "expected_behavior": "期望",
         "fix_suggestion": "怎么修",
-        "reproduce_steps": ["步骤1", "步骤2"],
+        "reproduce_steps": ["真发 <METHOD URL> 入参 ...", "观察响应 ..."],
         "acceptance_criteria": "怎么验",
-        "related_test_cases": ["TC-xxx"],
+        "related_test_cases": ["AC-xxx / SEC-xxx / BND-xxx"],
         "owner_role": "...",
         "estimated_hours": 0,
         "impact_scope": "影响面",
-        "evidence": "来自输入材料的具体引用"
+        "evidence": "真实请求 → HTTP 码 + 触发问题的响应字段/头原值"
       }
     ],
     "cases": [
       {
-        "id": "<TC-xxx>",
-        "title": "...",
+        "id": "<AC-/SEC-/BND-xxx>", "title": "...",
         "priority": "P0|P1|P2|P3",
         "type": "main|exception|boundary|security|perf|compat",
         "preconditions": "...",
-        "steps": ["..."],
-        "expected": "...",
+        "steps": ["真发 <METHOD URL> 入参 ..."],
+        "expected": "...(单一可断言预期)",
         "automation_tag": "auto|semi_auto|manual",
-        "status": "designed|executed_pass|executed_fail|skipped|blocked"
+        "status": "designed|executed_pass|executed_fail|skipped|blocked",
+        "evidence": "真实请求 → HTTP 码 + 关键响应字段(designed 用例可留空字符串)"
       }
-    ],
-    "gate_decision": {"action": "proceed|proceed_with_warning|reject_with_report", "reasons": ["..."]},
-    "confidence": {"score": 0.0, "rationale": "..."}
+    ]
   }
   ```
-  - issues 必须按 (severity, priority) 严重度优先级双键排序：critical>high>medium>low>info；同级内 P0>P1>P2>P3。
+  - 字段分类统一用 `type`,**禁止用 `kind`**。
+  - issues 必须按 (severity, priority) 双键排序:critical>high>medium>low>info;同级内 P0>P1>P2>P3。
   - cases 必须按 priority (P0→P3) 排序。
-  - blockers 与 risks 区分：blockers 表示"不解开就不能继续"，risks 表示"可能出问题但不阻塞当前流程"。
-  - 即使无内容，字段也要保留为空数组 []，不要省略。
+  - 空数组写 `[]`,不要省略字段。
+  - verdict 与 gate_decision.action 必须一致映射:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。二者矛盾即无效。
+  - blockers 与 risks 区分:blockers 表示"不解开就不能继续";risks 表示"可能出问题但不阻塞当前流程"。
 
-  【契约硬约束 v2 · 优先级 / 阻碍 / 证据 / 用例数 / 字段命名】
-  - **priority 必填**：每条 issue / case 必须含 `priority`（P0/P1/P2/P3），缺则视作 P2，但 LLM **不应主动省略**。
-  - **blocker 严格定义**：只有满足以下任一才能进 blockers，其它一律归 risks 或 issues：
-      ① 主流程 / 核心功能不可用 ② 严重安全 / 合规 / 数据正确性风险
-      ③ 必须先解决才能继续后续测试（外部依赖未就绪、账号未开通等硬阻塞）
-    "一般体验问题、可绕过的小 bug、改进建议" 一律 **不算 blocker**。
-  - **evidence 可追溯**：`evidence` 字段必须引用输入材料的**具体段落 / 字段名 / URL / 截图文件名**。
-    形如 "PRD 提到..." "需求文档说..." 这种泛指，视为无效证据，会被丢弃。
-  - **用例数克制**：用例数量应反映需求复杂度，不要为凑数生成机械组合：
-      · P0 主流程用例 ≤ 8 条（覆盖核心 happy path）
-      · P1 异常 / 边界用例 ≤ 20 条（按模块聚合，每模块 ≤ 5 条）
-      · P2 / P3 用例 ≤ 30 条（仅当输入材料明确暗示长尾需求时输出）
-  - **字段命名统一**：用 `type` 而非 `kind` 标注 issue / case 的分类（type 枚举：
-    main / exception / boundary / security / perf / compat / state / data / a11y）。
-    旧的 `kind` 字段允许保留作为兼容，但 finalize 输出必须用 `type`。
+  【契约硬约束 v2 · 优先级 / 阻碍 / 证据 / 字段命名】
+  - **priority 必填**:每条 issue / case 必须含 `priority`(P0/P1/P2/P3),缺则视作 P2,但不应主动省略。
+  - severity/priority 判定标准:
+      severity:critical=主流程不可用或数据/资金/安全受损;high=重要功能受损有绕行;medium=次要/边缘;low/info=提示。
+      priority:P0=阻塞提测必修;P1=上线前修;P2=可排期;P3=可选。默认 critical→P0、high→P1、medium→P2。
+  - **blocker 严格定义**:只有满足以下任一才能进 blockers,其它一律归 risks 或 issues:
+      ① 主流程/核心接口真测不可用 ② 严重安全/合规/数据正确性缺陷 ③ 必须先解决才能继续(核心接口无可调地址、账号未开通等硬阻塞)。
+    "一般体验问题、可绕行的小 bug、改进建议" 一律 **不算 blocker**。
+  - **evidence 可追溯(交互型定义)**:`evidence` 必须指向 **Claude 真发的请求 + 拿到的真实响应**,写成
+    "真实请求(METHOD URL + 关键入参) → HTTP 状态码 + 触发问题的响应字段/头原值"。
+    **接口测试的 evidence 不使用"截图文件名"**;凡"文档提到…/需求说…"这类无真实响应支撑的泛指,视为无效证据。
+  - **未执行不得影响结论**:交互型工具中,cases.status 标 executed_pass/executed_fail 时,evidence 必须指向真实执行记录里的具体请求/响应;
+    没真发到的接口/用例只能 status=designed,**不得进 issues、不得影响 verdict**,需在 coverage.not_executed 说明原因。
+  - **字段命名统一**:用 `type` 而非 `kind` 标注 issue/case 分类(type 枚举:main/exception/boundary/security/perf/compat/state/data/a11y;本工具不产 perf)。

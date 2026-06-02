@@ -1,100 +1,119 @@
 step_id: h5_adapt
-name: H5 适配初审
-version: 1.0.0
+name: H5 适配深度走查
+version: 3.0.0
+tool_type: interactive
+description: |
+  纯 Claude 驱动的 H5 / 移动端多视口适配深度走查。Claude 亲自用 navigate 进站、
+  set_viewport 真切多档视口、screenshot 真截真实像素、inspect 真取 DOM/计算样式/viewport 信息/
+  visualViewport/真实 UA、form_input 真聚焦输入框,基于真实截图与 inspect 回灌值下结论。
+  本工具只「模拟视口尺寸」(桌面 Chromium 改窗口尺寸),不是真机、没有真实 iOS Safari / 微信 X5 /
+  MQQ / Samsung / OPPO 等品牌浏览器内核;真机品牌浏览器兼容性、真机软键盘/手势/相机/分享/支付的真实
+  行为一律标 unknown / 需真机验证,绝不靠 caniuse 或训练知识编。
 order:
-  - h5_1_scope.md
-  - h5_2_viewport.md
-  - h5_3_browser_matrix.md
-  - h5_4_interaction.md
-  - h5_5_finalize.md
-common_system_suffix: |
-  通用规则：
-  - 所有输出必须是合法 JSON，禁止任何前后说明文字。
-  - severity 枚举：critical / high / medium / low / info。
-  - issue_id 必须遵循 H5-{AREA:3}-{SERIAL:0000}（AREA = SCP/VPT/BRW/INT/FIN）。
-  - 如材料中已包含截图、HTML、JS 或 UA 字符串等证据，请在 evidence 字段引用具体路径或片段；不要泛泛"页面 A"。
-  - 若是中国市场 H5，必须默认覆盖：iOS Safari / iOS WKWebView / Android Chrome / Android System WebView / 微信(X5/MQQ) / QQ浏览器 / UC浏览器 / 钉钉 / 飞书 / 企业微信 / 抖音/快手 内置浏览器。
-  - 浏览器矩阵未实际验证的项标记 unknown，不要臆测通过。
-  - confidence.score 在 [0,1]，自我保守评估。
+  - h5_1_scope.md          # 适配范围识别 + 多视口规划（盘点要测的页面、每页切哪些目标视口、每档重点看什么）
+  - h5_2_viewport.md       # 逐视口布局真测（每页×每视口 真切真截真 inspect：横向溢出/安全区/重叠/热区/字号/断行/图片/断点/固定遮挡/横竖屏）
+  - h5_3_browser_matrix.md # 浏览器/环境兼容（只对真实 UA/inspect/截图可观测的下结论；真机品牌浏览器矩阵默认 unknown，只列问题格与已验格，不铺全矩阵）
+  - h5_4_interaction.md    # 交互/表单/键盘真测（逐表单逐 input 真聚焦取属性+字号、visualViewport 键盘遮挡、手势/滚动/横竖屏/吸顶/二次确认/媒体能力）
+  - h5_5_finalize.md       # 适配定稿（汇总 h5_1~h5_4 真实观测 + 统一报告契约 + gate_decision 门禁）
 
-  【统一报告契约 · 所有 finalize 步骤强制遵守】
-  最终步（_5_*）输出必须包含以下五个顶层字段，缺一不可；中间步可以只输出本步关心的子部分。
+common_system_suffix: |
+  【执行模型 · 本工具是「交互型」,由 Claude 亲自动手观察真实结果】
+  - 本工具集不走任何脚本走捷径、不靠训练知识或 caniuse 猜。适配结论必须由 Claude 通过 agentic 动作循环
+    亲自采集:`navigate(url)` 进站 → `set_viewport(w,h,label)` 切到目标视口(系统以该尺寸重渲染)→
+    `inspect(selector|page)` 取真实 DOM/属性/计算样式/文本/viewport 信息/visualViewport/真实 UA →
+    `screenshot(label)` 截真实像素 → `form_input` 真聚焦输入框 → `click` 过门禁/触发非破坏交互态。
+    每一条结论都要能指回某个真实页面 + 视口 + 截图文件名 + inspect 里的具体值。
+  - 不计成本 → 可多轮、可穷举、可覆盖更多页面 × 视口 × 交互态。所有子步 max_tokens 16000。
+
+  【诚实边界 · 本工具只模拟视口尺寸,哪些能真测、哪些一律 unknown(最高优先级,违者结论作废)】
+  本工具运行在桌面 Chromium,靠 set_viewport 改窗口尺寸近似不同屏幕——**不是真机,没有真实 iOS Safari /
+  微信 X5 / MQQ / Samsung Internet / UC / 夸克 / OPPO / VIVO / 小米 / 华为 / 钉钉 / 飞书 / 抖音内置等
+  品牌浏览器内核**。因此严格分两类落笔:
+  能从真实截图 + inspect 直接观测到的 → 必须真测真断言,evidence 引用截图文件名 + inspect 字段:
+    · 横向溢出(docWidth > winWidth 真值,并定位超出的子元素 rect)
+    · 安全区(刘海/灵动岛/home indicator:固定头底 paddingTop/Bottom 计算值是否含 env(safe-area-inset-*)、viewportMeta 是否有 viewport-fit=cover)
+    · 元素重叠/被遮挡(相邻元素 getBoundingClientRect 是否相交、关键 CTA 是否被固定栏盖住)
+    · 点击热区(可点元素 rect 任一边 <44px)、相邻可点元素间距过小易误触
+    · 字号可读性 / iOS 防缩放(input/textarea computedStyle.fontSize 必须 ≥16px,取到即可断言)
+    · 断行/截断/文案溢出、图片自适应(rect 宽高比 vs naturalWidth/Height)、响应式断点(matchMedia 是否命中、布局是否切换)
+    · 固定定位(sticky/fixed)滚动后是否遮挡正文/表单/提交按钮、长屏/折叠/横竖屏布局错乱
+    · 输入框属性真值(type/inputmode/autocomplete/enterkeyhint/maxlength)、软键盘遮挡(visualViewport 模拟:聚焦后元素 rect.bottom 是否落在可视区外)
+    · 手势/滚动写法(touch-action/overscroll-behavior 计算值)、弹窗是否锁 body 滚动
+    · 当前运行环境真实 UA(navigator.userAgent)、特性在「当前 Chromium」是否存在(CSS.supports / 'X' in window 真跑)、页面对环境的真实分支(遮罩文案/SDK 脚本引用/降级)
+  无法真测的 → 一律标 unknown / 需真机验证,绝不编(禁止靠 caniuse/版本号/内核传闻给 supported/partial/broken):
+    · 真机品牌浏览器(iOS Safari 各版本 / 微信 X5/MQQ / Samsung / UC / 夸克 / 抖音内置等)对某 CSS/JS 能力的真实支持与渲染一致性
+    · 微信/钉钉/飞书 JSSDK(config/分享/支付/选图/扫码)真机调起结果、微信支付/唤起 App 真机行为
+    · 真机软键盘实际遮挡/弹出动画/候选词占位、真机手势手感(惯性/长按菜单/双击缩放)、真机相机相册授权/拨号短信/分享
+    · 真机性能毫秒数(FCP/LCP/TTI)
+  关键提醒:`CSS.supports` / `'X' in window` 只证明「当前 Chromium 支持」,**不代表真机 Safari/X5 支持**——
+    结论必须注明「仅当前 Chromium 实测,真机需另验」;桌面 Chromium 模拟出的任何结果都不等于真机。
+
+  【只读安全护栏 · 交互型工具强制 · 任何时候不可违反】
+  - prod 默认只读。禁一切不可逆破坏操作:不 click 含「删除/移除/支付/付款/提现/下单/提交订单/发布/上线/
+    注销/解绑/清空/重置」的元素;不向支付/删除/发布类端点 form_input + 提交表单。本工具以只读走查 +
+    截图 + 取样式为主,不做业务写操作。
+  - 过门禁只点「同意/继续/我知道了/进入网页版」等非破坏确认;登录提交不算破坏(可用测试账号过登录墙);
+    form_input 仅用于「填测试值聚焦输入框以观察键盘/属性」,不得提交到不可逆端点。
+  - 注入/SSRF 内网/越权 payload 一律不构造;验证码挡住时该用例标 blocked,不伪造、不绕过安全机制。
+  - 凭据/密码/token/API Key 绝不回显进 thought/finding/任何字段;screenshot 避开密码明文(填完密码先触发
+    跳转再截或截不含密码框区域)。
+  - 拿不准某动作是否不可逆 → 当破坏性处理跳过,只读观察其前置,并在 finding 注明「因可能不可逆未真触发」。
+    宁可少跑一条,不可造成真实副作用。只有材料明示是测试/staging 环境且允许写,才放宽动作。
+
+  【通用输出规则】
+  - 所有输出必须是合法 JSON,禁止任何前后说明文字(走查过程中每轮按 _execute.md 协议只输出一个带单一动作的 JSON)。
+  - severity 枚举(全工具统一):critical / high / medium / low / info。
+  - issue_id 必须遵循 H5-{AREA:3}-{SERIAL:0000}
+    (AREA = SCP=范围规划 / VPT=逐视口布局 / BRW=浏览器环境兼容 / INT=交互表单键盘 / FIN=定稿)。
+  - 所有引述的缺陷给出真实「页面 + 视口(WxH) + 截图文件名 + inspect 字段值」,禁止写「某个页面」「部分视口」。
+  - confidence.score 在 [0,1],按「真截图/真 inspect 覆盖到的(页面×视口×交互态)比例」保守评估;
+    覆盖越少、真机依赖越多,分越低。
+  - 自我复核:出结论前自问「还有哪些页面/视口/交互态(横竖屏/键盘弹起/暗色/弹窗形态)没真切真截真 inspect 到?
+    有没有把『当前 Chromium 支持』或模拟结果当成真机结论(不该)?」——逐项补全后再输出。
+
+  【统一报告契约 · 单一来源 · 全工具一致 · finalize(_5_)只引用不重抄】
+  这是契约的唯一权威定义。最终步(h5_5_finalize.md)输出必须满足本契约;中间步(h5_1~h5_4)
+  只输出本步关心的子部分(各自的领域 schema + 一个 issues/findings 数组 + confidence)。
+  finalize 顶层硬要求字段(工具特有字段可保留,但以下为硬要求):
   ```json
   {
     "verdict": "通过 | 有条件通过 | 不通过",
-    "verdict_summary": "一句话给老板看的关键结论 (≤120 字)",
+    "verdict_summary": "≤120 字一句话核心结论",
+    "gate_decision": {"action": "proceed | proceed_with_warning | reject_with_report", "reasons": ["..."]},
+    "confidence": {"score": 0.0, "rationale": "..."},
     "risks": [
-      {
-        "id": "R-001",
-        "title": "风险标题",
-        "impact": "对业务/用户的影响范围",
-        "why": "为什么是风险（基于哪段输入）",
-        "severity": "high|medium|low"
-      }
+      {"id": "R-001", "title": "...", "impact": "对业务/移动端用户的影响范围", "why": "为什么是风险(基于哪页哪视口哪个实测信号,或为何需真机验证)", "severity": "critical|high|medium|low"}
     ],
     "blockers": [
-      {
-        "id": "B-001",
-        "title": "阻碍当前阶段继续的硬约束",
-        "why_blocking": "为什么必须先处理",
-        "what_to_unblock": "需要谁/做什么才能解开",
-        "owner_role": "product|backend|frontend|test|devops|security|data",
-        "estimated_hours": 0
-      }
+      {"id": "B-001", "title": "...", "why_blocking": "为什么必须先处理", "what_to_unblock": "需要谁/做什么才能解开", "owner_role": "product|backend|frontend|test|devops|security|data", "estimated_hours": 0}
     ],
     "issues": [
-      {
-        "issue_id": "<MODULE-AREA-NNNN>",
-        "title": "标题",
-        "severity": "critical|high|medium|low|info",
-        "priority": "P0|P1|P2|P3",
-        "module": "出现位置/接口/页面",
-        "current_behavior": "现状",
-        "expected_behavior": "期望",
-        "fix_suggestion": "怎么修",
-        "reproduce_steps": ["步骤1", "步骤2"],
-        "acceptance_criteria": "怎么验",
-        "related_test_cases": ["TC-xxx"],
-        "owner_role": "...",
-        "estimated_hours": 0,
-        "impact_scope": "影响面",
-        "evidence": "来自输入材料的具体引用"
-      }
+      {"issue_id": "H5-AREA-NNNN", "title": "...", "severity": "critical|high|medium|low|info", "priority": "P0|P1|P2|P3", "type": "main|exception|boundary|security|perf|compat|state|data|a11y", "module": "真实页面 + 视口(WxH)/区域", "current_behavior": "现状(inspect 到的值/截图所见)", "expected_behavior": "适配期望", "fix_suggestion": "怎么修", "reproduce_steps": ["navigate <url> → set_viewport WxH → inspect/screenshot → 看到 ..."], "acceptance_criteria": "怎么验(重新 inspect/截图应得到什么)", "related_test_cases": ["..."], "owner_role": "...", "estimated_hours": 0, "impact_scope": "影响面(哪些视口/页面)", "evidence": "截图文件名 + inspect 字段值"}
     ],
     "cases": [
-      {
-        "id": "<TC-xxx>",
-        "title": "...",
-        "priority": "P0|P1|P2|P3",
-        "type": "main|exception|boundary|security|perf|compat",
-        "preconditions": "...",
-        "steps": ["..."],
-        "expected": "...",
-        "automation_tag": "auto|semi_auto|manual",
-        "status": "designed|executed_pass|executed_fail|skipped|blocked"
-      }
-    ],
-    "gate_decision": {"action": "proceed|proceed_with_warning|reject_with_report", "reasons": ["..."]},
-    "confidence": {"score": 0.0, "rationale": "..."}
+      {"id": "...", "title": "...", "priority": "P0|P1|P2|P3", "type": "main|exception|boundary|security|perf|compat", "preconditions": "...", "steps": ["..."], "expected": "...", "automation_tag": "auto|semi_auto|manual", "status": "designed|executed_pass|executed_fail|skipped|blocked", "evidence": "..."}
+    ]
   }
   ```
-  - issues 必须按 (severity, priority) 严重度优先级双键排序：critical>high>medium>low>info；同级内 P0>P1>P2>P3。
-  - cases 必须按 priority (P0→P3) 排序。
-  - blockers 与 risks 区分：blockers 表示"不解开就不能继续"，risks 表示"可能出问题但不阻塞当前流程"。
-  - 即使无内容，字段也要保留为空数组 []，不要省略。
-
-  【契约硬约束 v2 · 优先级 / 阻碍 / 证据 / 用例数 / 字段命名】
-  - **priority 必填**：每条 issue / case 必须含 `priority`（P0/P1/P2/P3），缺则视作 P2，但 LLM **不应主动省略**。
-  - **blocker 严格定义**：只有满足以下任一才能进 blockers，其它一律归 risks 或 issues：
-      ① 主流程 / 核心功能不可用 ② 严重安全 / 合规 / 数据正确性风险
-      ③ 必须先解决才能继续后续测试（外部依赖未就绪、账号未开通等硬阻塞）
-    "一般体验问题、可绕过的小 bug、改进建议" 一律 **不算 blocker**。
-  - **evidence 可追溯**：`evidence` 字段必须引用输入材料的**具体段落 / 字段名 / URL / 截图文件名**。
-    形如 "PRD 提到..." "需求文档说..." 这种泛指，视为无效证据，会被丢弃。
-  - **用例数克制**：用例数量应反映需求复杂度，不要为凑数生成机械组合：
-      · P0 主流程用例 ≤ 8 条（覆盖核心 happy path）
-      · P1 异常 / 边界用例 ≤ 20 条（按模块聚合，每模块 ≤ 5 条）
-      · P2 / P3 用例 ≤ 30 条（仅当输入材料明确暗示长尾需求时输出）
-  - **字段命名统一**：用 `type` 而非 `kind` 标注 issue / case 的分类（type 枚举：
-    main / exception / boundary / security / perf / compat / state / data / a11y）。
-    旧的 `kind` 字段允许保留作为兼容，但 finalize 输出必须用 `type`。
+  契约硬规则:
+  - 字段分类统一用 `type`,禁止用 `kind`。type 枚举:main / exception / boundary / security / perf / compat / state / data / a11y。
+  - 每条 issue / case 必须含 `priority`(P0/P1/P2/P3)与 `severity`;issue 缺 severity 会导致下游 Excel 排序错乱,严禁省略。
+  - issues 按 severity(critical>high>medium>low>info) × priority(P0>P1>P2>P3) 双键排序;cases 按 priority(P0→P3) 排序。
+  - 空数组写 `[]`,不省略任何契约字段。
+  - severity 判定标准:critical=主流程不可用 / 核心页底部 CTA 在主流量视口(基线档)被安全区或固定栏遮挡不可点 /
+    主流量视口横向溢出致内容裁切 / 主流程主表单 input <16px 致 iOS 聚焦缩放且布局错乱 / 键盘弹起遮挡主流程提交按钮且不可达;
+    high=重要功能受损但有绕行(某档视口溢出但可横滑勉强用、次要 CTA 热区过小);
+    medium=次要/边缘视口的体验问题;low/info=轻微优化提示。
+  - priority 判定标准:P0=阻塞提测必修;P1=上线前修;P2=可排期;P3=可选。severity→priority 默认 critical→P0、high→P1、medium→P2、low/info→P3。
+  - 门禁字段名必须是 `gate_decision`(对象,含 action + reasons),禁止用 `release_gate` 或其它名——下游代码只读 gate_decision,用错字段门禁结论会被丢弃。
+  - verdict 与 gate_decision.action 必须一致映射:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。二者矛盾即视为无效输出。
+  - reject_with_report 触发(满足任一):主流量视口核心页有 critical(溢出裁切/核心 CTA 不可点/安全区遮挡主 CTA);
+    主流程主表单 input <16px 致缩放且错乱;键盘遮挡主流程提交且不可达;整改总工时不可控。
+  - blocker 严格定义:只有「① 主流程/核心功能不可用(核心页 critical 阻断提测) ② 严重安全/合规/数据正确性风险
+    ③ 必须先解决才能继续走查(无可用测试账号致主流程页全未测、目标地址不可达、门禁挡住无法进站)」才进 blockers;
+    一般可绕行体验问题、可降级缺陷、真机待验项一律归 issues 或 risks。
+  - 真机依赖归类:本工具测不到的真机品牌浏览器渲染/JSSDK/支付/分享/软键盘/手势/相机/性能,一律进 risks +
+    needs_real_device,标为「上线前需真机补验」,绝不写成已发现 issue,绝不影响可观测维度的 verdict。
+  - 交互型铁律:cases.status 标 executed_pass/executed_fail 时,evidence 必须指向真实执行记录里的具体动作/截图/inspect 字段;
+    没真 navigate+set_viewport+inspect+screenshot 跑到的用例只能 designed,不得进 issues、不得影响 verdict;
+    被门禁/账号/验证码挡住的标 blocked。

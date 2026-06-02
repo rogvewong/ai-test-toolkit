@@ -1,98 +1,139 @@
 step_id: step1
 name: 需求评审
-version: 2.0.0
-order:
-  - 1_1_material_inventory.md
-  - 1_2_module_breakdown.md
-  - 1_3_flow_interaction.md
-  - 1_4_gap_detection.md
-  - 1_5_report_finalization.md
-common_system_suffix: |
-  通用规则：
-  - 输出必须是合法 JSON，不要任何前后说明文字。
-  - severity 枚举：critical / high / medium / low / info。
-  - 所有结论必须可追溯到输入材料的具体段落或字段，引用 evidence。
-  - 如材料不足判断，明确标注 "needs_clarification" 而非臆造。
-  - confidence.score 在 [0,1]，自我保守评估。
+version: 3.0.0
 
-  【统一报告契约 · 所有 finalize 步骤强制遵守】
-  最终步（_5_*）输出必须包含以下五个顶层字段，缺一不可；中间步可以只输出本步关心的子部分。
+# 工具定性：分析型。只分析用户提供的 PRD / 原型 / UI 稿 / 交互文案 / 接口草案等文本，
+# 无真实系统交互、无线上数据、无代码可读。因此严禁断言材料未写明的客观事实
+# （线上行为 / 性能数字 / 是否已埋点 / 是否已建表 / 第三方真实表现等），
+# 凡材料未触及一律标 needs_clarification / unknown，不臆造。
+
+# 五步流水线：层层深入，从盘点 → 拆解 → 流程 → 深挖 → 定稿。
+# 文件名 + frontmatter name + 正文主题三者一致；代码按文件名与 id 路由，保持不变。
+order:
+  - 1_1_material_inventory.md      # 物料盘点与可测性基线
+  - 1_2_module_breakdown.md        # 模块与功能点拆解（拆到最小可测单元）
+  - 1_3_flow_interaction.md        # 主流程 + 异常流程 + 交互细节深挖
+  - 1_4_gap_detection.md           # 需求遗漏 / 歧义 / 矛盾 / 边界深挖（核心）
+  - 1_5_report_finalization.md     # 提测门禁定稿（可测性裁决 + 统一报告契约）
+
+# 每步职责与产出（说明用，便于维护者理解层层深入的关系）
+steps:
+  - file: 1_1_material_inventory.md
+    name: 物料盘点与可测性基线
+    output_schema: step1_material_inventory
+    produces: 物料清单 / 完整度评分 / 关键缺失 / 术语对齐 / 可测性基线 / 待澄清
+    feeds: 为 1_2~1_4 提供「材料给了什么」的地基
+  - file: 1_2_module_breakdown.md
+    name: 模块与功能点拆解
+    output_schema: step1_module_breakdown
+    produces: 模块 / 最小可测功能点(输入·输出·状态·校验) / 状态机 / 12维覆盖自查
+    feeds: 为 1_3 提供功能点与状态、为 1_4 提供 coverage 缺口
+  - file: 1_3_flow_interaction.md
+    name: 主流程与异常流程及交互细节
+    output_schema: step1_flow_interaction
+    produces: 主流程逐步 / 每个决策点的异常分支 / 页面12项交互态 / 可追溯性
+    feeds: 为 1_4 提供未定义分支与交互缺口
+  - file: 1_4_gap_detection.md
+    name: 需求遗漏歧义矛盾与边界深挖
+    output_schema: step1_gap_detection
+    produces: 遗漏 / 歧义 / 自相矛盾 / 隐含假设 / 未定义边界（每条 quote 原文）+ 汇总去重
+    feeds: 为 1_5 提供可直接采纳为 issue/blocker/clarification 的条目
+  - file: 1_5_report_finalization.md
+    name: 提测门禁定稿
+    output_schema: step1_gate_finalization
+    produces: 可测性裁决 + 门禁决策 + 统一报告契约（唯一对外出口）
+    note: finalize 步，强制遵守下方「统一报告契约」；只引用契约不重抄完整 schema
+
+common_system_suffix: |
+  通用规则（所有子步遵守）：
+  - 输出必须是合法 JSON，不要任何前后说明文字、不要 markdown 代码围栏外的内容。
+  - 本工具是分析型：结论只能基于 {{业务材料}} 原文。严禁断言材料未写明的客观事实
+    （线上行为 / 性能毫秒数 / 是否已埋点 / 是否已建表 / 第三方真实 SLA / 真机或浏览器实测）。
+    凡材料未写明 → 标 needs_clarification 或 unknown，绝不臆造默认值当成事实。
+  - evidence 必须可追溯：引用材料的具体段落 / 字段名 / 页面名 / 控件名 / 章节标题，
+    或在「该有而空白」处明确写「全文未见关于 X 的描述」。泛指（如「PRD 提到」「文档说」）视为无效证据，会被丢弃。
+  - 示例 JSON 里禁止写死具体数字（如 7天>10%、4.2s）；用占位符或 unknown，由材料决定。
+  - severity 枚举：critical / high / medium / low / info。
+  - confidence.score 在 [0,1]，自我保守评估。
+  - 出最终结论前强制自我复核：自问「还漏了哪些模块 / 分支 / 边界 / 失败模式 / 角色 / 环境？」逐项补全后再输出。
+
+  【severity / priority 判定标准（全步统一）】
+  - severity：
+      critical = 主流程/核心功能无法正确实现、或会致数据/资金/安全事故、或造成全局性歧义；
+      high     = 重要功能/分支会被错误实现、需绕行或大量返工；
+      medium   = 次要/边缘，影响有限；
+      low/info = 提示性、可后补。
+  - priority：
+      P0 = 阻塞提测，开测前必须澄清/修正；
+      P1 = 上线前必须修；
+      P2 = 可排期；
+      P3 = 可选。
+  - severity→priority 默认映射：critical→P0、high→P1、medium→P2、low/info→P3。
+
+  【统一报告契约 · 单一来源 · 所有 finalize（_5_*）步骤强制遵守】
+  最终步（1_5_report_finalization.md）输出顶层必须包含以下字段，缺一不可；
+  中间步（1_1~1_4）只输出本步关心的子部分，不需要本契约的全部字段。
+  finalize 步在其 .md 中**只引用本契约、不重抄完整 schema**，以本 meta.yaml 为唯一来源。
   ```json
   {
     "verdict": "通过 | 有条件通过 | 不通过",
     "verdict_summary": "一句话给老板看的关键结论 (≤120 字)",
+    "gate_decision": {"action": "proceed | proceed_with_warning | reject_with_report", "reasons": ["..."]},
+    "confidence": {"score": 0.0, "rationale": "..."},
     "risks": [
-      {
-        "id": "R-001",
-        "title": "风险标题",
-        "impact": "对业务/用户的影响范围",
-        "why": "为什么是风险（基于哪段输入）",
-        "severity": "high|medium|low"
-      }
+      {"id": "R-001", "title": "风险标题", "impact": "对业务/用户的影响范围", "why": "为什么是风险（基于哪段输入）", "severity": "critical|high|medium|low"}
     ],
     "blockers": [
-      {
-        "id": "B-001",
-        "title": "阻碍当前阶段继续的硬约束",
-        "why_blocking": "为什么必须先处理",
-        "what_to_unblock": "需要谁/做什么才能解开",
-        "owner_role": "product|backend|frontend|test|devops|security|data",
-        "estimated_hours": 0
-      }
+      {"id": "B-001", "title": "阻碍继续的硬约束", "why_blocking": "为什么必须先处理", "what_to_unblock": "需要谁/做什么才能解开", "owner_role": "product|backend|frontend|test|devops|security|data", "estimated_hours": 0}
     ],
     "issues": [
       {
-        "issue_id": "<MODULE-AREA-NNNN>",
-        "title": "标题",
+        "issue_id": "<MODULE-AREA-NNNN>", "title": "标题",
         "severity": "critical|high|medium|low|info",
         "priority": "P0|P1|P2|P3",
+        "type": "main|exception|boundary|security|perf|compat|state|data|a11y",
         "module": "出现位置/接口/页面",
-        "current_behavior": "现状",
-        "expected_behavior": "期望",
-        "fix_suggestion": "怎么修",
+        "current_behavior": "材料现状（如『未定义』）",
+        "expected_behavior": "应补什么/期望",
+        "fix_suggestion": "怎么修/补",
         "reproduce_steps": ["步骤1", "步骤2"],
         "acceptance_criteria": "怎么验",
-        "related_test_cases": ["TC-xxx"],
-        "owner_role": "...",
+        "related_test_cases": ["<case id>"],
+        "owner_role": "product|backend|frontend|test|devops|security|data",
         "estimated_hours": 0,
         "impact_scope": "影响面",
-        "evidence": "来自输入材料的具体引用"
+        "evidence": "来自材料的具体引用 / 上游步骤条目 id"
       }
     ],
     "cases": [
       {
-        "id": "<TC-xxx>",
-        "title": "...",
+        "id": "<case id>", "title": "...",
         "priority": "P0|P1|P2|P3",
-        "type": "main|exception|boundary|security|perf|compat",
-        "preconditions": "...",
-        "steps": ["..."],
-        "expected": "...",
+        "type": "main|exception|boundary|security|perf|compat|state|data|a11y",
+        "preconditions": "...", "steps": ["..."], "expected": "...",
         "automation_tag": "auto|semi_auto|manual",
-        "status": "designed|executed_pass|executed_fail|skipped|blocked"
+        "status": "designed|executed_pass|executed_fail|skipped|blocked",
+        "evidence": "..."
       }
-    ],
-    "gate_decision": {"action": "proceed|proceed_with_warning|reject_with_report", "reasons": ["..."]},
-    "confidence": {"score": 0.0, "rationale": "..."}
+    ]
   }
   ```
-  - issues 必须按 (severity, priority) 严重度优先级双键排序：critical>high>medium>low>info；同级内 P0>P1>P2>P3。
-  - cases 必须按 priority (P0→P3) 排序。
-  - blockers 与 risks 区分：blockers 表示"不解开就不能继续"，risks 表示"可能出问题但不阻塞当前流程"。
-  - 即使无内容，字段也要保留为空数组 []，不要省略。
 
-  【契约硬约束 v2 · 优先级 / 阻碍 / 证据 / 用例数 / 字段命名】
-  - **priority 必填**：每条 issue / case 必须含 `priority`（P0/P1/P2/P3），缺则视作 P2，但 LLM **不应主动省略**。
-  - **blocker 严格定义**：只有满足以下任一才能进 blockers，其它一律归 risks 或 issues：
-      ① 主流程 / 核心功能不可用 ② 严重安全 / 合规 / 数据正确性风险
-      ③ 必须先解决才能继续后续测试（外部依赖未就绪、账号未开通等硬阻塞）
-    "一般体验问题、可绕过的小 bug、改进建议" 一律 **不算 blocker**。
-  - **evidence 可追溯**：`evidence` 字段必须引用输入材料的**具体段落 / 字段名 / URL / 截图文件名**。
-    形如 "PRD 提到..." "需求文档说..." 这种泛指，视为无效证据，会被丢弃。
-  - **用例数克制**：用例数量应反映需求复杂度，不要为凑数生成机械组合：
-      · P0 主流程用例 ≤ 8 条（覆盖核心 happy path）
-      · P1 异常 / 边界用例 ≤ 20 条（按模块聚合，每模块 ≤ 5 条）
-      · P2 / P3 用例 ≤ 30 条（仅当输入材料明确暗示长尾需求时输出）
-  - **字段命名统一**：用 `type` 而非 `kind` 标注 issue / case 的分类（type 枚举：
-    main / exception / boundary / security / perf / compat / state / data / a11y）。
-    旧的 `kind` 字段允许保留作为兼容，但 finalize 输出必须用 `type`。
+  【契约硬约束】
+  - 字段分类统一用 `type`，禁止用 `kind`。type 枚举：main / exception / boundary / security / perf / compat / state / data / a11y。
+  - 排序：issues 按 severity(critical>high>medium>low>info) × priority(P0>P1>P2>P3) 排序；cases 按 priority(P0→P3) 排序。
+  - 空数组写 []，不省略字段。
+  - verdict 与 gate_decision.action 必须一致映射：通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。二者矛盾即结论无效。
+  - blocker 严格定义（满足任一才入，否则归 issues 或 risks）：
+      ① 主流程/核心功能不可用或无法设计可断言用例
+      ② 严重安全/合规/数据正确性风险
+      ③ 必须先解决才能继续后续测试（关键澄清未解、前置数据/环境/账号材料未交代）。
+    一般体验问题、可绕过的小瑕疵、改进建议一律不算 blocker。
+  - blockers 与 risks 区分：blockers = 不解开就不能继续；risks = 可能出问题但不阻塞当前流程。
+  - 本工具为分析型、无真实执行能力：cases.status 只能为 `designed`，不得出现 executed_pass / executed_fail；
+    不得因「未执行」把设计态用例当作缺陷计入 issues、不得让设计态用例影响 verdict。
+
+  【用例数克制】用例数量应反映需求复杂度，不要为凑数生成机械组合：
+  - P0 主流程用例 ≤ 8 条（覆盖核心 happy path）。
+  - P1 异常/边界用例 ≤ 20 条（按模块聚合，每模块 ≤ 5 条）。
+  - P2/P3 用例 ≤ 30 条（仅当材料明确暗示长尾需求时输出）。
