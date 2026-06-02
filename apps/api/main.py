@@ -3551,33 +3551,7 @@ TOOLS_INDEX_HTML = """<!doctype html>
 html,body{margin:0;background:var(--paper);color:var(--ink);
   font-family:var(--sans);font-weight:300;font-size:15px;line-height:1.85;
   -webkit-font-smoothing:antialiased;font-feature-settings:"palt" on}
-body{min-height:100vh;overflow-x:hidden}
-.screen{min-height:100vh;display:flex;flex-direction:column}
-/* 多维报告(嵌首页,admin+) */
-.multi-report{max-width:1080px;margin:0 auto;width:100%;box-sizing:border-box;padding:48px 48px 96px;border-top:1px solid var(--line)}
-.mr-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:4px}
-.mr-head h2{font-size:26px;margin:0;letter-spacing:-.01em;color:var(--ink)}
-.mr-sub{color:var(--ink-4);font-size:12.5px}
-.mr-dl{margin-left:auto;font:inherit;font-size:12.5px;padding:6px 14px;border:1px solid var(--line);border-radius:7px;background:transparent;cursor:pointer;color:var(--ink-2)}
-.mr-dl:hover{background:var(--paper-2)}
-.mr-filters{display:flex;gap:8px;margin:18px 0 22px}
-.mr-filters button{font:inherit;font-size:12.5px;padding:5px 14px;border:1px solid var(--line);background:transparent;border-radius:7px;cursor:pointer;color:var(--ink-3)}
-.mr-filters button.active{background:var(--ink);color:var(--paper);border-color:var(--ink)}
-.mr-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:26px}
-.mr-kpi{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--paper)}
-.mr-kpi .v{font-size:27px;font-weight:700;letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
-.mr-kpi .l{font-size:11.5px;color:var(--ink-4);margin-top:5px}
-.mr-tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:2px}
-.mr-tabs button{font:inherit;font-size:13px;padding:9px 16px;border:none;background:none;cursor:pointer;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px}
-.mr-tabs button.active{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
-.mr-table{width:100%;border-collapse:collapse;font-size:13px}
-.mr-table th{text-align:left;font-weight:600;color:var(--ink-4);font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:11px 12px;border-bottom:1px solid var(--line)}
-.mr-table td{padding:10px 12px;border-bottom:1px solid var(--paper-2);color:var(--ink-2)}
-.mr-table tr:hover td{background:var(--paper-2)}
-.mr-table .num{font-variant-numeric:tabular-nums;font-family:var(--mono,ui-monospace,monospace)}
-.mr-table .pc{font-family:var(--mono,ui-monospace,monospace);font-size:12px;color:var(--accent)}
-.mr-empty{padding:30px;text-align:center;color:var(--ink-4);font-size:13px}
-@media(max-width:760px){.mr-kpis{grid-template-columns:repeat(2,1fr)}.multi-report{padding:32px 24px 72px}}
+body{height:100vh;display:flex;flex-direction:column;overflow:hidden}
 a{color:inherit;text-decoration:none}
 button{font-family:inherit;cursor:pointer}
 ::selection{background:rgba(196,90,58,.22);color:var(--accent)}
@@ -3814,6 +3788,7 @@ button{font-family:inherit;cursor:pointer}
     <a href="/catalog">工具</a>
     <a href="/reports">报告</a>
     <a href="/settings" class="superadmin-only" style="display:none">设置</a>
+    <a href="/usage" class="admin-only" style="display:none">使用统计</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
   </nav>
   <span class="kbd-hint" id="cmd-trigger" title="打开命令面板"><kbd>⌘</kbd><kbd>K</kbd></span>
@@ -3828,7 +3803,6 @@ button{font-family:inherit;cursor:pointer}
 </div>
 
 <!-- HERO -->
-<div class="screen">
 <section class="hero">
   <div class="eyebrow">天枢 · 裁决 ── AI Verdict Manual · Edition 0.1</div>
   <h1>AI 驱动的<br>软件<em>质量裁决</em>手册</h1>
@@ -3837,7 +3811,6 @@ button{font-family:inherit;cursor:pointer}
     <a class="btn primary" href="/catalog">进入工具 <span class="arrow">→</span></a>
     <a class="btn" href="/reports">查看报告</a>
     <a class="btn" href="/guide">使用说明</a>
-    <a class="btn admin-only" href="#multi-report" style="display:none">多维报告 ↓</a>
   </div>
   <div class="hero-foot">
     <span class="dot"></span>
@@ -3854,29 +3827,7 @@ button{font-family:inherit;cursor:pointer}
     <span>· 二〇二六</span>
   </div>
 </footer>
-</div><!-- /.screen -->
 
-<section class="multi-report admin-only" id="multi-report" style="display:none">
-  <div class="mr-head">
-    <h2>多维报告</h2>
-    <span class="mr-sub">谁 · 哪个项目(编号)· 哪类测试 — 跨全员使用统计 · 实时(删报告即移除)</span>
-    <button class="mr-dl" id="mr-export">↓ 导出 Excel</button>
-  </div>
-  <div class="mr-filters" id="mr-filters">
-    <button data-days="7">近 7 天</button>
-    <button data-days="30">近 30 天</button>
-    <button data-days="0" class="active">全部</button>
-  </div>
-  <div class="mr-kpis" id="mr-kpis"></div>
-  <div class="mr-tabs" id="mr-tabs">
-    <button data-tab="person" class="active">按个人</button>
-    <button data-tab="project">按项目(编号)</button>
-    <button data-tab="tool">按工具</button>
-    <button data-tab="model">按模型</button>
-    <button data-tab="detail">明细</button>
-  </div>
-  <div id="mr-body"></div>
-</section>
 
 <aside class="task-fab" id="task-fab" aria-label="运行中的任务">
   <div class="head">
@@ -4141,58 +4092,6 @@ function toast(msg){
 
 function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
-// ── 多维报告(首页嵌入,admin+;非 admin 端点返回 403 → 静默跳过,区块本就隐藏)──
-(function(){
-  const sec = document.getElementById('multi-report');
-  if (!sec) return;
-  let _days = 0, _tab = 'person', _data = null;
-  const fmtT = ts => ts ? new Date(ts*1000).toLocaleDateString('zh-CN') : '—';
-  const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-  const money = v => v ? ('$'+v) : '—';
-  const fmtTok = n => !n ? '—' : (n>=1e6 ? (n/1e6).toFixed(1)+'M' : (n>=1e3 ? Math.round(n/1e3)+'K' : ''+n));
-  const kpi = (v,l) => `<div class="mr-kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`;
-  const tbl = (head, rows) => rows.length
-    ? `<table class="mr-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
-    : '<div class="mr-empty">该时间范围内暂无记录</div>';
-  function renderTab(){
-    const d = _data; if (!d) return;
-    const b = document.getElementById('mr-body');
-    if (_tab==='person') b.innerHTML = tbl(['执行人','运行次数','涉及项目','最常用工具','Tokens','成本','最近活跃'],
-      d.by_person.map(p=>`<tr><td><strong>${esc(p.owner)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.projects}</td><td>${esc(p.top_tool)}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.last)}</td></tr>`));
-    else if (_tab==='project') b.innerHTML = tbl(['产品编号','产品名称','运行次数','参与人数','涉及工具','Tokens','成本','时间跨度'],
-      d.by_project.map(p=>`<tr><td class="pc">${esc(p.code)}</td><td>${esc(p.name||'—')}</td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.tools}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.first)} ~ ${fmtT(p.last)}</td></tr>`));
-    else if (_tab==='tool') b.innerHTML = tbl(['测试类型','运行次数','使用人数','涉及项目','Tokens','成本'],
-      d.by_tool.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.projects}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td></tr>`));
-    else if (_tab==='model') b.innerHTML = tbl(['模型','运行次数','使用人数','Tokens','成本'],
-      (d.by_model||[]).map(p=>`<tr><td><strong>${esc(p.model)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td></tr>`));
-    else b.innerHTML = tbl(['时间','执行人','产品编号','测试类型','模型','Tokens','成本','结果'],
-      d.detail.map(r=>`<tr><td>${fmtT(r.ts)}</td><td>${esc(r.owner)}</td><td class="pc">${esc(r.project_code||'—')}</td><td>${esc(r.tool_name)}</td><td>${esc(r.model_label||'—')}</td><td class="num">${fmtTok(r.tokens)}</td><td class="num">${money(r.cost_usd)}</td><td>${r.status==='succeeded'?'成功':esc(r.status)}</td></tr>`));
-  }
-  async function loadStats(){
-    try {
-      const r = await fetch('/api/usage/stats?days='+_days, {credentials:'same-origin'});
-      if (!r.ok) return;
-      _data = await r.json();
-      const t = _data.totals;
-      document.getElementById('mr-kpis').innerHTML =
-        kpi(t.runs,'总运行次数')+kpi(t.users,'活跃执行人')+kpi(t.projects,'覆盖项目')+kpi(t.tools,'用到工具')+kpi(money(t.cost),'总成本 USD');
-      renderTab();
-    } catch(e){}
-  }
-  sec.querySelectorAll('#mr-filters button').forEach(btn=>btn.onclick=()=>{
-    _days = parseInt(btn.dataset.days);
-    sec.querySelectorAll('#mr-filters button').forEach(b=>b.classList.toggle('active', b===btn));
-    loadStats();
-  });
-  sec.querySelectorAll('#mr-tabs button').forEach(btn=>btn.onclick=()=>{
-    _tab = btn.dataset.tab;
-    sec.querySelectorAll('#mr-tabs button').forEach(b=>b.classList.toggle('active', b===btn));
-    renderTab();
-  });
-  const exp = document.getElementById('mr-export');
-  if (exp) exp.onclick = ()=>{ window.location.href = '/api/usage/export.xlsx?days='+_days; };
-  loadStats();
-})();
 
 load();
 </script>
@@ -5428,6 +5327,7 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
     <a href="/catalog" class="active">工具</a>
     <a href="/reports">报告</a>
     <a href="/settings" class="superadmin-only" style="display:none">设置</a>
+    <a href="/usage" class="admin-only" style="display:none">使用统计</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
   </nav>
 </header>
@@ -5506,6 +5406,7 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
     <a href="/reports">报告</a>
     <a href="/guide" class="active">使用说明</a>
     <a href="/settings" class="superadmin-only" style="display:none">设置</a>
+    <a href="/usage" class="admin-only" style="display:none">使用统计</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
   </nav>
 </header>
@@ -5587,6 +5488,148 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
 @app.get("/guide", response_class=HTMLResponse)
 async def guide_page() -> str:
     return _inject_shared_overlays(GUIDE_HTML)
+
+
+USAGE_HTML = """<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>使用统计 · 天枢 · 裁决</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#fff;--paper-2:#f4f3f1;--ink:#0a0a0a;--ink-2:#3a3a3a;--ink-3:#6e6e6e;--ink-4:#8a8a8a;--line:#dcdad6;--accent:#a8401f}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'Noto Sans SC',-apple-system,BlinkMacSystemFont,sans-serif}
+header.topbar{display:flex;align-items:center;gap:6px;padding:15px 40px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);z-index:20}
+.brand-link{display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:inherit;margin-right:20px}
+.brand-link svg{color:var(--accent);width:22px;height:22px;flex-shrink:0}
+.brand{font-family:'Noto Serif SC',serif;font-size:18px;font-weight:600;letter-spacing:.16em;color:var(--ink)}
+.brand .sep{color:var(--accent);margin:0 6px;font-weight:400}
+header.topbar nav{display:flex;gap:2px;flex-wrap:wrap}
+header.topbar nav a{padding:6px 14px;border-radius:7px;color:var(--ink-3);text-decoration:none;font-size:14px;transition:.14s}
+header.topbar nav a:hover{color:var(--ink);background:var(--paper-2)}
+header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weight:500}
+.wrap{max-width:1140px;margin:0 auto;padding:40px}
+.wrap h1{font-family:'Noto Serif SC',serif;font-size:27px;font-weight:500;margin:0 0 6px;letter-spacing:-.01em}
+.wrap .sub{color:var(--ink-3);font-size:13.5px;margin:0 0 22px;line-height:1.7}
+.mr-head{display:flex;align-items:center;margin-bottom:14px}
+.mr-dl{margin-left:auto;font:inherit;font-size:12.5px;padding:6px 14px;border:1px solid var(--line);border-radius:7px;background:transparent;cursor:pointer;color:var(--ink-2)}
+.mr-dl:hover{background:var(--paper-2)}
+.mr-filters{display:flex;gap:8px;margin:0 0 22px}
+.mr-filters button{font:inherit;font-size:12.5px;padding:5px 14px;border:1px solid var(--line);background:transparent;border-radius:7px;cursor:pointer;color:var(--ink-3)}
+.mr-filters button.active{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.mr-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:26px}
+.mr-kpi{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--paper)}
+.mr-kpi .v{font-size:27px;font-weight:700;letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
+.mr-kpi .l{font-size:11.5px;color:var(--ink-4);margin-top:5px}
+.mr-tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:2px;flex-wrap:wrap}
+.mr-tabs button{font:inherit;font-size:13px;padding:9px 16px;border:none;background:none;cursor:pointer;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px}
+.mr-tabs button.active{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.mr-table{width:100%;border-collapse:collapse;font-size:13px}
+.mr-table th{text-align:left;font-weight:600;color:var(--ink-4);font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:11px 12px;border-bottom:1px solid var(--line)}
+.mr-table td{padding:10px 12px;border-bottom:1px solid var(--paper-2);color:var(--ink-2)}
+.mr-table tr:hover td{background:var(--paper-2)}
+.mr-table .num{font-variant-numeric:tabular-nums;font-family:ui-monospace,monospace}
+.mr-table .pc{font-family:ui-monospace,monospace;font-size:12px;color:var(--accent)}
+.mr-empty{padding:30px;text-align:center;color:var(--ink-4);font-size:13px}
+@media(max-width:760px){.mr-kpis{grid-template-columns:repeat(2,1fr)}.wrap{padding:24px 18px}header.topbar{padding:12px 18px;overflow-x:auto}}
+</style></head>
+<body>
+<header class="topbar">
+  <a class="brand-link" href="/tools"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 1.5L13.4 10.6L22.5 12L13.4 13.4L12 22.5L10.6 13.4L1.5 12L10.6 10.6Z"/></svg><span class="brand">天枢<span class="sep">·</span>裁决</span></a>
+  <nav>
+    <a href="/tools">开始</a>
+    <a href="/catalog">工具</a>
+    <a href="/reports">报告</a>
+    <a href="/settings" class="superadmin-only" style="display:none">设置</a>
+    <a href="/usage" class="active">使用统计</a>
+    <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
+  </nav>
+</header>
+<div class="wrap">
+  <h1>使用统计</h1>
+  <p class="sub">跨全员的运行 · 项目（编号）· 工具 · 模型 · 成本 —— 实时统计,删除报告即从中移除。成本按「模型档位单价 × token」实算。</p>
+  <section id="multi-report">
+    <div class="mr-head"><button class="mr-dl" id="mr-export">↓ 导出 Excel</button></div>
+    <div class="mr-filters" id="mr-filters">
+      <button data-days="7">近 7 天</button>
+      <button data-days="30">近 30 天</button>
+      <button data-days="0" class="active">全部</button>
+    </div>
+    <div class="mr-kpis" id="mr-kpis"></div>
+    <div class="mr-tabs" id="mr-tabs">
+      <button data-tab="person" class="active">按个人</button>
+      <button data-tab="project">按项目(编号)</button>
+      <button data-tab="tool">按工具</button>
+      <button data-tab="model">按模型</button>
+      <button data-tab="detail">明细</button>
+    </div>
+    <div id="mr-body"></div>
+  </section>
+</div>
+<script>
+(function(){
+  const sec = document.getElementById('multi-report');
+  if (!sec) return;
+  let _days = 0, _tab = 'person', _data = null;
+  const fmtT = ts => ts ? new Date(ts*1000).toLocaleDateString('zh-CN') : '—';
+  const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const money = v => v ? ('$'+v) : '—';
+  const fmtTok = n => !n ? '—' : (n>=1e6 ? (n/1e6).toFixed(1)+'M' : (n>=1e3 ? Math.round(n/1e3)+'K' : ''+n));
+  const kpi = (v,l) => `<div class="mr-kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  const tbl = (head, rows) => rows.length
+    ? `<table class="mr-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
+    : '<div class="mr-empty">该时间范围内暂无记录</div>';
+  function renderTab(){
+    const d = _data; if (!d) return;
+    const b = document.getElementById('mr-body');
+    if (_tab==='person') b.innerHTML = tbl(['执行人','运行次数','涉及项目','最常用工具','Tokens','成本','最近活跃'],
+      d.by_person.map(p=>`<tr><td><strong>${esc(p.owner)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.projects}</td><td>${esc(p.top_tool)}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.last)}</td></tr>`));
+    else if (_tab==='project') b.innerHTML = tbl(['产品编号','产品名称','运行次数','参与人数','涉及工具','Tokens','成本','时间跨度'],
+      d.by_project.map(p=>`<tr><td class="pc">${esc(p.code)}</td><td>${esc(p.name||'—')}</td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.tools}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.first)} ~ ${fmtT(p.last)}</td></tr>`));
+    else if (_tab==='tool') b.innerHTML = tbl(['测试类型','运行次数','使用人数','涉及项目','Tokens','成本'],
+      d.by_tool.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.projects}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td></tr>`));
+    else if (_tab==='model') b.innerHTML = tbl(['模型','运行次数','使用人数','Tokens','成本'],
+      (d.by_model||[]).map(p=>`<tr><td><strong>${esc(p.model)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${fmtTok(p.tokens)}</td><td class="num">${money(p.cost)}</td></tr>`));
+    else b.innerHTML = tbl(['时间','执行人','产品编号','测试类型','模型','Tokens','成本','结果'],
+      d.detail.map(r=>`<tr><td>${fmtT(r.ts)}</td><td>${esc(r.owner)}</td><td class="pc">${esc(r.project_code||'—')}</td><td>${esc(r.tool_name)}</td><td>${esc(r.model_label||'—')}</td><td class="num">${fmtTok(r.tokens)}</td><td class="num">${money(r.cost_usd)}</td><td>${r.status==='succeeded'?'成功':esc(r.status)}</td></tr>`));
+  }
+  async function loadStats(){
+    try {
+      const r = await fetch('/api/usage/stats?days='+_days, {credentials:'same-origin'});
+      if (!r.ok) return;
+      _data = await r.json();
+      const t = _data.totals;
+      document.getElementById('mr-kpis').innerHTML =
+        kpi(t.runs,'总运行次数')+kpi(t.users,'活跃执行人')+kpi(t.projects,'覆盖项目')+kpi(t.tools,'用到工具')+kpi(money(t.cost),'总成本 USD');
+      renderTab();
+    } catch(e){}
+  }
+  sec.querySelectorAll('#mr-filters button').forEach(btn=>btn.onclick=()=>{
+    _days = parseInt(btn.dataset.days);
+    sec.querySelectorAll('#mr-filters button').forEach(b=>b.classList.toggle('active', b===btn));
+    loadStats();
+  });
+  sec.querySelectorAll('#mr-tabs button').forEach(btn=>btn.onclick=()=>{
+    _tab = btn.dataset.tab;
+    sec.querySelectorAll('#mr-tabs button').forEach(b=>b.classList.toggle('active', b===btn));
+    renderTab();
+  });
+  const exp = document.getElementById('mr-export');
+  if (exp) exp.onclick = ()=>{ window.location.href = '/api/usage/export.xlsx?days='+_days; };
+  loadStats();
+})();
+</script>
+</body></html>"""
+
+
+@app.get("/usage", response_class=HTMLResponse)
+async def usage_page(request: Request):
+    # 「使用统计」仅管理员及超管可见;其余访问回工具页
+    user = getattr(request.state, "current_user", None)
+    if not user or not user.is_admin():
+        return RedirectResponse("/tools", status_code=302)
+    return _inject_shared_overlays(USAGE_HTML)
 
 
 @app.get("/tools/{tool_id}", response_class=HTMLResponse)
@@ -12007,6 +12050,7 @@ SETTINGS_HTML = r"""<!doctype html>
     <a href="/catalog">工具</a>
     <a href="/reports">报告</a>
     <a href="/settings" class="active">设置</a>
+    <a href="/usage" class="admin-only" style="display:none">使用统计</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
   </nav>
   <div class="right" style="margin-left:auto">
@@ -12812,6 +12856,7 @@ table.users tr:hover{background:var(--paper-2)}
     <a href="/catalog">工具</a>
     <a href="/reports">报告</a>
     <a href="/settings" class="superadmin-only" style="display:none">设置</a>
+    <a href="/usage" class="admin-only" style="display:none">使用统计</a>
     <a href="/admin/users" class="active">用户管理</a>
   </nav>
   <div class="spacer"></div>
@@ -13996,6 +14041,7 @@ REPORTS_HTML = r"""<!doctype html>
     <a href="/tools">工具</a>
     <a href="/reports" class="active">报告</a>
     <a href="/settings" class="superadmin-only" style="display:none">设置</a>
+    <a href="/usage" class="admin-only" style="display:none">使用统计</a>
     <a href="/admin/users" class="admin-only" style="display:none">用户管理</a>
   </nav>
   <div class="right" style="margin-left:auto">
