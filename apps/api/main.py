@@ -5166,6 +5166,9 @@ async def _run_tool_async(
         # 弱网/断网:多档位实测数据存 meta,供 Excel 渲染
         if state.get("network_data"):
             report_meta["network_data"] = state["network_data"]
+        # 多维报告:把本次 token / 成本用量存进 meta(供使用统计聚合;历史报告没有此字段)
+        if state.get("usage"):
+            report_meta["usage"] = state["usage"]
         report_path = out_dir / f"{tool['id']}_{ctx.run_id}.json"
         report_path.write_text(
             _json.dumps(report_dump, ensure_ascii=False, indent=2),
@@ -5521,7 +5524,33 @@ TOOLS_INDEX_HTML = """<!doctype html>
 html,body{margin:0;background:var(--paper);color:var(--ink);
   font-family:var(--sans);font-weight:300;font-size:15px;line-height:1.85;
   -webkit-font-smoothing:antialiased;font-feature-settings:"palt" on}
-body{height:100vh;display:flex;flex-direction:column;overflow:hidden}
+body{min-height:100vh;overflow-x:hidden}
+.screen{min-height:100vh;display:flex;flex-direction:column}
+/* 多维报告(嵌首页,admin+) */
+.multi-report{max-width:1080px;margin:0 auto;width:100%;box-sizing:border-box;padding:48px 48px 96px;border-top:1px solid var(--line)}
+.mr-head{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:4px}
+.mr-head h2{font-size:26px;margin:0;letter-spacing:-.01em;color:var(--ink)}
+.mr-sub{color:var(--ink-4);font-size:12.5px}
+.mr-dl{margin-left:auto;font:inherit;font-size:12.5px;padding:6px 14px;border:1px solid var(--line);border-radius:7px;background:transparent;cursor:pointer;color:var(--ink-2)}
+.mr-dl:hover{background:var(--paper-2)}
+.mr-filters{display:flex;gap:8px;margin:18px 0 22px}
+.mr-filters button{font:inherit;font-size:12.5px;padding:5px 14px;border:1px solid var(--line);background:transparent;border-radius:7px;cursor:pointer;color:var(--ink-3)}
+.mr-filters button.active{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.mr-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:26px}
+.mr-kpi{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--paper)}
+.mr-kpi .v{font-size:27px;font-weight:700;letter-spacing:-.02em;color:var(--ink);font-variant-numeric:tabular-nums}
+.mr-kpi .l{font-size:11.5px;color:var(--ink-4);margin-top:5px}
+.mr-tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:2px}
+.mr-tabs button{font:inherit;font-size:13px;padding:9px 16px;border:none;background:none;cursor:pointer;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px}
+.mr-tabs button.active{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.mr-table{width:100%;border-collapse:collapse;font-size:13px}
+.mr-table th{text-align:left;font-weight:600;color:var(--ink-4);font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:11px 12px;border-bottom:1px solid var(--line)}
+.mr-table td{padding:10px 12px;border-bottom:1px solid var(--paper-2);color:var(--ink-2)}
+.mr-table tr:hover td{background:var(--paper-2)}
+.mr-table .num{font-variant-numeric:tabular-nums;font-family:var(--mono,ui-monospace,monospace)}
+.mr-table .pc{font-family:var(--mono,ui-monospace,monospace);font-size:12px;color:var(--accent)}
+.mr-empty{padding:30px;text-align:center;color:var(--ink-4);font-size:13px}
+@media(max-width:760px){.mr-kpis{grid-template-columns:repeat(2,1fr)}.multi-report{padding:32px 24px 72px}}
 a{color:inherit;text-decoration:none}
 button{font-family:inherit;cursor:pointer}
 ::selection{background:rgba(196,90,58,.22);color:var(--accent)}
@@ -5772,6 +5801,7 @@ button{font-family:inherit;cursor:pointer}
 </div>
 
 <!-- HERO -->
+<div class="screen">
 <section class="hero">
   <div class="eyebrow">天枢 · 裁决 ── AI Verdict Manual · Edition 0.1</div>
   <h1>AI 驱动的<br>软件<em>质量裁决</em>手册</h1>
@@ -5780,6 +5810,7 @@ button{font-family:inherit;cursor:pointer}
     <a class="btn primary" href="/catalog">进入工具 <span class="arrow">→</span></a>
     <a class="btn" href="/reports">查看报告</a>
     <a class="btn" href="/guide">使用说明</a>
+    <a class="btn admin-only" href="#multi-report" style="display:none">多维报告 ↓</a>
   </div>
   <div class="hero-foot">
     <span class="dot"></span>
@@ -5796,6 +5827,28 @@ button{font-family:inherit;cursor:pointer}
     <span>· 二〇二六</span>
   </div>
 </footer>
+</div><!-- /.screen -->
+
+<section class="multi-report admin-only" id="multi-report" style="display:none">
+  <div class="mr-head">
+    <h2>多维报告</h2>
+    <span class="mr-sub">谁 · 哪个项目(编号)· 哪类测试 — 跨全员使用统计 · 实时(删报告即移除)</span>
+    <button class="mr-dl" id="mr-export">↓ 导出 Excel</button>
+  </div>
+  <div class="mr-filters" id="mr-filters">
+    <button data-days="7">近 7 天</button>
+    <button data-days="30">近 30 天</button>
+    <button data-days="0" class="active">全部</button>
+  </div>
+  <div class="mr-kpis" id="mr-kpis"></div>
+  <div class="mr-tabs" id="mr-tabs">
+    <button data-tab="person" class="active">按个人</button>
+    <button data-tab="project">按项目(编号)</button>
+    <button data-tab="tool">按工具</button>
+    <button data-tab="detail">明细</button>
+  </div>
+  <div id="mr-body"></div>
+</section>
 
 <aside class="task-fab" id="task-fab" aria-label="运行中的任务">
   <div class="head">
@@ -6059,6 +6112,56 @@ function toast(msg){
 }
 
 function escapeHtml(s){ return String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+// ── 多维报告(首页嵌入,admin+;非 admin 端点返回 403 → 静默跳过,区块本就隐藏)──
+(function(){
+  const sec = document.getElementById('multi-report');
+  if (!sec) return;
+  let _days = 0, _tab = 'person', _data = null;
+  const fmtT = ts => ts ? new Date(ts*1000).toLocaleDateString('zh-CN') : '—';
+  const esc = s => String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const money = v => v ? ('$'+v) : '—';
+  const kpi = (v,l) => `<div class="mr-kpi"><div class="v">${v}</div><div class="l">${l}</div></div>`;
+  const tbl = (head, rows) => rows.length
+    ? `<table class="mr-table"><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
+    : '<div class="mr-empty">该时间范围内暂无记录</div>';
+  function renderTab(){
+    const d = _data; if (!d) return;
+    const b = document.getElementById('mr-body');
+    if (_tab==='person') b.innerHTML = tbl(['执行人','运行次数','涉及项目','最常用工具','成本','最近活跃'],
+      d.by_person.map(p=>`<tr><td><strong>${esc(p.owner)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.projects}</td><td>${esc(p.top_tool)}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.last)}</td></tr>`));
+    else if (_tab==='project') b.innerHTML = tbl(['产品编号','产品名称','运行次数','参与人数','涉及工具','成本','时间跨度'],
+      d.by_project.map(p=>`<tr><td class="pc">${esc(p.code)}</td><td>${esc(p.name||'—')}</td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.tools}</td><td class="num">${money(p.cost)}</td><td>${fmtT(p.first)} ~ ${fmtT(p.last)}</td></tr>`));
+    else if (_tab==='tool') b.innerHTML = tbl(['测试类型','运行次数','使用人数','涉及项目','成本'],
+      d.by_tool.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td class="num">${p.runs}</td><td class="num">${p.users}</td><td class="num">${p.projects}</td><td class="num">${money(p.cost)}</td></tr>`));
+    else b.innerHTML = tbl(['时间','执行人','产品编号','测试类型','结果'],
+      d.detail.map(r=>`<tr><td>${fmtT(r.ts)}</td><td>${esc(r.owner)}</td><td class="pc">${esc(r.project_code||'—')}</td><td>${esc(r.tool_name)}</td><td>${r.status==='succeeded'?'成功':esc(r.status)}</td></tr>`));
+  }
+  async function loadStats(){
+    try {
+      const r = await fetch('/api/usage/stats?days='+_days, {credentials:'same-origin'});
+      if (!r.ok) return;
+      _data = await r.json();
+      const t = _data.totals;
+      document.getElementById('mr-kpis').innerHTML =
+        kpi(t.runs,'总运行次数')+kpi(t.users,'活跃执行人')+kpi(t.projects,'覆盖项目')+kpi(t.tools,'用到工具')+kpi(money(t.cost),'总成本 USD');
+      renderTab();
+    } catch(e){}
+  }
+  sec.querySelectorAll('#mr-filters button').forEach(btn=>btn.onclick=()=>{
+    _days = parseInt(btn.dataset.days);
+    sec.querySelectorAll('#mr-filters button').forEach(b=>b.classList.toggle('active', b===btn));
+    loadStats();
+  });
+  sec.querySelectorAll('#mr-tabs button').forEach(btn=>btn.onclick=()=>{
+    _tab = btn.dataset.tab;
+    sec.querySelectorAll('#mr-tabs button').forEach(b=>b.classList.toggle('active', b===btn));
+    renderTab();
+  });
+  const exp = document.getElementById('mr-export');
+  if (exp) exp.onclick = ()=>{ window.location.href = '/api/usage/export.xlsx?days='+_days; };
+  loadStats();
+})();
 
 load();
 </script>
@@ -9405,6 +9508,177 @@ async def api_reports(request: Request) -> dict[str, Any]:
         "saved": saved,
         "total_saved": len(saved),
     }
+
+
+# ══════════════════ 多维报告:使用统计(跨用户聚合,实时从当前报告集算)══════════════════
+def _usage_parse_ts(meta: dict[str, Any], mtime: float) -> float:
+    """报告时间戳 → epoch 秒。优先 produced_at_utc(ISO),否则文件 mtime。"""
+    s = meta.get("produced_at_utc") or meta.get("produced_at")
+    if s:
+        try:
+            import datetime as _dt
+            return _dt.datetime.fromisoformat(str(s).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            pass
+    return mtime
+
+
+def _collect_usage_records() -> list[dict[str, Any]]:
+    """扫描当前全部报告(磁盘 + 内存)→ 扁平用量记录。跨用户(供 admin+ 聚合);
+    删除的报告因文件已不在,自然不计入。"""
+    recs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    valid = {t["id"] for t in TOOL_CATALOG}
+    out_dir = Path(settings.report_output_dir)
+    if out_dir.exists():
+        for p in out_dir.glob("*.json"):
+            stem = p.stem
+            if "_" not in stem:
+                continue
+            tool_id = run_id = None
+            for tid in sorted(valid | {"tdr"}, key=lambda s: -len(s)):
+                if stem.startswith(tid + "_"):
+                    tool_id, run_id = tid, stem[len(tid) + 1:]
+                    break
+            if tool_id is None:
+                tool_id, run_id = stem.split("_", 1)
+            try:
+                d = _json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            m = (d or {}).get("meta") or {}
+            u = m.get("usage") or {}
+            seen.add(run_id)
+            recs.append({
+                "run_id": run_id, "tool_id": tool_id,
+                "owner": m.get("owner_username") or m.get("owner_email") or "(未知)",
+                "project_code": m.get("project_code") or "", "project_name": m.get("project_name") or "",
+                "ts": _usage_parse_ts(m, p.stat().st_mtime), "status": "succeeded",
+                "cost_usd": float(u.get("cost_usd") or 0), "tokens": int(u.get("input_tokens") or 0) + int(u.get("output_tokens") or 0),
+            })
+    for r in _RUNS.values():
+        if r.get("run_id") in seen:
+            continue
+        u = r.get("usage") or {}
+        recs.append({
+            "run_id": r.get("run_id"), "tool_id": r.get("tool_id"),
+            "owner": r.get("owner_username") or "(未知)",
+            "project_code": r.get("project_code") or "", "project_name": r.get("project_name") or "",
+            "ts": r.get("started_at") or 0, "status": r.get("status") or "running",
+            "cost_usd": float(u.get("cost_usd") or 0), "tokens": int(u.get("input_tokens") or 0) + int(u.get("output_tokens") or 0),
+        })
+    return recs
+
+
+def _usage_aggregate(days: int = 0) -> dict[str, Any]:
+    recs = _collect_usage_records()
+    if days and days > 0:
+        cutoff = _time.time() - days * 86400
+        recs = [r for r in recs if (r["ts"] or 0) >= cutoff]
+    tname = {t["id"]: t.get("name", t["id"]) for t in TOOL_CATALOG}
+
+    def agg(keyf):
+        g: dict[Any, dict[str, Any]] = {}
+        for r in recs:
+            e = g.setdefault(keyf(r), {"runs": 0, "cost": 0.0, "users": set(), "projects": set(), "tools": {}, "first": None, "last": None})
+            e["runs"] += 1; e["cost"] += r["cost_usd"]; e["users"].add(r["owner"])
+            if r["project_code"]:
+                e["projects"].add(r["project_code"])
+            e["tools"][r["tool_id"]] = e["tools"].get(r["tool_id"], 0) + 1
+            ts = r["ts"] or 0
+            e["first"] = ts if e["first"] is None else min(e["first"], ts)
+            e["last"] = ts if e["last"] is None else max(e["last"], ts)
+        return g
+
+    by_person = []
+    for owner, e in agg(lambda r: r["owner"]).items():
+        tt = max(e["tools"].items(), key=lambda x: x[1])[0] if e["tools"] else ""
+        by_person.append({"owner": owner, "runs": e["runs"], "projects": len(e["projects"]),
+                          "top_tool": tname.get(tt, tt), "cost": round(e["cost"], 2), "last": e["last"]})
+    by_person.sort(key=lambda x: -x["runs"])
+
+    by_project = []
+    for code, e in agg(lambda r: r["project_code"] or "(无编号)").items():
+        pn = next((r["project_name"] for r in recs if (r["project_code"] or "(无编号)") == code and r["project_name"]), "")
+        by_project.append({"code": code, "name": pn, "runs": e["runs"], "users": len(e["users"]),
+                          "tools": len(e["tools"]), "cost": round(e["cost"], 2), "first": e["first"], "last": e["last"]})
+    by_project.sort(key=lambda x: -x["runs"])
+
+    by_tool = []
+    for tid, e in agg(lambda r: r["tool_id"]).items():
+        by_tool.append({"tool_id": tid, "name": tname.get(tid, tid), "runs": e["runs"],
+                       "users": len(e["users"]), "projects": len(e["projects"]), "cost": round(e["cost"], 2)})
+    by_tool.sort(key=lambda x: -x["runs"])
+
+    totals = {"runs": len(recs), "users": len({r["owner"] for r in recs}),
+              "projects": len({r["project_code"] for r in recs if r["project_code"]}),
+              "tools": len({r["tool_id"] for r in recs}),
+              "cost": round(sum(r["cost_usd"] for r in recs), 2),
+              "tokens": sum(r["tokens"] for r in recs)}
+    detail = sorted(recs, key=lambda r: -(r["ts"] or 0))[:1000]
+    for r in detail:
+        r["tool_name"] = tname.get(r["tool_id"], r["tool_id"])
+    return {"totals": totals, "by_person": by_person, "by_project": by_project,
+            "by_tool": by_tool, "detail": detail, "days": days}
+
+
+@app.get("/api/usage/stats")
+async def api_usage_stats(request: Request, days: int = 0) -> dict[str, Any]:
+    """多维报告聚合:个人 / 项目 / 工具 / 总计。管理员及超管可见(跨用户)。"""
+    require_admin(request)
+    return _usage_aggregate(days)
+
+
+@app.get("/api/usage/export.xlsx")
+async def api_usage_export(request: Request, days: int = 0) -> Any:
+    """多维报告导出 Excel(总览 / 按个人 / 按项目 / 按工具 / 明细)。管理员及超管。"""
+    require_admin(request)
+    data = _usage_aggregate(days)
+    import io as _io, datetime as _dt
+    from urllib.parse import quote as _q
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from packages.reporting.seo_excel import _F, _header, _row, _title_row, _widths
+
+    def _d(ts):
+        try:
+            return _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "—"
+        except Exception:
+            return "—"
+
+    rng = "全部" if not days else f"近{days}天"
+    wb = Workbook(); wb.remove(wb.active)
+    ws = wb.create_sheet("01 总览"); _widths(ws, [20, 26])
+    _title_row(ws, "多维报告 · 使用统计总览", 2, f"统计范围:{rng}")
+    t = data["totals"]; r = 4
+    for lbl, val in [("总运行次数", t["runs"]), ("活跃执行人", t["users"]), ("覆盖项目", t["projects"]),
+                     ("用到工具", t["tools"]), ("总成本(USD)", t["cost"]), ("总 tokens", t["tokens"])]:
+        c = ws.cell(r, 1, lbl); c.font = Font(name=_F, bold=True, color="1F4E5F")
+        c.fill = PatternFill("solid", fgColor="E8F1F2")
+        ws.cell(r, 2, val); r += 1
+    ws = wb.create_sheet("02 按个人"); _widths(ws, [20, 12, 12, 22, 12, 18])
+    r = _title_row(ws, "按个人", 6); _header(ws, r, ["执行人", "运行次数", "涉及项目", "最常用工具", "成本USD", "最近活跃"]); r += 1
+    for p in data["by_person"]:
+        _row(ws, r, [p["owner"], p["runs"], p["projects"], p["top_tool"], p["cost"], _d(p["last"])]); r += 1
+    ws = wb.create_sheet("03 按项目"); _widths(ws, [22, 24, 12, 12, 12, 12, 32])
+    r = _title_row(ws, "按项目(编号)", 7); _header(ws, r, ["产品编号", "产品名称", "运行次数", "参与人数", "涉及工具", "成本USD", "时间跨度"]); r += 1
+    for p in data["by_project"]:
+        _row(ws, r, [p["code"], p["name"], p["runs"], p["users"], p["tools"], p["cost"], f'{_d(p["first"])} ~ {_d(p["last"])}']); r += 1
+    ws = wb.create_sheet("04 按工具"); _widths(ws, [22, 12, 12, 12, 12])
+    r = _title_row(ws, "按工具(测试类型)", 5); _header(ws, r, ["测试类型", "运行次数", "使用人数", "涉及项目", "成本USD"]); r += 1
+    for p in data["by_tool"]:
+        _row(ws, r, [p["name"], p["runs"], p["users"], p["projects"], p["cost"]]); r += 1
+    ws = wb.create_sheet("05 明细"); _widths(ws, [18, 18, 20, 22, 10])
+    r = _title_row(ws, "逐条明细(近 1000 条)", 5); _header(ws, r, ["时间", "执行人", "产品编号", "测试类型", "结果"]); r += 1
+    for d in data["detail"]:
+        _row(ws, r, [_d(d["ts"]), d["owner"], d["project_code"] or "—", d.get("tool_name") or d["tool_id"],
+                     "成功" if d["status"] == "succeeded" else d["status"]]); r += 1
+    buf = _io.BytesIO(); wb.save(buf)
+    fn = f"多维报告_使用统计_{rng}.xlsx"
+    disp = f"attachment; filename=\"usage_report.xlsx\"; filename*=UTF-8''{_q(fn)}"
+    return Response(content=buf.getvalue(),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": disp})
 
 
 @app.get("/api/reports/export")
