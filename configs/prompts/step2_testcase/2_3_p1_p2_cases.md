@@ -1,7 +1,7 @@
 ---
 id: step2.3
 name: 异常分支 + 边界值用例
-version: 3.1.0
+version: 3.2.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000
@@ -18,6 +18,8 @@ output_schema: step2_exception_boundary_cases
 
 ## 从覆盖矩阵接力 + 穷尽展开
 2_1 已标出每个功能点适用的 `exception` / `boundary` 维度。本步**对每个功能点逐项展开**，**禁止用"等/类似/若干/包括但不限于"含糊带过**——适用的场景必须逐条写成用例。
+
+**上游缺口关联**：2_1 的 `must_cover_upstream` 里凡属于**异常/边界性质**的上游缺口（如「失败锁定策略未定义」「超长输入处理未定义」），本步**必须**长出对应用例并在 `covers_upstream` 标上 `up_id`（如 `["HOLE-04"]`）——这些缺口在 2_5 会被逐条审计，漏一个即定稿不合格。无对应上游缺口的用例写 `covers_upstream: []`。
 
 ### A. 异常分支（exception）——对每个输入、每个分支
 逐条枚举（适用才写）：
@@ -239,6 +241,7 @@ output_schema: step2_exception_boundary_cases
       ],
       "expected": "页面提示「手机号或密码错误」，停留在登录页，未登录成功",
       "ambiguity": false,
+      "covers_upstream": [],
       "remark": "连续错误 N 次是否锁定、锁多久，材料未定义，见 Q-01，相关锁定用例预期待澄清",
       "automation_tag": "manual",
       "status": "designed",
@@ -259,7 +262,8 @@ output_schema: step2_exception_boundary_cases
       ],
       "expected": "材料未规定超长昵称的处理方式（截断 / 拦截提示），需澄清后定预期；见 Q-02",
       "ambiguity": true,
-      "remark": "字段最大长度待产品确认后回填具体数值",
+      "covers_upstream": ["HOLE-09"],
+      "remark": "覆盖上游缺口 HOLE-09（昵称长度边界未定义）；字段最大长度待产品确认后回填具体数值",
       "automation_tag": "manual",
       "status": "designed",
       "evidence": "材料原文：『填写昵称完成注册』，未给昵称长度限制"

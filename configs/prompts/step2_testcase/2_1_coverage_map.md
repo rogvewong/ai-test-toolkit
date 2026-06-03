@@ -1,7 +1,7 @@
 ---
 id: step2.1
 name: 测试覆盖矩阵（功能点 × 测试维度）
-version: 3.1.0
+version: 3.2.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000
@@ -15,6 +15,14 @@ output_schema: step2_coverage_matrix
 
 输入材料（已上线产品的功能描述/页面，或设计稿/原型/PRD）：
 {{业务材料}}
+
+## 〇、先抽「上游缺口必须覆盖清单」（材料含 step1 需求分析结果时，这是第一步，最高优先级）
+若材料里**含上游产物**——「需求分析结果 / step1 输出 / issues / `HOLE-编号` / 缺口清单 / missing_areas / open_questions」中任意一类——**第一件事**就是把这些上游缺口**逐条抽出来**，钉成 `must_cover_upstream[]`：
+- **逐条穷尽抽取**：材料里每个 `HOLE-xx`、每条 issue（按其标题）、每条 missing_area、每条 open_question，**一个都不能漏**地抽成一项，每项含 `up_id`（沿用材料原编号，如 `HOLE-04`；材料没编号就按 `UP-01` 顺序补号）、`title`（缺口标题）、`evidence`（材料里的原文摘录）。禁止用「等/类似/若干」并掉任何一条。
+- **钉死覆盖承诺**：`must_cover_upstream` 里的**每一个缺口，后续 2_2~2_4 都必须至少长出 1 条验证用例**，并在该用例的 `covers_upstream` 标上这个 `up_id`。这条在 2_5 会被 `upstream_coverage_audit` 逐项核对，**漏一个缺口 = 定稿不合格**。
+- **映射到功能点**：每个上游缺口尽量关联到下面将铺出的功能点（`related_fp`），让「上游缺口 → 功能点 → 用例」三段可追溯；一时关联不上的缺口也要保留在清单里（`related_fp` 留空待 2_2~2_4 认领），绝不能因为「暂时没对应功能点」就丢弃。
+- 实测教训：曾经喂了 18 个上游缺口，生成用例只覆盖 14 个、漏了 4 个（约 22% 上游缺口无对应用例）。**本清单就是堵这个漏的源头——抽全了，后面才不会漏。**
+- 材料里**没有**任何上游缺口清单时，`must_cover_upstream` 写 `[]`，不硬造缺口。
 
 ## 一、先把功能点铺全（横轴）
 通读材料，**逐一**列出所有可测的功能点 / 用户操作 / 业务规则。颗粒度要细到"一个独立可验证的行为"：
@@ -41,6 +49,24 @@ output_schema: step2_coverage_matrix
 
 对每个功能点，在 `dimensions` 里只列**适用**的维度，并对每个适用维度用一句话写出"这里大概要覆盖什么"（作为 2_2~2_4 展开用例的指引，不写完整用例）。
 
+## 二之二、给每个功能点标「适用哪些设计层」（8 设计层维度，对齐 step1）
+除了上面的测试维度，再给**每一个**功能点标它适用哪些**设计层**——这是为了让用例**系统覆盖** 8 个设计层、不漏面，与 step1 的分层口径对齐。8 层（沿用 step1 命名）：
+
+| 设计层 | 含义 | 大致对应的测试方向 |
+|---|---|---|
+| L1 | 业务逻辑 | 核心规则、计算、状态判定、流程正确性 |
+| L2 | UI 框架与信息架构 | 页面骨架、布局、导航结构、信息分组与层级 |
+| L3 | 跳转路由导航 | 页面间跳转、深链、返回、路由参数、tab/面包屑 |
+| L4 | 系统反馈·四态·弱网重连 | loading/空/异常/成功四态、toast/弹窗反馈、弱网断网超时重连 |
+| L5 | 数据呈现·一致性 | 数据正确展示、回显、多处一致、缓存/刷新一致 |
+| L6 | 权限·可见性 | 角色可见性、入口显隐、越权拦截、登录态门禁 |
+| L7 | 全局·横切 | 跨页通用能力（搜索/分享/通知/主题/国际化等横切关注点） |
+| L8 | 非功能 | 性能、容量、兼容、安全、可观测等非功能属性 |
+
+- 对每个功能点，在 `design_layers` 里列出它**适用**的层（用 `["L1","L4","L5"]` 这种数组），不适用的不硬凑。
+- 这只是**轻量标注**，给 2_2~2_4 展开和 2_5 清点当依据——**不要**在本步搞「逐功能点×8 层」的完整网格、也不要为每层写用例（用例在 2_2~2_4 出）。
+- 顶层再给一个 `design_layer_hit`（`{L1:适用的功能点数, ... L8:...}`），让 2_5 的 `layer_coverage_audit` 有对照基线。
+
 ## 三、估算每个功能点的用例规模
 对每个功能点，给一个粗略的用例条数预估 `est_case_count`，并标 `est_priority_hint`（该功能点用例的大致优先级重心：P0/P1/P2，按下方判定标准，不要写死）。这只是规划，真正定优先级在写用例时按影响逐条判定。
 
@@ -62,6 +88,9 @@ output_schema: step2_coverage_matrix
 ## 输出格式（合法 JSON，禁止任何前后说明文字）
 ```json
 {
+  "must_cover_upstream": [
+    {"up_id": "HOLE-04", "title": "登录失败锁定策略未定义", "evidence": "step1 需求分析 issue：『材料未定义连续失败是否锁定、锁几次、锁多久』", "related_fp": "FP-01"}
+  ],
   "functional_points": [
     {
       "fp_id": "FP-01",
@@ -78,6 +107,7 @@ output_schema: step2_coverage_matrix
         "state": "已注销/已冻结账号能否登录（材料未定义→待澄清）",
         "permission": ""
       },
+      "design_layers": ["L1", "L4", "L5", "L6"],
       "est_case_count": 12,
       "est_priority_hint": "P0"
     }
@@ -85,7 +115,8 @@ output_schema: step2_coverage_matrix
   "coverage_matrix_summary": {
     "total_functional_points": 0,
     "by_module": [{"module": "用户登录", "fp_count": 0, "est_case_count": 0}],
-    "dimension_hit_count": {"main": 0, "exception": 0, "boundary": 0, "security": 0, "compat": 0, "perf": 0, "state": 0, "permission": 0}
+    "dimension_hit_count": {"main": 0, "exception": 0, "boundary": 0, "security": 0, "compat": 0, "perf": 0, "state": 0, "permission": 0},
+    "design_layer_hit": {"L1": 0, "L2": 0, "L3": 0, "L4": 0, "L5": 0, "L6": 0, "L7": 0, "L8": 0}
   },
   "missing_areas": [
     {"area_id": "MA-01", "title": "登录失败锁定策略未定义", "why_missing": "材料只写登录成功路径，未提连续失败是否锁定、锁几次、锁多久", "related_fp": "FP-01", "evidence": "材料通篇仅描述成功登录，无失败计数相关文案"}

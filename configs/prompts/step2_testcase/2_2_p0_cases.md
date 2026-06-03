@@ -1,7 +1,7 @@
 ---
 id: step2.2
 name: P0 主流程正向用例
-version: 3.1.0
+version: 3.2.0
 model_tier: opus
 temperature: 0.2
 max_tokens: 16000
@@ -22,6 +22,8 @@ output_schema: step2_p0_main_cases
 - 每个**主要用户角色**走核心路径各算一条（如"普通用户下单成功""会员用折扣价下单成功"）。
 - 关键数据的"写入 + 回显"要能被验证：提交后回到列表/详情，能看到刚写入的值。
 - 关键状态流转的正向路径（待支付→已支付）在这里出正向那一跳；非法跳转留给 2_4。
+
+**上游缺口关联**：若 2_1 的 `must_cover_upstream` 里有某个上游缺口（HOLE-xx/issue）正好靠某条主流程用例来验证，就在该用例的 `covers_upstream` 标上对应 `up_id`（如 `["HOLE-04"]`）。**不是每条用例都要绑**——主流程多数是域库自发用例，无对应缺口的写 `covers_upstream: []`。
 
 ## 每条用例的硬要求（缺一不合格）
 - `preconditions`：精确前置，**含要构造的数据/账号**。例：「已注册手机号 13800138000、密码 Test1234，且当前停在登录页」。要造数据就写清造什么数据。
@@ -66,6 +68,7 @@ case 字段结构遵循 meta.yaml 的统一 `cases` 契约（id / module / title
       ],
       "expected": "登录成功，页面跳转到首页，右上角显示已登录用户昵称",
       "precondition_gap": false,
+      "covers_upstream": [],
       "remark": "",
       "automation_tag": "manual",
       "status": "designed",

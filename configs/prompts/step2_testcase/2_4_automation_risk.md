@@ -1,7 +1,7 @@
 ---
 id: step2.4
 name: 权限·越权·安全·多端·状态机用例
-version: 3.1.0
+version: 3.2.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000
@@ -15,6 +15,8 @@ output_schema: step2_security_state_cases
 
 输入材料：
 {{业务材料}}
+
+**上游缺口关联**：2_1 的 `must_cover_upstream` 里凡属于**权限/越权/安全/状态机性质**的上游缺口（如「越权边界未定义」「顶号策略未定义」「回调验签未说明」），本步**必须**长出对应用例并在 `covers_upstream` 标上 `up_id`——这些缺口在 2_5 会被逐条审计，漏一个即定稿不合格。无对应上游缺口的用例写 `covers_upstream: []`。
 
 ## A. 权限 / 角色（permission）
 从材料识别出**所有角色**（未登录访客 / 普通用户 / 会员 / 客服 / 运营 / 管理员…），对**每个敏感操作** × **每个角色**展开三类用例：
@@ -193,7 +195,8 @@ output_schema: step2_security_state_cases
       ],
       "expected": "页面提示「无权访问」或「订单不存在」，看不到用户B 的任何订单内容",
       "ambiguity": false,
-      "remark": "水平越权，前置须用真实 B 资源 id/URL，不可伪造",
+      "covers_upstream": ["HOLE-12"],
+      "remark": "水平越权，前置须用真实 B 资源 id/URL，不可伪造；覆盖上游缺口 HOLE-12（订单越权边界未定义）",
       "automation_tag": "manual",
       "status": "designed",
       "evidence": "材料原文：『用户只能查看自己的订单』"
