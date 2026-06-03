@@ -1,39 +1,67 @@
 step_id: network_resilience
 name: 弱网与断网测试
-version: 3.0.0
-# 工具定性：交互型。Claude 亲自用 set_network 切真网络档(底层 CDP Network.emulateNetworkConditions)、
-# navigate/reload 真加载、inspect/screenshot/console 观察真实表现，基于真实观察下结论。
-# 能力边界(诚实)：只读加载观察探针——不提交订单/不触发写操作。
-# 因此「幂等 / 重复扣款 / 离线写入队列 / 断网提交丢数据 / 重连只同步一次」等写操作语义无法直接断言，
-# 只能作为 risk 列出并注明「需 step4_api(接口测试) 或 step6_agent(执行验证) 验证」。
+version: 3.2.0
+# 工具定性：交互型 · 双阶段真测。
+# Phase1(Python 采集器)：在 6 个网络档位(online/4g/fast_3g/slow_3g/2g/offline)+ 断网→恢复 load 首页，
+#   产出结构化加载矩阵(覆盖 A 网络环境 + B 加载层：加载耗时/FCP/白屏/资源数/控制台错误)。
+# Phase2(agentic，由 _execute.md 驱动)：在各限速档位下真驱动前端操作
+#   (set_network 切档 + navigate/click/form_input 操作 + inspect 观察)，
+#   看应用「对用户说了什么(C 用户提示 11 点)」「操作成没成、会不会资损(D 操作/写/资损)」。
+# 两阶段结果都注入 documents 供 synthesize 分析。
+# 能力边界(诚实)：只读为主——不做不可逆提交(支付/下单/删除)。
+# 因此「弱网超时重试是否真重复扣款 / 是否幂等 / 离线写入队列 / 断网提交是否丢数据 / 重连只同步一次」等
+#   后端写语义无法直接断言，只观察前端提示与防重表现，资损本身作为 risk 列出并注明
+#   「需 step4_api(抓包重放) 或 step6_agent(测试环境执行) 验证」。
 order:
-  - net_1_scope.md         # 第1步 范围与档位规划：盘点待测页面 + 只读路径 + 定义 5 个真实可跑的网络档位
-  - net_2_weak.md          # 第2步 弱网逐档真测：4g/slow_3g/2g 下逐页真加载，记录加载态/白屏/可见内容/图片到位/控制台错误/加载感知时长
-  - net_3_offline.md       # 第3步 断网行为真测：offline 下友好错误页+重试 vs 白屏崩溃，离线缓存，断网只读导航
-  - net_4_resilience.md    # 第4步 恢复与韧性真测：offline→online 完整序列(是否自愈)，弱网下可观察的重试/超时行为
-  - net_5_finalize.md      # 第5步 容错定稿：按统一报告契约汇总真实实测，看不见的写语义降为 risk 转交
+  - net_1_scope.md         # 第1步 范围与档位规划：盘点待测页面 + 识别关键操作(登录/搜索/播放/下单) + 6 档位规划 + 用户提示11点核查清单 + 资损登记
+  - net_2_weak.md          # 第2步 弱网逐档加载+加载态提示：4g/fast_3g/slow_3g/2g 真加载+真操作，记录加载耗时/白屏/资源/控制台(B) + 加载态C1/慢网分级C2/降级C7
+  - net_3_offline.md       # 第3步 断网态+恢复+用户提示：offline 断网提示C4/超时C3/重试C6/恢复提示C8，友好提示 vs 空白崩溃，离线缓存，断网中只读操作
+  - net_4_resilience.md    # 第4步 操作·写·资损+容错：写操作弱网提示C9/避免静默失败C11/弱网超时重试→重复提交重复扣款(幂等)/中途断网/关键流程各档走查/长连接重连/乐观更新回滚
+  - net_5_finalize.md      # 第5步 容错定稿：按统一报告契约汇总双阶段实测，A/B/C/D 全范围核对，看不见的写语义/资损降为 risk 转交
 common_system_suffix: |
   通用规则：
   - 所有输出必须是合法 JSON，禁止任何前后说明文字。
   - 严重度（severity）使用枚举：critical / high / medium / low / info。
-  - 【网络档位枚举（仅这 5 档，与底层 CDP Network.emulateNetworkConditions 能力一一对应）】：
-    online / 4g / slow_3g / 2g / offline。
+  - 【网络档位枚举（仅这 6 档，与底层 CDP Network.emulateNetworkConditions 及 _NET_DRIVE_PROFILES 一一对应）】：
+    online / 4g / fast_3g / slow_3g / 2g / offline。
     · online   = 不节流（基线 / 恢复目标）
     · 4g       = 下行~4Mbps 上行~3Mbps RTT~20ms（良好移动网）
+    · fast_3g  = 下行~1.6Mbps 上行~750kbps RTT~150ms（快3G）
     · slow_3g  = 下行~400kbps 上行~400kbps RTT~400ms（慢3G）
-    · 2g       = 下行~280kbps 上行~256kbps RTT~800ms（2G/极弱网）
+    · 2g       = 下行~256kbps 上行~256kbps RTT~800ms（2G/极弱网）
     · offline  = 完全断网，所有请求失败
-    CDP 无法模拟丢包率 / 网络抖动 / DNS 失败 / TLS 错误 / captive portal / 真机切网 / 双卡 / VPN，
-    禁止出现 packet_loss / unstable / high_latency / poor_2g / 3g / wifi / dns_failure / tls_failure 等档位，
-    这些场景只能作为「需真机或其他工具验证」的 risk 列出，本工具不真测、不据此下结论。
+    CDP 无法模拟丢包率 / 网络抖动 / 中途切网 / flaky / 网络类型切换(WiFi↔4G) / DNS 失败 / TLS 错误 / captive portal / 真机切网 / 双卡 / VPN，
+    禁止出现 packet_loss / unstable / high_latency / poor_2g / 3g / wifi / dns_failure / tls_failure / network_switch 等档位，
+    这些场景只能作为「需真机或其他工具验证」的 risk 列出（标 unknown），本工具不真测、不据此下结论。
   - operation_id 必须遵循 NET-{AREA:3}-{SERIAL:0000}（AREA = SCP/WEAK/OFFL/RECV/FIN）。
   - case_id（cases[].id）必须遵循 NTC-{AREA:3}-{SERIAL:0000}（AREA 同上）。issue_id 用 NET-{AREA:3}-{SERIAL:0000}。
     全工具仅这一套 ID 规则，禁止再出现 NTW- / NTW-CHK / NTW-CON / NTW-RTY / NTW-CCH / NTW-QUE 等旧前缀。
-  - 【证据铁律 · 交互型】结论只能基于 Claude 亲自动作观察到的真实结果；evidence 必须写「动作序号 + 网络档位 profile + 实测值或截图 label」。
-    凡未真实切档真测到的页/档，标 unknown 或留待测，禁止凭训练知识编造毫秒数/加载表现，示例 JSON 里的数字均为占位 <实测后填>。
+  - 【双阶段执行口径】本工具两阶段真测：
+    · Phase1(采集器) 在 6 档位 load 首页测加载矩阵 → 覆盖 A 网络环境 + B 加载层(加载耗时/FCP/白屏/资源数/控制台错误)。
+    · Phase2(agentic，_execute.md 驱动) 在各限速档位真驱动前端操作 → 覆盖 C 用户提示层(11 点) + D 操作/写/资损层。
+    Phase2 动作严格只有 5 个、名称一字不差：set_network / navigate / click / form_input / inspect，
+    每轮输出 JSON 用 `action` 字段写动作名(不是 tool)、`args` 写参数，发现问题放 `finding`，done=true 收尾。
+  - 【完整测试范围 A/B/C/D，定稿须逐层有结论】
+    A 网络环境：online/4g/fast_3g/slow_3g/2g/offline + 断网→恢复；CDP 测不了的(丢包/抖动/中途切网/flaky/网络类型切换/真机)标 unknown/需真机。
+    B 加载表现层：各档首屏加载耗时/FCP、白屏与否、加载完成、资源数、控制台错误。
+    C 用户提示层(★重点，逐档/逐操作核查应用「对用户说了什么」11 点)：
+      1 加载态提示 2 慢网分级提示 3 超时提示 4 断网提示 5 错误文案质量 6 重试提示 7 降级提示
+      8 恢复提示 9 写操作弱网提示(进行中/成功/失败/防重复提交) 10 提示时机一致性
+      11 ★避免静默失败(操作失败却无提示、用户以为成功——尤其支付/提交/兑换，弱网红线)。
+    D 操作/写/资损层：写操作弱网行为、弱网超时重试→重复提交/重复扣款幂等(资损)、请求中途断网、
+      关键流程各档走查(登录/搜索/播放/下单)、长连接重连、未完成操作恢复/数据补偿/乐观更新回滚。
+  - 【证据铁律 · 交互型】结论只能基于 Claude 亲自动作观察到的真实结果；evidence 必须写
+    「动作序号 + 网络档位 profile + 实测值(Phase2 inspect 的 toasts/bodyText/loadingEls/buttons 关键字段 或 Phase1 加载矩阵档位字段值)」。
+    凡未真实切档真测到的页/档/操作，标 unknown 或留待测，禁止凭训练知识编造毫秒数/加载表现/用户提示，示例 JSON 里的数字均为占位 <实测后填>。
     cases.status 标 executed_pass/executed_fail 时 evidence 必须指向真实执行记录；没真跑到的只能 designed，不得进 issues、不得影响 verdict。
-  - 【只读安全护栏】本工具只做 navigate/reload/inspect/screenshot/console；绝不点击或提交任何写操作
-    （提交/下单/支付/付款/删除/发布/注销/清空），不输入真实凭据，截图避开密码/token 明文。prod 默认只读。
+  - 【资损红线 · 诚实边界】弱网超时重试是否真重复提交/重复扣款、后端是否幂等、离线写入队列、断网提交是否真丢数据、
+    重连后是否只同步一次 —— 属后端写语义，本工具只读为主、不做不可逆提交，看不见。
+    Phase2 只观察前端「写操作弱网提示与防重表现」(C9：是否 disabled/转圈防重复点击、有无进行中/成功/失败回执)与「是否静默失败」(C11)；
+    资损本身作为 risk 列出，actual 注明「未真实提交，基于页面提示推断」，并注明需 step4_api(抓包重放) 或 step6_agent(测试环境执行) 验证。
+    绝不编造「已重复扣款」「已幂等」「指数退避 1/2/4s」等未观测结论。
+  - 【只读安全护栏】prod 默认只读：除非材料明确写出是测试/staging 且允许写，否则绝不真点不可逆写操作
+    （提交/下单/支付/付款/提现/转账/删除/发布/注销/清空/确认兑换）；写操作以 observe_only 只观察提示，不真正完成提交。
+    不输入真实凭据，不批量/循环提交，不制造脏数据，截图/抽取文案避开密码/token 明文。
   - confidence.score 在 [0,1]，自我保守评估。
   - 如材料不足（如缺真实可访问 URL 导致无法切档真测），应在 gate_decision 中置 reject_with_report，不要臆造内容。
 

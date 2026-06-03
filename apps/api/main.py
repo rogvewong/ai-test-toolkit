@@ -2893,16 +2893,155 @@ async def _network_run_collect(ctx: Any, state: dict[str, Any]) -> None:
     ctx.inputs["documents"] = (docs or "") + "\n\n" + _netdata_to_prompt(nd)
     state.setdefault("logs", []).append({
         "ts": _time.time(), "event": "net.collected", "profiles": len(nd.get("profiles", []))})
+    # Phase2:限速下驱动前端真实操作 —— 补「用户提示(C深)+ 操作/写/资损(D层)」
+    try:
+        await _network_drive_agentic(ctx, state, url)
+    except Exception as exc:
+        state.setdefault("logs", []).append({
+            "ts": _time.time(), "event": "net.drive.failed", "error": str(exc)[:200]})
+
+
+_NET_DRIVE_PROFILES: dict[str, dict[str, Any]] = {
+    "online":  {"offline": False, "dl": -1, "ul": -1, "lat": 0},
+    "4g":      {"offline": False, "dl": 4 * 1024 * 1024 // 8, "ul": 3 * 1024 * 1024 // 8, "lat": 20},
+    "fast_3g": {"offline": False, "dl": 1600 * 1024 // 8, "ul": 750 * 1024 // 8, "lat": 150},
+    "slow_3g": {"offline": False, "dl": 400 * 1024 // 8, "ul": 400 * 1024 // 8, "lat": 400},
+    "2g":      {"offline": False, "dl": 256 * 1024 // 8, "ul": 256 * 1024 // 8, "lat": 800},
+    "offline": {"offline": True, "dl": 0, "ul": 0, "lat": 0},
+}
+
+
+async def _network_drive_agentic(ctx: Any, state: dict[str, Any], url: str) -> None:
+    """弱网 Phase2:在各限速档位下真驱动前端操作,观察【用户提示 + 操作结果 + 资损】(C深 + D层)。
+    采集器(Phase1)只 load 首页测加载指标;本阶段补「操作/写/提示」层。注入 documents 供 synthesize 分析。
+    """
+    import asyncio as _aio
+    from packages.core.agent import agent_loop
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        return
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 390, "height": 844})
+        cdp = await page.context.new_cdp_session(page)
+        await cdp.send("Network.enable")
+        cur = {"profile": "online"}
+
+        async def navigate(a: dict[str, Any]) -> str:
+            tgt = a.get("url") or url
+            try:
+                r = await page.goto(tgt, timeout=40000, wait_until="domcontentloaded")
+                await _aio.sleep(1.5)
+                return f"已打开 {page.url} | HTTP {r.status if r else '?'} | 标题: {await page.title()}"
+            except Exception as e:
+                return f"打开失败(当前【{cur['profile']}】档): {type(e).__name__}: {str(e)[:150]}"
+
+        async def set_network(a: dict[str, Any]) -> str:
+            p = (a.get("profile") or "online").lower()
+            cfg = _NET_DRIVE_PROFILES.get(p) or _NET_DRIVE_PROFILES["online"]
+            cur["profile"] = p
+            try:
+                await cdp.send("Network.emulateNetworkConditions", {
+                    "offline": cfg["offline"], "latency": cfg["lat"],
+                    "downloadThroughput": cfg["dl"], "uploadThroughput": cfg["ul"]})
+                desc = "断网" if cfg["offline"] else ("下行%dB/s 延迟%dms" % (cfg["dl"], cfg["lat"]))
+                return "已切到【%s】档位(%s)。现在做操作,观察这一档下的用户提示与结果。" % (p, desc)
+            except Exception as e:
+                return "切档失败: " + str(e)[:120]
+
+        async def click(a: dict[str, Any]) -> str:
+            try:
+                if a.get("text"):
+                    await page.get_by_text(a["text"], exact=False).first.click(timeout=10000)
+                elif a.get("selector"):
+                    await page.click(a["selector"], timeout=10000)
+                else:
+                    return "需提供 text 或 selector"
+                await _aio.sleep(1.6)
+                return f"已点击(【{cur['profile']}】档) | 当前 {page.url}"
+            except Exception as e:
+                return f"点击失败/无响应(【{cur['profile']}】档): {str(e)[:160]}"
+
+        async def form_input(a: dict[str, Any]) -> str:
+            try:
+                val = str(a.get("value", ""))
+                if a.get("placeholder"):
+                    await page.get_by_placeholder(a["placeholder"]).first.fill(val, timeout=8000)
+                    tgt = a["placeholder"]
+                elif a.get("selector"):
+                    await page.fill(a["selector"], val, timeout=8000)
+                    tgt = a["selector"]
+                else:
+                    return "需提供 selector 或 placeholder"
+                return f"已填 {tgt} = {val[:30]}"
+            except Exception as e:
+                return f"填写失败: {str(e)[:150]}"
+
+        async def inspect(a: dict[str, Any]) -> str:
+            # 重点抽：加载态/弹窗提示/错误文案/按钮 —— 用于判断「用户提示」质量
+            try:
+                sig = await page.evaluate(
+                    "() => ({title:document.title,"
+                    "bodyText:(document.body.innerText||'').slice(0,800),"
+                    "loadingEls:[...document.querySelectorAll('[class*=load i],[class*=spin i],[class*=skeleton i]')].length,"
+                    "toasts:[...document.querySelectorAll('[class*=toast i],[class*=dialog i],[class*=modal i],[class*=alert i],[role=alert]')].map(e=>(e.innerText||'').trim()).filter(Boolean).slice(0,8),"
+                    "buttons:[...document.querySelectorAll('button,a')].map(e=>(e.innerText||'').trim()).filter(Boolean).slice(0,20)})")
+                return _json.dumps(sig, ensure_ascii=False)[:2000]
+            except Exception as e:
+                return f"抽取失败: {str(e)[:150]}"
+
+        tools = {"navigate": navigate, "set_network": set_network,
+                 "click": click, "form_input": form_input, "inspect": inspect}
+        ex_md = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "network_resilience" / "_execute.md"
+        try:
+            sysp = ex_md.read_text(encoding="utf-8")
+        except Exception:
+            sysp = ("你在各网络档位真驱动前端操作,观察【用户提示 + 操作结果 + 资损】。动作:set_network(profile)/"
+                    "navigate/click/form_input/inspect。每轮输出 JSON {thought, action, args, finding, done}。"
+                    "重点:慢网/断网下有无 loading/超时/错误/断网/恢复提示、操作能否完成、弱网超时重试是否重复提交。")
+        task = (f"待测前端: {url}\n请在 online/4g/fast_3g/slow_3g/2g/offline 各档位下,"
+                f"用 set_network 切档 + navigate/click/form_input 驱动关键操作(如搜索/进入详情/播放/登录/提交),"
+                f"每档位 inspect 观察【用户提示】(loading/慢网提示/超时/错误文案/断网提示/恢复提示)与操作结果;"
+                f"特别测:断网中操作、弱网超时后重试是否重复提交(资损)。只读为主,不点删除/支付等不可逆按钮。\n\n"
+                f"参考材料:\n{(ctx.inputs.get('documents') or '')[:2500]}\n\n现在输出第一步动作的 JSON。")
+        state["progress"] = "弱网下驱动操作实测中…"
+        res = await agent_loop(
+            ctx.llm, sysp, task, tools, max_steps=26,
+            on_step=lambda r: state.update({"progress": f"弱网操作实测 第{r.get('step')}步: {r.get('action','')} [{cur['profile']}档]"}),
+            files=getattr(ctx, "files", None))
+        try:
+            await browser.close()
+        except Exception:
+            pass
+
+    lines = ["", "", "## 操作级弱网实测(Phase2:各档位驱动操作,观察用户提示 + 操作结果 + 资损)"]
+    for t in res.get("transcript", []):
+        a = t.get("args") or {}
+        ident = a.get("profile", "") or a.get("text", "") or a.get("url", "") or a.get("selector", "")
+        lines.append(f"- [{t.get('step')}] {t.get('action','')} {ident} → {str(t.get('result',''))[:240]}")
+    if res.get("findings"):
+        lines.append("\n弱网操作实测已标记的问题:")
+        for f in res["findings"]:
+            lines.append(f"- {_json.dumps(f, ensure_ascii=False)[:300]}")
+    ctx.inputs["documents"] = (ctx.inputs.get("documents") or "") + "\n".join(lines)
+    state.setdefault("logs", []).append({
+        "ts": _time.time(), "event": "net.drive",
+        "steps": res.get("steps"), "findings": len(res.get("findings") or [])})
 
 
 async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
-    """弱网/断网:基于真实多档位实测数据,1 次 LLM 调用产出结论(替代 5 子步骤,提速)。"""
+    """弱网/断网:基于真实多档位实测数据(Phase1 加载矩阵 + Phase2 操作级实测),产出结论。"""
     nd = state.get("network_data") or {}
     data_text = _netdata_to_prompt(nd)
+    _docs = ctx.inputs.get("documents") or ""
+    if "## 操作级弱网实测" in _docs:
+        data_text += "\n\n" + _docs[_docs.index("## 操作级弱网实测"):][:6500]
     system = (
-        "你是资深性能 / 容错测试专家。下面是对某页面在不同网络档位下的【真实实测数据】"
-        "(Playwright CDP 真实限速 / 断网测得)。只基于这些真实数据,**逐档位、逐场景穷尽分析**,"
-        "产出审计结论(合法 JSON)。弱网容错是细节中的细节,必须挖到底。\n\n"
+        "你是资深弱网 / 容错测试专家。下面是对某前端的【真实实测数据】,含两部分:"
+        "① Phase1 多档位首页加载矩阵(Playwright CDP 真实限速/断网测得:各档 load_ms/fcp_ms/spinner/error_ui/timed_out + 断网恢复);"
+        "② Phase2 各档位下真驱动前端操作的记录(操作动作 + inspect 观察到的用户提示/弹窗文案/结果)。"
+        "只基于这些真实数据,**逐档位、逐操作、逐维度穷尽分析**,产出审计结论(合法 JSON)。弱网容错是细节中的细节,必须挖到底。\n\n"
         "【深度铁律 · 逐档位逐场景穷尽,禁止用『等/类似』含糊带过,适用必列尽】\n"
         "1) 逐网络档位(online / 4g / slow_3g / 2g / offline 凡实测到的)分别核:"
         "是否可达 reached、HTTP status、加载耗时 load_ms、首屏 fcp_ms、正文长度 text_len、资源数 resources、控制台报错 console_errors。"
@@ -2912,8 +3051,17 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
         "4) 断网态(offline):是否给出明确『网络不可用』提示(offline_has_error_ui)还是空白(offline_text_len 过小);"
         "是否有缓存 / Service Worker 兜底内容。\n"
         "5) 断网恢复:恢复网络后页面是否自动重连 / 重新加载 / 数据恢复(recovered / recovered_text_len),还是需手动刷新、卡在错误态。\n"
-        "6) 资损与幂等风险:弱网超时重试、断网重连可能导致的重复提交 / 重复扣款 / 数据不一致——**页面加载实测看不到后端幂等**,"
-        "这类一律写入 risks(需后端确认),**不要凭空判定为已发现 issue**。\n\n"
+        "6) 资损与幂等风险:弱网超时重试、断网重连可能导致的重复提交 / 重复扣款 / 数据不一致——**后端幂等页面看不到**,"
+        "这类一律写入 risks(需后端确认),**不要凭空判定为已发现 issue**。\n"
+        "7) 【用户提示层 · 基于 Phase2 操作记录逐档逐操作核】弱网体验核心,逐条审 11 点:"
+        "①加载态提示(慢网有无 loading/骨架,不长时间白屏)②慢网分级提示(超时给『网络较慢正在加载』)"
+        "③超时提示(给『加载超时请重试』不静默卡死)④断网提示(明确『网络已断开』不空白)"
+        "⑤错误文案质量(说人话/准确区分超时vs服务错vs无网/带重试入口)⑥重试提示(有重试入口+反馈)"
+        "⑦降级提示⑧恢复提示(『网络已恢复』+自动重连)⑨写操作弱网提示(进行中/成功/失败/防重复提交)"
+        "⑩提示时机一致(不重复弹/不误报)⑪★避免静默失败(操作失败却无任何提示、用户以为成功——尤其支付/提交,弱网红线,最高严重度)。"
+        "每条结论引 Phase2 里 inspect 观察到的具体提示文案/动作记录。\n"
+        "8) 【操作/写/资损层 · 基于 Phase2】各档关键操作(搜索/详情/播放/登录/提交)能否完成;弱网超时后重试是否重复提交;"
+        "断网中操作的处理。能从 Phase2 真实观察到的(如点击无反馈、重复提交)真断言;后端幂等/真实扣款看不到的入 risks。\n\n"
         "【接地气 · 零幻觉】只列实测数据真实体现的问题;每条 issue 的 current_behavior / evidence 必须引用"
         "**具体档位与实测字段值**(如 `profiles[slow_3g].load_ms`、`recovery.offline_has_error_ui=false`);"
         "实测没覆盖的(后端幂等、真实弱网下用户主观感受、真机弱网)一律不臆测,标 unknown 或入 risks。\n"
