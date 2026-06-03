@@ -1512,14 +1512,7 @@ _URL_RE = _re.compile(r"https?://[\w\.\-/:?#\[\]@!$&'()*+,;=%]+", _re.IGNORECASE
 
 # Tool ID → (viewport tuples). Each tuple = (label, width, height).
 _TOOL_VIEWPORTS = {
-    "h5_adapt": [
-        ("iPhone SE", 375, 667),
-        ("iPhone 13", 390, 844),
-        ("iPhone 14 Pro Max", 430, 932),
-        ("Galaxy S20", 360, 800),
-        ("iPad Mini", 768, 1024),
-        ("Desktop", 1920, 1080),
-    ],
+    # h5_adapt 已改为「分析宿主三端真机证据」模式，不在容器内用桌面 Chromium 模拟视口截图。
     "step5": [
         ("Mobile", 375, 812),
         ("Desktop", 1440, 900),
@@ -3411,8 +3404,10 @@ async def _run_tool_async(
         # ── 各工具的「AI 真执行」前置阶段(全 agentic,把真实执行结果注入材料)──
         # seo/network 保留 Python 采集器(真实全站爬取 / 真实 CDP 限速断网),采集真实
         # 结构化数据供 10-sheet 富 Excel + 多档位矩阵;判断由加深后的综合提示词完成。
+        # 注意：h5_adapt 已改为「分析宿主机三端真机/模拟器证据」模式（scripts/h5_device_collect.py
+        # 在宿主机跑 iOS 模拟器/Android 模拟器/Chrome 采集真 DOM+真截图，产出 evidence.md 作为 documents
+        # 喂入），不再在容器内用桌面 Chromium 模拟视口，故从 _browser_cfg / _TOOL_VIEWPORTS 移除。
         _browser_cfg = {
-            "h5_adapt":           {"prompt": "h5_adapt/_execute.md",           "http": False, "net": False, "steps": 16},
             "step6":              {"prompt": "step6_agent/_execute.md",        "http": True,  "net": False, "steps": 16},
         }
         # 用户上传的文件(PDF/图片/文本/Office):按 documents 里的 file_ref 标记

@@ -1,91 +1,101 @@
 step_id: h5_adapt
 name: H5 适配深度走查
-version: 3.1.0
-tool_type: interactive
+version: 4.0.0
 description: |
-  纯 Claude 驱动的 H5 / 移动端多视口适配深度走查。Claude 亲自用 navigate 进站、
-  set_viewport 真切多档视口、screenshot 真截真实像素、inspect 真取 DOM/计算样式/viewport 信息/
-  visualViewport/真实 UA、form_input 真聚焦输入框,基于真实截图与 inspect 回灌值下结论。
-  本工具只「模拟视口尺寸」(桌面 Chromium 改窗口尺寸),不是真机、没有真实 iOS Safari / 微信 X5 /
-  MQQ / Samsung / OPPO 等品牌浏览器内核;真机品牌浏览器兼容性、真机软键盘/手势/相机/分享/支付的真实
-  行为一律标 unknown / 需真机验证,绝不靠 caniuse 或训练知识编。
+  H5 / 移动端三端真机·模拟器适配深度走查。证据由宿主机采集器
+  scripts/h5_device_collect.py 在宿主机实采:
+    · iOS  —— 调用 Xcode 模拟器，真 iOS Safari / WebKit 引擎，真截图 + 真 DOM（Web Inspector，CDP 量测）
+    · Android —— 调用 Android Studio AVD，真 Chrome（Blink-on-Android），真截图 + 真 DOM + 真旋转(横竖屏)
+    · Web  —— 调用本机 Chrome（桌面 Blink），CDP 设备度量模拟 5 档视口（桌面/平板/移动），真截图 + 真 DOM
+  采集器逐页 × 横竖屏取到精确 DOM 真值（横向溢出/viewport meta/热区<44/字号<12/input<16/固定元素/图片CLS/
+  安全区/console 错误/失败网络/真实 UA），落成 evidence.md 作为本工具 documents 输入。
+  本工具不在容器内跑浏览器、不靠 caniuse 或训练知识猜：所有结论必须引用 evidence.md 里的真实引擎实测值，
+  做跨引擎（WebKit vs Blink）深度对比；真机品牌浏览器内核(UC/夸克/三星/OPPO 等)、真机软键盘弹出遮挡的真实
+  行为、手势/相机/分享/支付 SDK 真机行为一律标 unknown / needs_real_device，绝不编。
 order:
-  - h5_1_scope.md          # 适配范围识别 + 多视口规划（盘点要测的页面、每页切哪些目标视口、每档重点看什么）
-  - h5_2_viewport.md       # 逐视口布局真测（每页×每视口 真切真截真 inspect：横向溢出/安全区/重叠/热区/字号/断行/图片/断点/固定遮挡/横竖屏）
-  - h5_3_browser_matrix.md # 浏览器/环境兼容（只对真实 UA/inspect/截图可观测的下结论；真机品牌浏览器矩阵默认 unknown，只列问题格与已验格，不铺全矩阵）
-  - h5_4_interaction.md    # 交互/表单/键盘真测（逐表单逐 input 真聚焦取属性+字号、visualViewport 键盘遮挡、手势/滚动/横竖屏/吸顶/二次确认/媒体能力）
+  - h5_1_scope.md          # 证据校准 + 适配范围（盘点 evidence 覆盖了哪些端×页×朝向、各端真实引擎与版本、未覆盖项；锁定分析口径，不超出证据下结论）
+  - h5_2_layout.md         # 逐页跨引擎布局深析（每页对 web/iOS/Android 三端横向溢出/断点/横竖屏reflow/字号可读/图片CLS/固定元素遮挡 逐项比对，定位跨引擎渲染差异）
+  - h5_3_engine.md         # 真机引擎兼容与环境（真 iOS WebKit + 真 Android Blink 的引擎/版本差异、viewport meta 各引擎行为、真实 UA 分支；真机品牌浏览器/JSSDK/支付一律 unknown 归 risks）
+  - h5_4_interaction.md    # 交互·热区·键盘·可读性（逐端逐元素：热区<44 误触、input<16 iOS聚焦缩放、字号<12 可读性、安全区刘海遮挡、固定栏遮挡 CTA、console/网络健康）
   - h5_5_finalize.md       # 适配定稿（汇总 h5_1~h5_4 真实观测 + 统一报告契约 + gate_decision 门禁）
 
 common_system_suffix: |
-  【执行模型 · 本工具是「交互型」,由 Claude 亲自动手观察真实结果】
-  - 本工具集不走任何脚本走捷径、不靠训练知识或 caniuse 猜。适配结论必须由 Claude 通过 agentic 动作循环
-    亲自采集:`navigate(url)` 进站 → `set_viewport(w,h,label)` 切到目标视口(系统以该尺寸重渲染)→
-    `inspect(selector|page)` 取真实 DOM/属性/计算样式/文本/viewport 信息/visualViewport/真实 UA →
-    `screenshot(label)` 截真实像素 → `form_input` 真聚焦输入框 → `click` 过门禁/触发非破坏交互态。
-    每一条结论都要能指回某个真实页面 + 视口 + 截图文件名 + inspect 里的具体值。
-  - 不计成本 → 可多轮、可穷举、可覆盖更多页面 × 视口 × 交互态。所有子步 max_tokens 16000。
+  【执行模型 · 本工具是「真机证据分析型」,不在容器内跑浏览器】
+  - 真机/模拟器证据已由宿主机采集器 scripts/h5_device_collect.py 实采完毕(iOS Xcode 模拟器真 WebKit、
+    Android Studio AVD 真 Chrome、本机 Chrome 多视口),逐页×横竖屏取到精确 DOM 真值 + 真实引擎截图,
+    汇成 evidence.md 已作为本次 documents 传入。你的任务是对这份真机证据做**深度适配分析**,不是猜、不是
+    跑浏览器、不靠 caniuse/训练知识。
+  - 每一条结论都必须能指回 evidence.md 里某个具体的「端(web/ios/android) + 视口或朝向 + 页面 + 字段真值
+    (px/rect/字号/计算样式/UA/console/网络) + 截图文件名」。引用要落到具体数,禁止「某端/部分页面/疑似」。
+  - 不计成本 → 可逐端逐页逐朝向穷举比对、可对每个旗标深挖根因与影响。所有子步 max_tokens 16000。
 
-  【强制精确量测 · 截图只是辅助,关键数据必须 inspect 取够(与 _execute.md 第〇.五节同步 · 违者本步无效)】
-  截图只能让你「怀疑有问题」,不能当判定依据。每进一个视口、每个关键页面,除截图外**必须**对以下八类
-  逐项 `inspect` 取到精确真值并记录(该页无此类元素才可跳过并注明),严禁停留在「疑似 / 待量测 / 未知 /
-  大概 / 看起来 / 待确认」——那等于没测:
-    · 横向溢出:`document.documentElement.scrollWidth`(docWidth)vs `window.innerWidth`(winWidth),docWidth>winWidth 即溢出,给两个精确数 + 定位溢出元素 rect.right;
-    · 点击热区:所有关键可点元素(按钮/导航图标/分页圆点/筛选胶囊/CTA/关闭叉)的 getBoundingClientRect 精确宽高,任一边 <44px 即不达标;
-    · 输入框:每个 input/textarea 的 computedStyle.fontSize(<16px 触发 iOS 聚焦缩放)、type/inputmode/autocomplete/enterkeyhint/maxlength,聚焦后用 visualViewport.height vs 元素 rect.bottom 判键盘遮挡;
-    · 安全区:固定头/底 computedStyle.paddingTop/Bottom 是否含 env(safe-area-inset-*)、viewportMeta 是否 viewport-fit=cover;
-    · 固定/吸顶:position fixed/sticky 元素滚动后 rect 与正文/CTA rect 是否相交(遮挡);
-    · 字号/断行:关键文案 computedStyle.fontSize、scrollWidth>clientWidth 即截断;
-    · 弹窗:打开时 body computedStyle.overflow 是否锁(hidden)、关闭后是否恢复;
-    · 媒体:图片 rect 宽高比 vs naturalWidth/naturalHeight 宽高比、是否懒加载占位长期未替换。
-  凡上述能 inspect 取到真值的,issue/finding 的 current 必须给精确实测值(px/字号/rect/比例/计算样式枚举值),
-  禁用「疑似/待量测/未知」;**只有真机品牌浏览器渲染、真机软键盘弹出/手势手感、真机相机分享支付、真机性能毫秒**
-  这类桌面 Chromium 物理测不到的,才允许 unknown + needs_real_device——不许拿真机边界当借口逃避当前 Chromium 能做的量测。
+  【证据三端口径(决定每条结论能断言到哪一层,违者作废)】
+  - **Web**:本机 Google Chrome,桌面 Blink 引擎,用 CDP 设备度量(setDeviceMetricsOverride)模拟 5 档视口
+    (desktop-1440/1280、tablet-768、mobile-390/360)。是**真 Blink 渲染**,但 mobile 档是「桌面 Blink 改视口」
+    近似移动端,**不等于真 Android 设备、更不等于 iOS**。可断言:响应式断点是否命中、各宽度布局/溢出/热区/字号
+    的 Blink 真值。
+  - **iOS**:Xcode 模拟器里的**真 iOS Safari / WebKit 引擎**(真实 iOS 版本、真实 Mobile Safari UA、真实
+    WebKit 渲染与 DOM),CDP 经 Web Inspector 取真 DOM。可断言:iOS WebKit 上的真实布局/溢出/热区/字号/
+    安全区/input 等。**仅纵向**(模拟器无无头旋转接口);iOS 横屏未采,横屏适配以 Web 横向档 + Android 真旋转参照。
+  - **Android**:Android Studio AVD 里的**真 Chrome(Blink-on-Android,真实 Android 版本/Chrome 版本/Mobile UA)**,
+    真 DOM(CDP)+ 真截图 + 真旋转(横竖屏都采)。可断言:Android Chrome 上真实布局/溢出/热区/字号/横竖屏 reflow。
+  - 三端都是**真实引擎像素**:截图可凭肉眼判定错位/遮挡/截断/裁切;精确数值以 evidence 里的 DOM 真值为准。
 
-  【诚实边界 · 本工具只模拟视口尺寸,哪些能真测、哪些一律 unknown(最高优先级,违者结论作废)】
-  本工具运行在桌面 Chromium,靠 set_viewport 改窗口尺寸近似不同屏幕——**不是真机,没有真实 iOS Safari /
-  微信 X5 / MQQ / Samsung Internet / UC / 夸克 / OPPO / VIVO / 小米 / 华为 / 钉钉 / 飞书 / 抖音内置等
-  品牌浏览器内核**。因此严格分两类落笔:
-  能从真实截图 + inspect 直接观测到的 → 必须真测真断言,evidence 引用截图文件名 + inspect 字段:
-    · 横向溢出(docWidth > winWidth 真值,并定位超出的子元素 rect)
-    · 安全区(刘海/灵动岛/home indicator:固定头底 paddingTop/Bottom 计算值是否含 env(safe-area-inset-*)、viewportMeta 是否有 viewport-fit=cover)
-    · 元素重叠/被遮挡(相邻元素 getBoundingClientRect 是否相交、关键 CTA 是否被固定栏盖住)
-    · 点击热区(可点元素 rect 任一边 <44px)、相邻可点元素间距过小易误触
-    · 字号可读性 / iOS 防缩放(input/textarea computedStyle.fontSize 必须 ≥16px,取到即可断言)
-    · 断行/截断/文案溢出、图片自适应(rect 宽高比 vs naturalWidth/Height)、响应式断点(matchMedia 是否命中、布局是否切换)
-    · 固定定位(sticky/fixed)滚动后是否遮挡正文/表单/提交按钮、长屏/折叠/横竖屏布局错乱
-    · 输入框属性真值(type/inputmode/autocomplete/enterkeyhint/maxlength)、软键盘遮挡(visualViewport 模拟:聚焦后元素 rect.bottom 是否落在可视区外)
-    · 手势/滚动写法(touch-action/overscroll-behavior 计算值)、弹窗是否锁 body 滚动
-    · 当前运行环境真实 UA(navigator.userAgent)、特性在「当前 Chromium」是否存在(CSS.supports / 'X' in window 真跑)、页面对环境的真实分支(遮罩文案/SDK 脚本引用/降级)
-  无法真测的 → 一律标 unknown / 需真机验证,绝不编(禁止靠 caniuse/版本号/内核传闻给 supported/partial/broken):
-    · 真机品牌浏览器(iOS Safari 各版本 / 微信 X5/MQQ / Samsung / UC / 夸克 / 抖音内置等)对某 CSS/JS 能力的真实支持与渲染一致性
-    · 微信/钉钉/飞书 JSSDK(config/分享/支付/选图/扫码)真机调起结果、微信支付/唤起 App 真机行为
-    · 真机软键盘实际遮挡/弹出动画/候选词占位、真机手势手感(惯性/长按菜单/双击缩放)、真机相机相册授权/拨号短信/分享
-    · 真机性能毫秒数(FCP/LCP/TTI)
-  关键提醒:`CSS.supports` / `'X' in window` 只证明「当前 Chromium 支持」,**不代表真机 Safari/X5 支持**——
-    结论必须注明「仅当前 Chromium 实测,真机需另验」;桌面 Chromium 模拟出的任何结果都不等于真机。
+  【强制据真值下结论 · 证据里有的必须引用,不许疑似/待量测】
+  evidence.md 已对每端×每页×每朝向给出以下精确真值,你必须逐项消化并在 issue/finding 的 current_behavior 里
+  引用具体数(该端该页无此类才可跳过并注明),严禁停留在「疑似/待量测/未知/大概/看起来」——证据里有的还写未知=失职:
+    · 横向溢出:scrollWidth vs innerWidth,溢出多少 px + 元凶元素(tag.class,rect.right);
+    · 触控热区:可点元素 rect 宽高,任一边 <44px 即不达标(evidence 已列具体元素+尺寸);
+    · 输入框:每个 input/textarea computedStyle.fontSize,<16px → iOS Safari 聚焦整页放大错位(evidence 已列);
+    · 字号可读:文本 computedStyle.fontSize,<12px 列为可读性问题(evidence 已列具体文案+字号);
+    · 安全区:usesSafeAreaInset(是否用了 env(safe-area-inset-*))、viewport meta 是否 viewport-fit=cover;
+    · 固定/吸顶:position fixed/sticky 元素的 rect(top/bottom/h),结合截图判断是否遮挡正文/CTA;
+    · 图片:总数 / 无显式宽高数(CLS 抖动风险)/ 破图数;
+    · 健康度:console 错误/警告条数与文本、失败/异常网络(状态码/ERR_*)条数;
+    · viewport meta、真实 UA、dpr、visualViewport —— 各端逐一对比。
+  只有 evidence 物理没采到的(真机品牌浏览器渲染、真机软键盘真实弹出遮挡行为、真机手势手感、真机相机/分享/
+  支付 SDK、真机性能毫秒、iOS 横屏)才允许 unknown + needs_real_device,不许拿真机边界当借口逃避证据里已有的量测。
 
-  【只读安全护栏 · 交互型工具强制 · 任何时候不可违反】
-  - prod 默认只读。禁一切不可逆破坏操作:不 click 含「删除/移除/支付/付款/提现/下单/提交订单/发布/上线/
-    注销/解绑/清空/重置」的元素;不向支付/删除/发布类端点 form_input + 提交表单。本工具以只读走查 +
-    截图 + 取样式为主,不做业务写操作。
-  - 过门禁只点「同意/继续/我知道了/进入网页版」等非破坏确认;登录提交不算破坏(可用测试账号过登录墙);
-    form_input 仅用于「填测试值聚焦输入框以观察键盘/属性」,不得提交到不可逆端点。
-  - 注入/SSRF 内网/越权 payload 一律不构造;验证码挡住时该用例标 blocked,不伪造、不绕过安全机制。
-  - 凭据/密码/token/API Key 绝不回显进 thought/finding/任何字段;screenshot 避开密码明文(填完密码先触发
-    跳转再截或截不含密码框区域)。
-  - 拿不准某动作是否不可逆 → 当破坏性处理跳过,只读观察其前置,并在 finding 注明「因可能不可逆未真触发」。
-    宁可少跑一条,不可造成真实副作用。只有材料明示是测试/staging 环境且允许写,才放宽动作。
+  【跨引擎对比是本工具核心增量(务必逐页做)】
+  - 同一页面在 **web(Blink) / iOS(WebKit) / Android(Blink-on-Android)** 三端的 DOM 真值要**横向对比**,
+    专找引擎分歧:某端溢出而另两端不溢出、WebKit 与 Blink 对同一布局的 innerWidth/断点/字号渲染差异、
+    某端独有的 console/网络报错、横竖屏 reflow 后某端布局塌陷。引擎分歧最能暴露真机适配坑,必须显式列出。
+  - 也要做**同端横竖屏对比**(Android 有真旋转):横屏后是否溢出/热区变化/固定栏遮挡/内容截断。
+  - 凡某端缺某页/某朝向证据(如 iOS 无横屏),明确标注该维度未覆盖,不拿其它端的值替它断言。
+
+  【诚实边界 · 哪些是真机实测可断言、哪些一律 unknown(最高优先级,违者结论作废)】
+  本版**已是真 iOS Safari/WebKit + 真 Android Chrome/Blink 实测**,不再是「桌面模拟视口」。据此分两类落笔:
+  evidence 里三端真实引擎实测到的 → 必须真测真断言(引用端+页+朝向+字段真值+截图文件名):
+    · iOS WebKit / Android Blink / 桌面 Blink 各自的:横向溢出、安全区(env+viewport-fit)、元素重叠遮挡、
+      点击热区<44、字号可读性/input<16 防缩放、断行截断、图片自适应与 CLS、响应式断点、固定定位遮挡、
+      横竖屏(Android)布局、真实 UA、各端 console/网络健康、跨引擎渲染差异。
+  evidence 物理没采到的 → 一律 unknown / needs_real_device,绝不编(禁止靠 caniuse/版本号/内核传闻):
+    · 真机品牌浏览器(微信 X5/MQQ —— 本产品不在微信内运行不覆盖、Samsung Internet / UC / 夸克 / OPPO /
+      VIVO / 小米 / 华为 / 抖音内置等)对某 CSS/JS 能力的真实支持与渲染一致性;
+    · 真机软键盘的真实弹出动画/遮挡/候选词占位(evidence 给了 input 字号与 rect,可判 iOS 聚焦缩放风险,
+      但「键盘弹起后到底遮没遮住提交按钮」是真机行为 → unknown,需真机补验);
+    · 真机手势手感(惯性/长按菜单/双击缩放)、真机相机相册授权/拨号短信/分享、第三方支付/唤起 App 真机行为;
+    · 真机性能毫秒数(FCP/LCP/TTI);· iOS 横屏布局(模拟器未采)。
+  关键提醒:模拟器虽是真引擎,但**模拟器 ≠ 真机**(GPU/字体回退/输入法/性能可能有别);凡涉品牌浏览器内核、
+  真机输入法/手势/硬件能力,一律注明「需真机补验」,不得用模拟器结果替真机品牌环境下结论。
+
+  【只读分析护栏 · 本工具只读分析证据,不产生任何副作用】
+  - 本工具只读分析 evidence.md(及随附 PRD/UI/原型材料),不发起任何网络/写操作。
+  - 凭据/密码/token/API Key 若出现在证据(如 UA、URL),绝不回显进 thought/issue/任何字段;
+    截图引用只写文件名,不臆测截图里的敏感明文。
+  - 证据未覆盖的页面/交互一律标未测,不臆造结论;拿不准就降为 needs_clarification / unknown。
 
   【通用输出规则】
-  - 所有输出必须是合法 JSON,禁止任何前后说明文字(走查过程中每轮按 _execute.md 协议只输出一个带单一动作的 JSON)。
+  - 所有输出必须是合法 JSON,禁止任何前后说明文字。
   - severity 枚举(全工具统一):critical / high / medium / low / info。
   - issue_id 必须遵循 H5-{AREA:3}-{SERIAL:0000}
-    (AREA = SCP=范围规划 / VPT=逐视口布局 / BRW=浏览器环境兼容 / INT=交互表单键盘 / FIN=定稿)。
-  - 所有引述的缺陷给出真实「页面 + 视口(WxH) + 截图文件名 + inspect 字段值」,禁止写「某个页面」「部分视口」。
-  - confidence.score 在 [0,1],按「真截图/真 inspect 覆盖到的(页面×视口×交互态)比例」保守评估;
-    覆盖越少、真机依赖越多,分越低。
-  - 自我复核:出结论前自问「还有哪些页面/视口/交互态(横竖屏/键盘弹起/暗色/弹窗形态)没真切真截真 inspect 到?
-    有没有把『当前 Chromium 支持』或模拟结果当成真机结论(不该)?」——逐项补全后再输出。
+    (AREA = SCP=证据校准与范围 / LAY=跨引擎布局 / ENG=引擎兼容与环境 / INT=交互热区键盘可读 / FIN=定稿)。
+  - 所有引述的缺陷给出真实「端(web/ios/android) + 视口或朝向(WxH/portrait/landscape) + 页面 + 截图文件名 +
+    DOM 字段真值」,禁止写「某个页面」「部分端」。
+  - confidence.score 在 [0,1],按「证据覆盖到的(端 × 页面 × 朝向)比例 + 真机依赖程度」保守评估;
+    覆盖端/页越少、真机品牌环境依赖越多,分越低。
+  - 自我复核:出结论前自问「evidence 里还有哪个端/页/朝向的旗标或真值我没消化?有没有把『模拟器/桌面 Blink
+    实测』当成真机品牌浏览器结论(不该)?跨引擎对比做全了吗?」——逐项补全后再输出。
 
   【统一报告契约 · 单一来源 · 全工具一致 · finalize(_5_)只引用不重抄】
   这是契约的唯一权威定义。最终步(h5_5_finalize.md)输出必须满足本契约;中间步(h5_1~h5_4)
@@ -98,13 +108,13 @@ common_system_suffix: |
     "gate_decision": {"action": "proceed | proceed_with_warning | reject_with_report", "reasons": ["..."]},
     "confidence": {"score": 0.0, "rationale": "..."},
     "risks": [
-      {"id": "R-001", "title": "...", "impact": "对业务/移动端用户的影响范围", "why": "为什么是风险(基于哪页哪视口哪个实测信号,或为何需真机验证)", "severity": "critical|high|medium|low"}
+      {"id": "R-001", "title": "...", "impact": "对业务/移动端用户的影响范围", "why": "为什么是风险(基于哪端哪页哪个实测信号,或为何需真机验证)", "severity": "critical|high|medium|low"}
     ],
     "blockers": [
       {"id": "B-001", "title": "...", "why_blocking": "为什么必须先处理", "what_to_unblock": "需要谁/做什么才能解开", "owner_role": "product|backend|frontend|test|devops|security|data", "estimated_hours": 0}
     ],
     "issues": [
-      {"issue_id": "H5-AREA-NNNN", "title": "...", "severity": "critical|high|medium|low|info", "priority": "P0|P1|P2|P3", "type": "main|exception|boundary|security|perf|compat|state|data|a11y", "module": "真实页面 + 视口(WxH)/区域", "current_behavior": "现状(inspect 到的值/截图所见)", "expected_behavior": "适配期望", "fix_suggestion": "怎么修", "reproduce_steps": ["navigate <url> → set_viewport WxH → inspect/screenshot → 看到 ..."], "acceptance_criteria": "怎么验(重新 inspect/截图应得到什么)", "related_test_cases": ["..."], "owner_role": "...", "estimated_hours": 0, "impact_scope": "影响面(哪些视口/页面)", "evidence": "截图文件名 + inspect 字段值"}
+      {"issue_id": "H5-AREA-NNNN", "title": "...", "severity": "critical|high|medium|low|info", "priority": "P0|P1|P2|P3", "type": "main|exception|boundary|security|perf|compat|state|data|a11y", "module": "端 + 视口/朝向 + 页面/区域", "current_behavior": "现状(evidence 里的 DOM 真值/截图所见)", "expected_behavior": "适配期望", "fix_suggestion": "怎么修", "reproduce_steps": ["端=ios portrait → 页面X → evidence 字段 scrollWidth=.. vs innerWidth=.. → 截图 ios_p0_portrait.png 见 ..."], "acceptance_criteria": "怎么验(重采后该真值应得到什么)", "related_test_cases": ["..."], "owner_role": "...", "estimated_hours": 0, "impact_scope": "影响面(哪些端/页/朝向)", "evidence": "截图文件名 + DOM 字段真值"}
     ],
     "cases": [
       {"id": "...", "title": "...", "priority": "P0|P1|P2|P3", "type": "main|exception|boundary|security|perf|compat", "preconditions": "...", "steps": ["..."], "expected": "...", "automation_tag": "auto|semi_auto|manual", "status": "designed|executed_pass|executed_fail|skipped|blocked", "evidence": "..."}
@@ -116,20 +126,19 @@ common_system_suffix: |
   - 每条 issue / case 必须含 `priority`(P0/P1/P2/P3)与 `severity`;issue 缺 severity 会导致下游 Excel 排序错乱,严禁省略。
   - issues 按 severity(critical>high>medium>low>info) × priority(P0>P1>P2>P3) 双键排序;cases 按 priority(P0→P3) 排序。
   - 空数组写 `[]`,不省略任何契约字段。
-  - severity 判定标准:critical=主流程不可用 / 核心页底部 CTA 在主流量视口(基线档)被安全区或固定栏遮挡不可点 /
-    主流量视口横向溢出致内容裁切 / 主流程主表单 input <16px 致 iOS 聚焦缩放且布局错乱 / 键盘弹起遮挡主流程提交按钮且不可达;
-    high=重要功能受损但有绕行(某档视口溢出但可横滑勉强用、次要 CTA 热区过小);
-    medium=次要/边缘视口的体验问题;low/info=轻微优化提示。
+  - severity 判定标准:critical=主流程不可用 / 核心页底部 CTA 在主流量档(真 iOS 或真 Android 纵向)被安全区或固定栏遮挡不可点 /
+    主流量档横向溢出致内容裁切 / 主流程主表单 input <16px 致 iOS 聚焦缩放且布局错乱 / 某真机引擎独有的致命渲染塌陷;
+    high=重要功能受损但有绕行(某档溢出但可横滑勉强用、次要 CTA 热区过小、单端引擎差异致次要错位);
+    medium=次要/边缘档(桌面大屏、横屏)的体验问题;low/info=轻微优化提示。
   - priority 判定标准:P0=阻塞提测必修;P1=上线前修;P2=可排期;P3=可选。severity→priority 默认 critical→P0、high→P1、medium→P2、low/info→P3。
-  - 门禁字段名必须是 `gate_decision`(对象,含 action + reasons),禁止用 `release_gate` 或其它名——下游代码只读 gate_decision,用错字段门禁结论会被丢弃。
+  - 门禁字段名必须是 `gate_decision`(对象,含 action + reasons),禁止用 `release_gate` 或其它名——下游代码只读 gate_decision。
   - verdict 与 gate_decision.action 必须一致映射:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。二者矛盾即视为无效输出。
-  - reject_with_report 触发(满足任一):主流量视口核心页有 critical(溢出裁切/核心 CTA 不可点/安全区遮挡主 CTA);
-    主流程主表单 input <16px 致缩放且错乱;键盘遮挡主流程提交且不可达;整改总工时不可控。
+  - reject_with_report 触发(满足任一):主流量档(真 iOS 或真 Android 纵向)核心页有 critical(溢出裁切/核心 CTA 不可点/安全区遮挡主 CTA);
+    主流程主表单 input <16px 致缩放且错乱;某真机引擎独有致命渲染塌陷;整改总工时不可控。
   - blocker 严格定义:只有「① 主流程/核心功能不可用(核心页 critical 阻断提测) ② 严重安全/合规/数据正确性风险
-    ③ 必须先解决才能继续走查(无可用测试账号致主流程页全未测、目标地址不可达、门禁挡住无法进站)」才进 blockers;
+    ③ 证据缺口致主流程无法评估(目标地址三端都打不开、关键页全未采到)」才进 blockers;
     一般可绕行体验问题、可降级缺陷、真机待验项一律归 issues 或 risks。
-  - 真机依赖归类:本工具测不到的真机品牌浏览器渲染/JSSDK/支付/分享/软键盘/手势/相机/性能,一律进 risks +
-    needs_real_device,标为「上线前需真机补验」,绝不写成已发现 issue,绝不影响可观测维度的 verdict。
-  - 交互型铁律:cases.status 标 executed_pass/executed_fail 时,evidence 必须指向真实执行记录里的具体动作/截图/inspect 字段;
-    没真 navigate+set_viewport+inspect+screenshot 跑到的用例只能 designed,不得进 issues、不得影响 verdict;
-    被门禁/账号/验证码挡住的标 blocked。
+  - 真机依赖归类:本工具测不到的真机品牌浏览器渲染/JSSDK/支付/分享/真机软键盘真实遮挡/手势/相机/性能/iOS横屏,
+    一律进 risks + needs_real_device,标为「上线前需真机补验」,绝不写成已发现 issue,绝不影响可观测维度的 verdict。
+  - 证据铁律:issue/case 标 executed_fail/critical 时,evidence 必须指向 evidence.md 里真实的端+页+朝向+字段真值+截图文件名;
+    证据未覆盖到的端/页/朝向只能标未测(designed/skipped),不得进 issues、不得影响 verdict。
