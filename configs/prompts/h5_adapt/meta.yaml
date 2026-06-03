@@ -1,6 +1,6 @@
 step_id: h5_adapt
 name: H5 适配深度走查
-version: 3.0.0
+version: 3.1.0
 tool_type: interactive
 description: |
   纯 Claude 驱动的 H5 / 移动端多视口适配深度走查。Claude 亲自用 navigate 进站、
@@ -24,6 +24,22 @@ common_system_suffix: |
     `screenshot(label)` 截真实像素 → `form_input` 真聚焦输入框 → `click` 过门禁/触发非破坏交互态。
     每一条结论都要能指回某个真实页面 + 视口 + 截图文件名 + inspect 里的具体值。
   - 不计成本 → 可多轮、可穷举、可覆盖更多页面 × 视口 × 交互态。所有子步 max_tokens 16000。
+
+  【强制精确量测 · 截图只是辅助,关键数据必须 inspect 取够(与 _execute.md 第〇.五节同步 · 违者本步无效)】
+  截图只能让你「怀疑有问题」,不能当判定依据。每进一个视口、每个关键页面,除截图外**必须**对以下八类
+  逐项 `inspect` 取到精确真值并记录(该页无此类元素才可跳过并注明),严禁停留在「疑似 / 待量测 / 未知 /
+  大概 / 看起来 / 待确认」——那等于没测:
+    · 横向溢出:`document.documentElement.scrollWidth`(docWidth)vs `window.innerWidth`(winWidth),docWidth>winWidth 即溢出,给两个精确数 + 定位溢出元素 rect.right;
+    · 点击热区:所有关键可点元素(按钮/导航图标/分页圆点/筛选胶囊/CTA/关闭叉)的 getBoundingClientRect 精确宽高,任一边 <44px 即不达标;
+    · 输入框:每个 input/textarea 的 computedStyle.fontSize(<16px 触发 iOS 聚焦缩放)、type/inputmode/autocomplete/enterkeyhint/maxlength,聚焦后用 visualViewport.height vs 元素 rect.bottom 判键盘遮挡;
+    · 安全区:固定头/底 computedStyle.paddingTop/Bottom 是否含 env(safe-area-inset-*)、viewportMeta 是否 viewport-fit=cover;
+    · 固定/吸顶:position fixed/sticky 元素滚动后 rect 与正文/CTA rect 是否相交(遮挡);
+    · 字号/断行:关键文案 computedStyle.fontSize、scrollWidth>clientWidth 即截断;
+    · 弹窗:打开时 body computedStyle.overflow 是否锁(hidden)、关闭后是否恢复;
+    · 媒体:图片 rect 宽高比 vs naturalWidth/naturalHeight 宽高比、是否懒加载占位长期未替换。
+  凡上述能 inspect 取到真值的,issue/finding 的 current 必须给精确实测值(px/字号/rect/比例/计算样式枚举值),
+  禁用「疑似/待量测/未知」;**只有真机品牌浏览器渲染、真机软键盘弹出/手势手感、真机相机分享支付、真机性能毫秒**
+  这类桌面 Chromium 物理测不到的,才允许 unknown + needs_real_device——不许拿真机边界当借口逃避当前 Chromium 能做的量测。
 
   【诚实边界 · 本工具只模拟视口尺寸,哪些能真测、哪些一律 unknown(最高优先级,违者结论作废)】
   本工具运行在桌面 Chromium,靠 set_viewport 改窗口尺寸近似不同屏幕——**不是真机,没有真实 iOS Safari /

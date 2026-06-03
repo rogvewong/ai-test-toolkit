@@ -1,7 +1,7 @@
 ---
 id: step2.2
 name: P0 主流程正向用例
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.2
 max_tokens: 16000

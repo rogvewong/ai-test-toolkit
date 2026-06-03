@@ -1,7 +1,7 @@
 ---
 id: step1.3
 name: 主流程与异常流程及交互细节
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000

@@ -1,7 +1,7 @@
 ---
 id: step4.1
 name: 接口清单与鉴权前置
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000

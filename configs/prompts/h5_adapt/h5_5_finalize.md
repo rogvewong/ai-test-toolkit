@@ -1,7 +1,7 @@
 ---
 id: h5.5
 name: 适配定稿（汇总真实观测+统一报告契约+门禁）
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.2
 max_tokens: 16000

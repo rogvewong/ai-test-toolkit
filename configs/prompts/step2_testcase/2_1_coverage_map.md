@@ -1,7 +1,7 @@
 ---
 id: step2.1
 name: 测试覆盖矩阵（功能点 × 测试维度）
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000

@@ -1,6 +1,6 @@
 step_id: step1
 name: 需求评审
-version: 3.0.0
+version: 3.1.0
 
 # 工具定性：分析型。只分析用户提供的 PRD / 原型 / UI 稿 / 交互文案 / 接口草案等文本，
 # 无真实系统交互、无线上数据、无代码可读。因此严禁断言材料未写明的客观事实
@@ -36,8 +36,9 @@ steps:
   - file: 1_4_gap_detection.md
     name: 需求遗漏歧义矛盾与边界深挖
     output_schema: step1_gap_detection
-    produces: 遗漏 / 歧义 / 自相矛盾 / 隐含假设 / 未定义边界（每条 quote 原文）+ 汇总去重
+    produces: 遗漏 / 歧义 / 自相矛盾 / 隐含假设 / 未定义边界（每条 quote 原文）+ 分域标准核查清单(Domain Checklist) + 汇总去重
     feeds: 为 1_5 提供可直接采纳为 issue/blocker/clarification 的条目
+    note: 自 3.1.0 新增「分域标准核查清单」——识别材料涉及哪些业务域（支付/交易、订阅/会员、权限/越权、通用必查），对涉及域的每个点逐条核查 PRD 是否定义清楚，没定义即开遗漏 issue；与 step2 的 2_3/2_4 共用同一份域清单（口径一致）；该清单是最低覆盖基线非上限，材料涉及但清单未列的域自行类比展开。
   - file: 1_5_report_finalization.md
     name: 提测门禁定稿
     output_schema: step1_gate_finalization

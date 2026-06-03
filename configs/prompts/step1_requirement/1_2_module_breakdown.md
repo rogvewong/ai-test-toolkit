@@ -1,7 +1,7 @@
 ---
 id: step1.2
 name: 模块与功能点拆解
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000

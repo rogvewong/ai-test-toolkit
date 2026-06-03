@@ -1,7 +1,7 @@
 ---
 id: h5.1
 name: 适配范围识别与多视口规划
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000

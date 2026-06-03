@@ -1,7 +1,7 @@
 ---
 id: step2.5
 name: 用例集定稿与统一终评
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.2
 max_tokens: 16000

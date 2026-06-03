@@ -1,7 +1,7 @@
 ---
 id: step4.5
 name: 接口测试结论定稿
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.2
 max_tokens: 16000
@@ -16,12 +16,17 @@ output_schema: api_final_report
 
 ## 定稿铁律
 1. **只汇总真测结果,不新发请求、不臆造**。每条 issue / 每个 `executed_*` 用例的 `evidence` 必须能指回前序某一步真发的请求与真实响应("真实请求 → HTTP 码 + 关键响应字段/头")。**严禁出现"截图文件名"作为接口测试的证据,严禁脑补未发生的响应。**
-2. **没真测到的接口 / 用例**(prod 只读护栏、地址不可达、非测试环境等)→ 只能进 `cases` 且 `status:designed`,**不得进 `issues`、不得影响 `verdict`**;在 `coverage.not_executed` 列出并说明原因。
-3. **字段分类统一用 `type`,禁止用 `kind`**。每条 `issue` / `case` 必须含 `priority`。
-4. **排序**:`issues` 按 severity(critical>high>medium>low>info) × priority(P0>P1>P2>P3) 排序;`cases` 按 priority(P0→P3)排序。空数组写 `[]`,不省字段。
-5. **verdict 与 gate_decision.action 必须一致映射**:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。二者矛盾即无效。
-6. **本工具不测性能**:报告中**不得出现** p50/p95/p99、吞吐量、QPS、RPS、错误率百分比等任何编造的性能数字(`send_request` 不返回耗时)。
-7. **凭据保护**:报告中不出现真实 token/密码/key;涉及凭据的证据只描述事实、不抄原值。
+2. **【用例去重铁律 · 本步最关键的整合动作】一个测试点只能有一条用例,严禁"现状条 + 应然条"双开灌水。**
+   - **唯一性键 = (接口 METHOD+path + 参数/字段 + 测试意图) 三元组**。对前四步汇总上来的全部 cases,按此三元组做**一次全局去重**:三元组相同的多条用例**合并为一条**。
+     典型坑(必须消灭):`limit=abc`(类型校验)出现 3 条、`limit=0 / -1 / 999999`(数值边界)各出现 2 条——这类是把"实测观察"和"应然预期"拆成了两条,合并后每个测试点**只留一条**。
+   - **合并规则**:同一测试点的"应有行为"统一写进该用例的 `expected`;"实测现状"统一写进 `evidence`;若实测 ≠ 应有,该用例 `status=executed_fail` 并关联**一条** issue(`related_test_cases` 指向这条用例 id)。**绝不保留第二条只为复述现状/应然。**
+   - **合并后的硬指标**:`coverage` 必须额外给出 `distinct_test_points`(去重后真实不同测试点数);`cases` 数组长度**必须等于** `distinct_test_points`,二者不一致即视为未去重、报告无效。**用例数要反映真实覆盖,不许虚高。**
+3. **没真测到的接口 / 用例**(prod 只读护栏、地址不可达、非测试环境等)→ 只能进 `cases` 且 `status:designed`,**不得进 `issues`、不得影响 `verdict`**;在 `coverage.not_executed` 列出并说明原因。
+4. **字段分类统一用 `type`,禁止用 `kind`**。每条 `issue` / `case` 必须含 `priority`。
+5. **排序**:`issues` 按 severity(critical>high>medium>low>info) × priority(P0>P1>P2>P3) 排序;`cases` 按 priority(P0→P3)排序。空数组写 `[]`,不省字段。
+6. **verdict 与 gate_decision.action 必须一致映射**:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。二者矛盾即无效。
+7. **本工具不测性能**:报告中**不得出现** p50/p95/p99、吞吐量、QPS、RPS、错误率百分比等任何编造的性能数字(`send_request` 不返回耗时)。
+8. **凭据保护**:报告中不出现真实 token/密码/key;涉及凭据的证据只描述事实、不抄原值。
 
 ## 定级与门禁标准(写进报告,判定时遵循)
 - severity:`critical`=主流程不可用或数据/资金/安全受损;`high`=重要功能受损但有绕行;`medium`=次要/边缘;`low`/`info`=提示。
@@ -35,6 +40,7 @@ output_schema: api_final_report
 - 每个接口的**每个必填/类型/枚举/边界**是否都逐个真发过?有没有漏的参数?
 - **越权组合**(横向 + 纵向 + ID 枚举)是否对关键资源都真测过?
 - 有没有把"没真发到的接口"误当成"通过"?
+- **去重核对**:有没有同一个 (接口, 参数, 意图) 三元组出现 ≥2 条用例(典型如同一个 `limit=abc` 被记了 2-3 次)?全部合并了吗?`cases` 条数是否 == `coverage.distinct_test_points`?**确认用例数反映真实测试点数、未因"现状条+应然条"虚高。**
 
 ## 输出格式(统一报告契约 · 见 meta.yaml,此处给本工具的填充约定)
 顶层**必须**含下列字段(完整契约定义以 meta.yaml 的【统一报告契约】为单一来源,此处不重复抄写,只说明本工具如何填):
@@ -82,6 +88,8 @@ output_schema: api_final_report
     "endpoints_total": 0,
     "endpoints_executed": 0,
     "requests_sent_total": 0,
+    "distinct_test_points": 0,
+    "cases_count_equals_distinct": true,
     "not_executed": [
       {"endpoint":"<METHOD path>","reason":"<prod 只读护栏 / 不可达 / 非测试环境>","status":"designed"}
     ]

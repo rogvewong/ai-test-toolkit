@@ -1,7 +1,7 @@
 ---
 id: h5.3
 name: 浏览器/环境兼容（真实可观测才断言·真机一律 unknown）
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.2
 max_tokens: 16000

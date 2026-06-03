@@ -1,7 +1,7 @@
 ---
 id: h5.2
 name: 逐视口布局真测（真截图+真inspect）
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000
@@ -13,6 +13,18 @@ output_schema: h5_viewport_audit
 你**不是**写适配检查清单,而是按 `_execute.md` 协议**亲自**对 h5_1 规划的**每个页面 × 每个目标视口**,真切视口(`set_viewport`)、真截图(`screenshot`)、真取 DOM/计算样式/viewport 信息(`inspect`),把**所有能从截图与 inspect 直接观测到的适配缺陷逐条揪出来**。
 **结论只能来自真实截图与 inspect 回灌值;inspect 没取到的源码级事实(具体 px / CSS 写法)标 unknown,绝不猜。**
 
+## ★ 最高铁律:精确量测,禁止"疑似/待量测/未知"(本步首要约束)
+**截图只能让你「怀疑有问题」,不能当判定;每个视口必须按 `_execute.md` 第〇.五节「强制精确量测清单」八类逐项 `inspect` 取够精确真值,再下结论。** 凡下列能 inspect 取到真值的量测点,issue / per_viewport 的 `current`/`detail` **必须给精确实测值(px / 字号 / rect / 宽高比 / 计算样式枚举值)**,严禁用"疑似 / 待量测 / 未知 / 大概 / 看起来 / 待确认"含糊带过——那等于没测,会被判无效:
+- 横向溢出 → 必须给 `docWidth=<值> / winWidth=<值>` 两个数 + 溢出元素 selector 及其 `rect.right`,不许写"疑似溢出/docWidth未取"。
+- 点击热区 → 每个关键可点元素必须给 `getBoundingClientRect` 的精确 `宽×高 px`,不许写"热区疑似<44px(待量测)"。
+- 输入框字号 → 每个 input/textarea 必须给 `computedStyle.fontSize=<值>px`,不许写"字号未取无法断言"。
+- 安全区 → 固定头/底必须给 `paddingTop/Bottom=<值>` + 是否含 `env(safe-area-inset-*)` + `viewportMeta` 真值,不许写"safe-area 未验"。
+- 固定/吸顶遮挡 → 必须给固定元素 rect 与被遮内容 rect 两组坐标 + 是否相交,不许写"疑似遮挡"。
+- 字号/截断 → 关键文案必须给 `fontSize=<值>` + `scrollWidth/clientWidth` 判截断,不许写"字号未取"。
+- 弹窗滚动锁 → 必须给打开/关闭两次的 `body computedStyle.overflow` 真值,不许写"body 滚动锁未验证"。
+- 图片自适应 → 关键图片必须给 `rect 宽高比` vs `naturalWidth/naturalHeight 宽高比` 两组数,不许写"图片比例待测"。
+**只有真机品牌浏览器渲染 / 真机软键盘弹出 / 真机手势手感 / 真机性能毫秒**这类桌面 Chromium 物理测不到的,才允许 `unknown` + 需真机验证(留给 h5_3);凡当前 Chromium 能 inspect 取到的,一律取够给真值,不许拿真机边界当借口逃避量测。
+
 输入(目标地址 / 测试账号 / h5_1 的页面与视口规划 / 业务材料):
 {{业务材料}}
 
@@ -20,9 +32,9 @@ output_schema: h5_viewport_audit
 对每个页面、按 h5_1 的目标视口清单逐档:
 1. 首次进入先 `navigate` 打开(需登录/过门禁的按 `_execute.md` 第四节先过)。
 2. `set_viewport(w,h,label)` 切到该档视口(系统会以该尺寸重渲染)。
-3. `inspect(page)` 取真实信号:`winWidth/winHeight`、`docWidth/scrollWidth`(判溢出)、`viewportMeta`、命中的媒体查询、固定头/底元素与关键 CTA 的 `getBoundingClientRect` 与 `computedStyle`、`env(safe-area-inset-*)` 计算值。
-4. `screenshot(label="WxH-页面-区域")` 截首屏;长页面滚动再截**中部 + 底部(固定底栏 / safe-area 区)**。
-5. 逐条对照"二、必查适配维度"找缺陷;每发现一处 `finding` 记 severity + viewport + page + current(实测)/expected/evidence(截图名 + inspect 字段)。
+3. `inspect(page)` + `inspect(selector)` **把 `_execute.md` 第〇.五节八类精确量测点取够**:`winWidth/winHeight`、`document.documentElement.scrollWidth`(`docWidth`)判溢出并定位溢出元素 rect、`viewportMeta`、命中的媒体查询、**每个**固定头/底元素与**每个**关键可点 CTA/图标/dot/胶囊的 `getBoundingClientRect`(取精确宽高判 <44px)与 `computedStyle`(`paddingTop/Bottom` 判 `env(safe-area-inset-*)`、`fontSize` 判 ≥16px、`position` 判 fixed/sticky)、关键图片 `naturalWidth/Height` vs rect 宽高比。**取到的是精确数,不是"大概"。**
+4. `screenshot(label="WxH-页面-区域")` 截首屏(辅助证据);长页面滚动再截**中部 + 底部(固定底栏 / safe-area 区)**,滚动后 `inspect` 固定/吸顶元素与正文末条/提交按钮的 rect 判相交遮挡。
+5. 逐条对照"二、必查适配维度"找缺陷;每发现一处 `finding` 记 severity + viewport + page + **current(精确实测值,如 docWidth=412/winWidth=375、fontSize=14px、rect 28×28px——禁"疑似/待量测/未知")** + expected + evidence(截图名 + inspect 字段=实测值)。
 
 ## 二、必查适配维度(每个视口逐条过,凡适用必查 —— 这些都是截图/inspect 能真观测的)
 
@@ -81,7 +93,7 @@ output_schema: h5_viewport_audit
 - 全程只 navigate / set_viewport / inspect / screenshot / 过门禁,**不做写操作**;不点删除/支付/下单类元素;凭据不回显,截图避开密码明文。
 
 ## 自我复核(出结论前自问)
-"每个页面是不是每档目标视口都真切真截真 inspect 了?横向溢出我是看 docWidth 真值还是脑补的?安全区/字号/热区这些 inspect 能取的我有没有取真值?有没有把模拟结果当真机结论(不该)?覆盖矩阵还有哪些格子没测?"——补全再输出。
+"每个页面是不是每档目标视口都真切真截真 inspect 了?**横向溢出我是给了 docWidth/winWidth 两个精确数还是只写了『疑似溢出』?热区/字号/安全区/截断/图片比例/弹窗锁这些 inspect 能取的,我是不是都给了精确实测值(px/字号/rect/比例),有没有偷懒停在『疑似/待量测/未知/待确认』?——凡当前 Chromium 能取真值的停在『待量测』就是没做事,必须回去 inspect 取够。** 有没有把模拟结果当真机结论(不该)?有没有把『当前 Chromium 能测的量测点』错当成真机边界 unknown(不该)?覆盖矩阵还有哪些格子没测?"——补全再输出。
 
 ### 输出格式(合法 JSON,只输出 JSON)
 ```json

@@ -1,7 +1,7 @@
 ---
 id: step4.3
 name: 接口安全真测
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000
@@ -16,6 +16,11 @@ output_schema: api_security
 
 ## 执行模型(必须真发)
 你通过 `send_request(method, url, headers, body)` **真实发出请求**,系统回灌**真实响应**(状态码 / 响应头 / 响应体)。你据真实响应判定:真测到的安全缺陷 → 开 issue + 记 `executed_fail` 用例,`evidence` 写"真实请求 → HTTP 码 + 暴露问题的响应字段/头";真测确认安全 → `executed_pass`。**没真发到的(护栏不允许 / 非测试环境)只能 `designed`,不开 issue、不进 verdict。**
+
+## 去重铁律(每条用例必须遵守 · 详见 meta.yaml【用例去重铁律】)
+**一个安全测试点 = 一条用例。** 同一 (接口 METHOD+path + 检查向量/字段 + 安全意图) 三元组**只允许一条用例**。
+- **应有行为**写进 `expected`,**实测现状**写进 `evidence`。**严禁把同一安全点拆成"实测现状条 + 应然预期条"两条**。
+- 实测现状 ≠ 应有行为 → 这一条 `status: executed_fail` + 开一条对应 issue;**用例仍只算一条**。
 
 ## 安全护栏(本步最关键 · 发任何请求前先过)
 - **prod 默认只读**:除非 4_1 明示是 test/staging 且允许写,否则只发只读请求(GET/HEAD/OPTIONS)。
@@ -51,11 +56,18 @@ output_schema: api_security
 ### 6. 限流 / 防滥用(真发,只读为主)
 - 对登录 / 验证码 / 发短信类(或就近的只读接口)在短时间内**温和地**连发若干次 → 是否出现 429 / 阶梯封禁 / 锁定;响应是否泄露"账号是否存在"。**不对真实发送短信/扣费类接口高频轰炸**,只读接口验证限流即可。
 
-### 7. 错误信息泄漏(看真实错误响应)
-- 触发各类错误(非法入参 / 不存在资源 / 鉴权失败),看真实错误响应是否抛出**堆栈 / SQL 语句 / 框架版本 / 内部路径 / 服务器内网地址**等敏感信息;错误结构是否稳定(`{code,message,request_id}`)。
+### 7. 错误信息泄漏(看真实错误响应 · 高频真问题,务必逐接口触发)
+- 触发各类错误(非法入参 / 类型错 / 不存在资源 / 鉴权失败 / 畸形 body),看真实错误响应是否抛出**语言运行时堆栈(Go panic / Java stacktrace / Python traceback)/ SQL 语句 / 框架与版本号 / 内部文件路径 / 服务器内网地址 / 中间件指纹**等敏感信息;错误结构是否稳定(`{code,message,request_id}`)。
+- **必查实测点**:给数值/分页参数传非数字(如 `limit=abc`、`page=abc`)、给整数字段传字符串等"类型不匹配"输入——这类最容易让框架直接把**底层堆栈**回吐给客户端(实测发现该站 `limit=abc` 直接暴露 **Go 堆栈**)。**逐个带类型约束的参数都试一遍**,真实响应一旦回显堆栈/内部路径即开 issue(通常 high 起步)。
 
-### 8. 传输 / 头安全(看响应头)
-- 是否强制 HTTPS;敏感数据是否出现在 URL/query;安全响应头(`Strict-Transport-Security`/`X-Content-Type-Options`/`Content-Security-Policy`)是否声明。
+### 8. 传输 / 头安全(看真实响应头,逐头核对)
+- 是否强制 HTTPS;敏感数据是否出现在 URL / query。
+- **安全响应头逐项核**(真实响应头里有没有、值对不对):
+  - `X-Content-Type-Options: nosniff`(禁 MIME 嗅探)
+  - `X-Frame-Options`(`DENY`/`SAMEORIGIN`,防点击劫持)
+  - `Content-Security-Policy`(CSP 是否声明、是否过宽如 `default-src *`)
+  - `Strict-Transport-Security`(HSTS 是否声明)
+  - 缺失或配置过松的逐条记 issue。
 
 ## 输出格式(合法 JSON,只输出 JSON)
 ```json
