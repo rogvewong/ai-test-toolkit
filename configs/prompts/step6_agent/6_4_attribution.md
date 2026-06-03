@@ -1,7 +1,7 @@
 ---
 id: step6.4
 name: 失败逐条归因（基于真实报错，证据+排除项）
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.2
 max_tokens: 16000

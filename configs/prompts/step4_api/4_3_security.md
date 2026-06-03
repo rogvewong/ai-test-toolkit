@@ -69,6 +69,40 @@ output_schema: api_security
   - `Strict-Transport-Security`(HSTS 是否声明)
   - 缺失或配置过松的逐条记 issue。
 
+## 分形态安全测试点(按 4_1 的 `form` 追加 · 命中即测 · 上面 1~8 仍要照测)
+> 在通用安全维度之上,**按接口形态补做对应的安全验证**;不涉及就跳过。仍守去重铁律、仍只到只读级、注入/越权仅在材料明示的测试环境真发。`category` 用括号里的标签。
+
+### S1. 按鉴权形态逐型深验(category 见各条)
+- **bearer_jwt(authn)**:除"无/乱填 token"外,逐项真发——**过期 token**(是否仍放行)、**篡改 payload**(改 `sub`/`role`/`exp` 后是否因签名校验被拒)、**`alg=none`**(去签名是否被接受=严重)、**算法混淆**(RS256 公钥当 HS256 密钥,只读探测)、**越权 claim**(把自己的 token 改成他人 `sub` 看是否越权)。
+- **cookie_session(csrf)**:**CSRF**——对写接口用跨站表单/简单请求不带 CSRF token 是否被接受(测试环境只读级验证是否校验 token/`SameSite`);**会话固定**——登录前后 sessionId 是否轮换;`Set-Cookie` 是否带 `HttpOnly`/`Secure`/`SameSite`。
+- **oauth2(authn)**:授权码流 `state` 是否校验(防 CSRF)、`redirect_uri` 是否严格白名单(防开放重定向)、authorization code 是否一次性、token 端点是否校验 `client_secret`;各 grant(authorization_code/client_credentials/refresh_token)是否按声明工作。**仅设计或在测试环境只读验证,不发破坏性请求。**
+- **api_key(authn)**:key 缺失/错误是否被拒;key 是否能出现在 URL/query(易泄漏)被接受;不同 key 的配额/权限是否隔离。
+- **hmac_sign(authn)**:**签名校验**——改 body 不改签名是否被拒;**时间戳防重放**——用过期 timestamp 或重放同一 (sign+nonce) 是否被拒;缺 nonce/timestamp 是否被拒。
+- **mtls(transport)**:不带客户端证书 / 带无效证书是否被拒(通常仅能设计,标 `designed` 说明环境限制)。
+
+### S2. GraphQL 安全(category=graphql_security)
+- **introspection**:真发 introspection query(`__schema`)→ 断言生产是否对外暴露完整 schema(暴露=信息泄漏 issue)。
+- **字段级权限**:用低权限 token 查高权限字段(如他人 `email`/`role`/内部字段)→ 断言被拒,而非整对象返回。
+- **超深嵌套 / 别名放大**:构造**超深嵌套**或大量 alias 的 query(只读)→ 断言有深度/复杂度限制,而非放任打满资源(只观察是否被拒/限制,**不做压垮式攻击**)。
+- **批量越权**:一个请求里混查自己和他人资源 → 断言他人部分被拒。
+
+### S3. 文件上传安全(content_type=multipart,category=upload_security · 仅测试环境)
+- **类型伪装**:改扩展名/`Content-Type` 上传可执行/脚本文件(如 `.php`/`.jsp` 伪装成图片)→ 断言被按真实类型拒绝。
+- **路径穿越**:文件名带 `../../` 或绝对路径 → 断言落盘路径被规范化、不能写出目录。
+- **恶意文件**:上传超大文件、0 字节、畸形图片(图片头不符)→ 断言被校验拒绝(大小边界归 4_4)。
+- **存储越权**:上传后返回的文件 URL 是否可被他人直接访问/枚举(越权读他人文件)。
+
+### S4. XML / XXE(content_type=xml,category=xxe · 仅测试环境只读级)
+- 发带**外部实体声明**的 XML(指向**无害的本地占位**或仅探测是否解析外部实体,**绝不指向内网/真实文件**)→ 断言外部实体被禁用;SSRF/内网向量只设计不真发。
+
+### S5. Webhook 接收安全(protocol=webhook,category=webhook_security)
+- **验签**:伪造一条**签名错误/无签名**的回调发给本服务回调端点 → 断言被拒(不能裸信任 body)。
+- **重放**:重放一条**合法旧回调** → 断言被幂等/时间窗拒绝,不重复处理(资损风险)。
+- **乱序**:乱序投递状态事件 → 断言不会被错误地覆盖成旧状态。
+
+### S6. 限流恢复(cross_cutting=rate_limit,category=rate_limit · 承接第 6 条只读为主)
+- 触发限流后查**响应头**(`X-RateLimit-Limit/Remaining/Reset` 或 `Retry-After`)是否返回、值是否合理;**恢复**——等到窗口重置后再发是否恢复正常(只读接口验证,不轰炸发送/扣费类)。
+
 ## 输出格式(合法 JSON,只输出 JSON)
 ```json
 {
@@ -76,7 +110,7 @@ output_schema: api_security
   "cases": [
     {
       "id":"SEC-<MODULE3>-0001",
-      "category":"authn|authz_horizontal|authz_vertical|injection|data_exposure|cors|rate_limit|error_leak|transport",
+      "category":"authn|authz_horizontal|authz_vertical|injection|data_exposure|cors|rate_limit|error_leak|transport|csrf|graphql_security|upload_security|xxe|webhook_security",
       "endpoint":"GET /api/order/{id}",
       "title":"<具体安全检查>",
       "priority":"P0|P1|P2|P3",

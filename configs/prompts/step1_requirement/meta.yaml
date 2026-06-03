@@ -38,7 +38,7 @@ steps:
     output_schema: step1_gap_detection
     produces: 遗漏 / 歧义 / 自相矛盾 / 隐含假设 / 未定义边界（每条 quote 原文）+ 分域标准核查清单(Domain Checklist) + 汇总去重
     feeds: 为 1_5 提供可直接采纳为 issue/blocker/clarification 的条目
-    note: 自 3.1.0 新增「分域标准核查清单」——识别材料涉及哪些业务域（支付/交易、订阅/会员、权限/越权、通用必查），对涉及域的每个点逐条核查 PRD 是否定义清楚，没定义即开遗漏 issue；与 step2 的 2_3/2_4 共用同一份域清单（口径一致）；该清单是最低覆盖基线非上限，材料涉及但清单未列的域自行类比展开。
+    note: 内置「分域标准核查清单」——一份覆盖常见产品功能全集的通用业务域库（共 17 个域：D-ACCT 账号与身份 / D-PAY 支付与交易 / D-SUB 订阅会员计费 / D-CONTENT 内容与媒体 / D-SEARCH 搜索筛选排序推荐 / D-LIST 列表Feed分页 / D-FILE 上传下载文件 / D-FORM 表单与CRUD / D-SOCIAL 社交互动 / D-MSG 消息与通知 / D-AUTHZ 权限角色越权 / D-MKT 营销与增长 / D-FLOW 流程审核工单 / D-PRIVACY 数据隐私合规 / D-I18N 国际化本地化 / D-INTEG 第三方集成 / D-GEN 通用质量）。框架：先判定材料涉及哪些域 → 对涉及域的每个点逐条核查 PRD 是否定义清楚，没定义即开遗漏 issue（gap 必上抛）；与 step2 的 2_3/2_4 共用同一份域库（口径一致）；该清单是最低覆盖基线非上限，材料涉及但清单未列的子点/子域自行类比展开。适用范围覆盖会员订阅/搜索/上传/IM/直播/社交等各类需求，不限于支付会员。
   - file: 1_5_report_finalization.md
     name: 提测门禁定稿
     output_schema: step1_gate_finalization

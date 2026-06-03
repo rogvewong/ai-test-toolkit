@@ -67,6 +67,55 @@ output_schema: api_functional_contract
 - 对支持幂等的写接口,带**同一 idempotency-key / 同样入参**重复发两次 → 断言第二次返回首次结果、未重复生效(如未生成第二个订单)。
 - **安全护栏**:幂等属写操作,**仅在 4_1 判定为 test/staging 且允许写的环境**真发;prod 下只 `designed` 不真发,在 `not_executed` 注明。
 
+## 分形态功能/契约测试点(按 4_1 标出的 `form` 追加 · 接口属哪种形态就过哪几条 · 上面 1~7 仍要照测)
+> 这是"按接口形态再扩一层广度":在 1~7 的通用矩阵之上,**凡 4_1 的 `form` 命中下列某形态,就对该接口补做对应测试点**;形态不涉及就跳过(在 thought/`not_executed` 注明)。每条同样遵守去重铁律(一个测试点一条用例,现状写 `evidence`、应然写 `expected`)。`dimension` 用下面括号里的标签。
+
+### F1. GraphQL(protocol=graphql_query/mutation,dimension=graphql)
+- **query 正常**:取真实字段集发 query → 断言 `data` 字段齐、`errors` 为空;部分字段不存在时是否进 `errors` 而非整体 500。
+- **mutation 正常**:走一个**只读/无副作用或测试环境**的 mutation → 断言返回受影响对象;**有副作用的 mutation(下单/删除)按护栏只 `designed`**。
+- **批量 / 别名**:一个请求里放多个 query / 用 alias 取同字段多次 → 断言各自结果正确、互不串扰。
+- **变量 vs 内联**:同一 query 用 variables 传 与 内联写死 → 断言结果一致、变量类型校验生效(类型不符是否被拒)。
+- **错误结构契约**:GraphQL 惯例 HTTP 200 包 `errors[]` → 断言 `errors[].message/path/extensions.code` 结构稳定、不泄堆栈(堆栈/字段级权限/introspection 归 4_3)。
+
+### F2. gRPC-Web(protocol=grpc_web,dimension=grpc_web)
+- **正常调用**:按 `application/grpc-web+proto`/`+json` 发一次 → 断言 HTTP 200 且 `grpc-status: 0`、响应体可解。
+- **错误映射**:传非法入参 → 断言 `grpc-status` 用对(3=InvalidArgument / 5=NotFound / 7=PermissionDenied / 16=Unauthenticated),trailer 里 `grpc-message` 有意义、不泄内部细节。
+- **Content-Type**:发错 content-type → 断言被拒而非 500。
+
+### F3. WebSocket / SSE(protocol=websocket/sse,dimension=realtime)
+- **连接建立**:WS 握手(`Upgrade: websocket`)/ SSE(`Accept: text/event-stream`)→ 断言握手成功、SSE 返回 `Content-Type: text/event-stream` 且能收到 `data:` 事件。
+- **鉴权**:未带凭据连 → 断言被拒(握手 401/403 或连上即断),不是裸连成功推数据(深入鉴权归 4_3)。
+- **心跳 / keep-alive**:断言有心跳/ping-pong 或 SSE 注释行保活;**消息顺序**:连续事件的 `id`/序号是否单调、不乱序。
+- **重连 / 续传**:SSE 用 `Last-Event-ID` 重连 → 断言从断点续推、不重不漏;**背压**:慢消费时服务端是否缓冲合理、不无界堆积(仅观察,不压测)。
+> 连接类动作若 `send_request` 不支持长连接,标 `designed` 并在 evidence 说明"动作不支持长连,仅设计"。
+
+### F4. Webhook 回调(protocol=webhook,本服务是接收方,dimension=webhook)
+- **正常投递**:按文档构造一条合法回调 body+签名头发给本服务回调端点(**仅测试环境**)→ 断言 2xx 且业务被正确处理。
+- **乱序 / 重复投递**:同一事件投递两次、或时间倒序投递 → 断言幂等(不重复处理)、顺序正确(验签/重放归 4_3)。
+- **超时重试语义**:文档若声明"非 2xx 会重试 N 次" → 断言重试次数/退避符合声明(只观察,不刻意制造大量重试)。
+
+### F5. 文件下载 / 流式(protocol=file_download,dimension=download)
+- **正常下载**:GET 下载端点 → 断言 `Content-Type`/`Content-Disposition`(文件名,含中文是否正确编码)/`Content-Length` 正确、首字节可读。
+- **Range 断点续传**:带 `Range: bytes=0-1023` → 断言 206 + `Content-Range`;不支持时是否优雅返回 200 全量而非 500。
+- **大文件 / 流式**:断言分块传输(`Transfer-Encoding: chunked`)或流式不一次性撑爆;**越权下载他人文件**归 4_3。
+
+### F6. 内容类型(content_type 命中即测,dimension=content_type)
+- **form-urlencoded**:同一接口若声明支持,用 `application/x-www-form-urlencoded` 发 → 断言与 JSON 同义入参结果一致;字段编码(数组/嵌套)是否被正确解析。
+- **multipart 文件上传(仅测试环境真发)**:用合法小文件走正常上传 → 断言 2xx + 返回文件 URL/ID;**类型/大小/数量/恶意文件/路径穿越等安全与边界归 4_3、4_4**,此处只验"正常上传能成功 + 返回契约正确"。
+- **xml**:接口若收 XML,发合法 XML → 断言被正确解析(XXE 等注入归 4_3)。
+- **binary**:接口若收二进制(protobuf/octet-stream),发合法体 → 断言正确解析、错误体返回 4xx 而非 500。
+
+### F7. 横切能力(cross_cutting 命中即测,dimension=cross_cutting)
+- **接口版本化(versioned)**:同一资源的 `/v1` 与 `/v2`(或 `Accept-Version` 头)→ 断言各自契约符合声明、老版本未被破坏(向后兼容);请求不支持的版本是否优雅降级/明确报错。
+- **批量接口(batch)**:一次传多条 → 断言**部分成功语义**(逐条结果带各自 status)或**原子性**(全成功/全回滚)是否与声明一致;深入的部分成功边界归 4_4。
+- **HTTP 方法语义**:
+  - **GET 无副作用**:GET 同一资源多次 → 断言不产生写副作用(不计数翻倍、不创建)。
+  - **HEAD**:对支持的 GET 接口发 HEAD → 断言返回头与 GET 一致、无 body。
+  - **OPTIONS**:发 OPTIONS → 断言 `Allow` 头列出真实支持的方法(CORS 预检归 4_3)。
+  - **PATCH 部分更新(仅测试环境)**:只传一个字段 PATCH → 断言只改该字段、其余不变、不被整体覆盖。
+- **协商缓存 / 缓存头(cache)**:首次 GET 取 `ETag`/`Last-Modified` → 带 `If-None-Match`/`If-Modified-Since` 再发 → 断言 304 且无 body;`Cache-Control` 值是否合理(敏感数据不应 `public`,过松归 4_3)。
+- **压缩(compression)**:带 `Accept-Encoding: gzip, br` → 断言响应 `Content-Encoding` 正确、解压后体完整;不支持时是否回退明文而非报错。
+
 ## 不测的内容(本工具能力边界)
 - **本步不测性能 / 时延**:`send_request` 不返回耗时,**严禁**输出 p50/p95/p99、吞吐量、QPS、RPS、错误率百分比等任何编造的性能数字。性能不在本工具范围。
 - 大数据量场景只在"功能正确性"层面看(如 `page=1000` 是否仍返回正确结构 / 是否越界报错),不做压测、不给耗时指标。
@@ -94,7 +143,7 @@ output_schema: api_functional_contract
       "title":"正常下单-单商品有库存",
       "priority":"P0|P1|P2|P3",
       "type":"main|exception|boundary|compat",
-      "dimension":"happy_path|required|type|enum|response_contract|status_code|idempotency",
+      "dimension":"happy_path|required|type|enum|response_contract|status_code|idempotency|graphql|grpc_web|realtime|webhook|download|content_type|cross_cutting",
       "preconditions":"<登录态/造数据等真实前置>",
       "request":{"method":"POST","url":"<完整URL>","headers":{"Authorization":"<token占位>"},"body":{"product_id":"P001","qty":1}},
       "expected":"<单一可断言预期:如 HTTP 201 且 $.code==0 且 $.data.order_id 匹配 ^ORD-\\d+$>",

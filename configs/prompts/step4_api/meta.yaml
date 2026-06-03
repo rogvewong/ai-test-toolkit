@@ -5,13 +5,17 @@ tool_type: interactive
 description: |
   交互型接口测试工具。Claude 通过 send_request(method,url,headers,body) **亲自真发 HTTP 请求**,
   拿到真实响应(状态码/头/体)后据此找 bug。一切结论必须基于 Claude 自己发出的真实请求与真实响应,
-  严禁凭文档脑补。真发请求的执行循环见 _execute.md。本工具不测性能(send_request 不返回耗时)。
+  严禁凭文档脑补。覆盖各类接口形态:协议(REST/GraphQL/gRPC-Web/WebSocket/SSE/Webhook/文件下载)、
+  鉴权(无/Bearer-JWT/Cookie-Session/OAuth2/API-Key/HMAC/双向TLS)、内容类型(json/form/multipart/binary/xml)、
+  分页(offset/page/cursor/scroll)与横切(限流/幂等/版本化/批量/缓存/压缩/CORS/HTTP方法语义);
+  4_1 逐接口识别形态,4_2~4_4 在通用矩阵之上按形态追加测试点,凡材料涉及即测。
+  真发请求的执行循环见 _execute.md。本工具不测性能(send_request 不返回耗时)。
 order:
-  - 4_1_interface_list.md   # 接口清单 + 鉴权前置:盘点所有接口/参数/鉴权,真发探活确认可调地址与登录态
-  - 4_2_functional.md       # 功能 + 契约逐接口真测:正常入参/必填/类型/枚举/响应字段契约/状态码语义/幂等
-  - 4_3_security.md         # 安全真测:鉴权缺失/错误/越权读、注入(只读级)、敏感泄漏、CORS、限流、错误信息泄漏
-  - 4_4_boundary.md         # 边界/异常/容错真测:超长/空/极值/非法/并发/超时/重试
-  - 4_5_conclusion.md       # 结论定稿:汇总真测结果,统一报告契约 + 提测门禁
+  - 4_1_interface_list.md   # 接口清单 + 形态识别 + 鉴权前置:盘点接口/参数/鉴权,逐接口打 form 标签(协议/鉴权/内容类型/分页/横切),真发探活确认可调地址与登录态
+  - 4_2_functional.md       # 功能 + 契约逐接口真测:正常入参/必填/类型/枚举/响应字段契约/状态码语义/幂等 + 分形态(GraphQL/gRPC-Web/WS/SSE/Webhook/下载/multipart/版本化/批量/缓存/压缩/HTTP方法语义)
+  - 4_3_security.md         # 安全真测:鉴权缺失/错误/越权读、注入(只读级)、敏感泄漏、CORS、限流、错误信息泄漏 + 分形态(JWT/Cookie-CSRF/OAuth2/API-Key/HMAC/mTLS、GraphQL introspection/字段级权限、上传安全/路径穿越、XXE、Webhook 验签/重放)
+  - 4_4_boundary.md         # 边界/异常/容错真测:超长/空/极值/非法/并发/超时/重试 + 分形态(各分页风格首末超界、文件上传边界、批量部分成功/原子性、WS/SSE 连接边界、长轮询)
+  - 4_5_conclusion.md       # 结论定稿:汇总真测结果(含分形态覆盖),统一报告契约 + 提测门禁
 execute_script: _execute.md
 
 common_system_suffix: |

@@ -38,6 +38,7 @@ output_schema: api_final_report
 逐项自问并补全后再输出:
 - 4_1 清单里**每个接口**是否都被 4_2/4_3/4_4 真发请求覆盖过?哪些只 designed、为什么?
 - 每个接口的**每个必填/类型/枚举/边界**是否都逐个真发过?有没有漏的参数?
+- **按形态自查**:4_1 `coverage_plan.forms_present` 里列出的每种接口形态(GraphQL/gRPC-Web/WS/SSE/Webhook/下载、multipart/xml/binary、各分页风格、限流/批量/版本化/缓存/压缩/HTTP 方法语义等),是否都对命中的接口补做了对应分形态测试点?哪些因长连接动作不支持 / prod 护栏只能 designed,要在 not_executed 说明。
 - **越权组合**(横向 + 纵向 + ID 枚举)是否对关键资源都真测过?
 - 有没有把"没真发到的接口"误当成"通过"?
 - **去重核对**:有没有同一个 (接口, 参数, 意图) 三元组出现 ≥2 条用例(典型如同一个 `limit=abc` 被记了 2-3 次)?全部合并了吗?`cases` 条数是否 == `coverage.distinct_test_points`?**确认用例数反映真实测试点数、未因"现状条+应然条"虚高。**

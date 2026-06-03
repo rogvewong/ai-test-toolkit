@@ -31,9 +31,14 @@ output_schema: api_boundary
 ### 2. 字符串边界
 - 空串 `""` / **单字符** / 恰好最大长度 / **超最大长度**(尤其超 DB 字段长)/ 前后空格 / 特殊字符(`'` `"` `<` `>` `&` `\`)/ emoji / 零宽空格 / RTL 字符 / 换行符 → 逐个真发,断言拦截或正确处理。
 
-### 3. 分页边界(若接口有 page / size / limit / offset 等分页参数)
-- `page`/`offset`:`0` / `1` / `-1` / 极大页(远超总页数,如 `999999`)→ 断言是否返回空列表 / 越界错误,而非 500 或返回全量。
-- `size`/`limit`:`0` / `1` / `-1` / 超上限(超服务声明的最大每页,如 `limit=999999`)/ **非数字(如 `limit=abc`)** → 断言是否被钳制到上限或 4xx 拒绝;**重点核 `limit=abc` 这类非数字是否触发 500 / 泄堆栈**(实测发现该站 `limit=abc` 暴露 Go 堆栈,这类必查,见 4_3 错误信息泄漏)。
+### 3. 分页边界(**按 4_1 标出的 `pagination` 风格分别测,各自的首页/末页/超界/空/极大都要覆盖**)
+- **offset_limit / page_size 风格**:
+  - `page`/`offset`:`0` / `1` / `-1` / 极大页(远超总页数,如 `999999`)→ 断言是否返回空列表 / 越界错误,而非 500 或返回全量。
+  - `size`/`limit`:`0` / `1` / `-1` / 超上限(超服务声明的最大每页,如 `limit=999999`)/ **非数字(如 `limit=abc`)** → 断言是否被钳制到上限或 4xx 拒绝;**重点核 `limit=abc` 这类非数字是否触发 500 / 泄堆栈**(实测发现该站 `limit=abc` 暴露 Go 堆栈,这类必查,见 4_3 错误信息泄漏)。
+  - **末页 / 边界一致性**:翻到最后一页、再翻一页、`total`/`has_next` 是否正确;`offset` 超总数是否返回空而非报错。
+- **cursor 风格**:首页(不传 cursor)/ 末页后的 cursor(`has_next=false` 仍带返回的 cursor 再请求)/ **伪造或过期 cursor**(乱填 base64 / 改动 cursor)→ 断言被拒或返回空,而非 500 / 错乱数据 / 泄露内部偏移;同一 cursor 重复请求结果稳定。
+- **scroll / search_after 风格**:首次取 `search_after` 锚点 → 用它续取下一页 → 断言不重不漏;**过期 scroll_id / 非法 search_after 值** → 断言优雅报错;深翻(连续翻很多页)是否仍稳定(只观察,不压测)。
+> 空数据集时:任一风格首页都应返回**空列表 + 稳定结构**(`data:[]` + 分页元信息),而非 null / 报错。
 
 ### 4. 格式边界(对 日期 / 邮箱 / uuid / url / 手机号 等带格式约束的字段,合法与非法各发)
 - **日期 / 时间**:合法值;非法格式(`2026-13-40`、`abc`)/ 最早 / 最晚 / 未来 / 过去 / 闰年 2-29 / 跨时区 / 缺时区 → 真发,断言。
@@ -63,6 +68,13 @@ output_schema: api_boundary
 - 客户端 retry 场景:重复发同一写请求,服务端是否防重(与并发写互补)。**写类仅测试环境真发。**
 - 注:`send_request` 不返回耗时,**不测时延、不给任何性能数字(p95/p99/QPS/吞吐量一律禁止)**;超时仅从"是否返回兜底错误结构"这一可观察结果判断,不臆造耗时。
 
+### 11. 分形态边界(按 4_1 的 `form` 追加 · 命中即测)
+> 按接口形态补做对应的边界,不涉及就跳过。`category` 用括号里的标签。
+- **文件上传边界(content_type=multipart,category=file_upload · 仅测试环境真发)**:0 字节文件 / 恰好达上限 / **超大小上限**(断言 413 而非 500)/ 文件名超长 / 文件名含特殊字符与多字节 / 一次传超数量上限的多文件 / 字段名缺失 / `Content-Type` 与实际不符 → 断言稳定拒绝。(恶意文件 / 路径穿越归 4_3)
+- **批量接口边界(cross_cutting=batch,category=batch)**:空批量 `[]` / 单条 / **超条数上限** / 批量里混入**部分非法项** → 断言**部分成功语义**(合法的成功、非法的逐条报错且各自定位)或**原子性**(全失败回滚)与声明一致,而非整体 500;重复项是否去重/各自处理。
+- **WS / SSE 连接边界(protocol=websocket/sse,category=realtime)**:非法/缺失 `Upgrade`/`Accept` 头 / 连后立即断 / 超大单条消息 → 断言握手被拒或优雅关闭,不 500、不悬挂;(长连接动作不支持时标 `designed`)。
+- **长轮询边界(cross_cutting=long_polling,category=long_polling)**:无数据时是否在声明超时后返回空(而非永久挂起)/ 立即有数据时是否即时返回 → 仅从"是否返回兜底结构"观察,不测耗时。
+
 > 提醒:逐参数 × 逐边界会产生很多请求——逐个真发,记录每条真实响应。统一关注点:**任何非法输入都不应让服务 500 或泄堆栈,应返回稳定、语义正确的错误结构。**
 
 ## 安全护栏(发请求前过一遍)
@@ -82,7 +94,7 @@ output_schema: api_boundary
       "title":"qty 传 0 应被拒",
       "priority":"P0|P1|P2|P3",
       "type":"boundary|exception",
-      "category":"numeric|string|pagination|format|array|datetime|enum|protocol|state|concurrency|retry",
+      "category":"numeric|string|pagination|format|array|datetime|enum|protocol|state|concurrency|retry|file_upload|batch|realtime|long_polling",
       "input":"qty=0",
       "preconditions":"<登录态/造数据>",
       "request":{"method":"POST","url":"<完整URL>","headers":{"Authorization":"<token占位>"},"body":{"product_id":"P001","qty":0}},

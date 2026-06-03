@@ -1,7 +1,7 @@
 ---
 id: step6.5
 name: 覆盖率核算与执行定稿（统一报告契约）
-version: 3.0.0
+version: 3.1.0
 model_tier: opus
 temperature: 0.2
 max_tokens: 16000
@@ -34,6 +34,7 @@ output_schema: agent_execution_finalize
 
 ## 覆盖率核算维度(基于真实执行,逐项给"已真跑/计划"的口径)
 - 业务流程:主流程节点真跑覆盖(进站→登录→核心链路→确认终态)
+- **流程形态**:6_1 `flow_forms` 里识别出的每种端到端流程形态(登录注册/搜索筛选详情/多步表单/购物车结算/上传/互动/无限滚动/排序筛选/设置回滚/深链/登出失效/空错加载弱网态),**已真跑到几种 / 共识别几种**;触达不可逆而停在副作用前的要标明。
 - 接口:核心只读接口真请求覆盖数 / 计划数(写接口因护栏未跑要说明)
 - 状态机:正常状态跳转真观测覆盖
 - 角色 / 权限:真登录验证的角色数;越权真探测覆盖
@@ -45,6 +46,7 @@ output_schema: agent_execution_finalize
 
 ## 自我复核(出结论前自问)
 "每条 executed_* 我都核对过真实证据了吗?没证据的我降级成 designed 了吗?issues 是不是都来自真实失败、都带证据?
+**6_1 `flow_forms` 识别的每种流程形态在 coverage.flow_forms 里都核算了吗(真跑/识别),没跑到的有没有进 coverage_gaps 说明原因)?**
 覆盖率分母分子口径对吗、有没有编数字?verdict 和 gate_decision 一致吗?blockers 是不是只放真正阻塞项?"——补全再输出。
 
 ### 输出格式(合法 JSON,只输出 JSON)
@@ -69,6 +71,7 @@ priority 必填、severity/priority 判定、verdict↔gate_decision 映射、�
   "execution_stats": {"executed_pass": 0, "executed_fail": 0, "blocked": 0, "designed": 0, "skipped": 0},
   "coverage": {
     "business_flow": "主流程 N/总 M 节点真跑 (实测填)",
+    "flow_forms": "<已真跑流程形态数>/<6_1 识别形态数>,如 登录注册/搜索详情 真跑,购物车结算停在下单前",
     "api": "<真请求只读接口数>/<计划数>",
     "state_machine": "<真观测跳转>/<计划>",
     "rbac": "<真验证角色/越权探测覆盖>",
