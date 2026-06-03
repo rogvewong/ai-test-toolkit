@@ -1,7 +1,7 @@
 ---
 id: step1.5
 name: 提测门禁定稿
-version: 3.2.0
+version: 3.2.1
 model_tier: opus
 temperature: 0.2
 max_tokens: 16000
@@ -30,6 +30,7 @@ output_schema: step1_gate_finalization
 逐项追问并据此修正（这里引用的是你在内部**完整复现**的前四步产出）：
 1. **完整性回查（gap 必上抛）**：把 1_3 的 `layer_grid` 里**每个 `status=gap` 的层格**、1_4 的 `holes[]` 里**每一条洞**、1_4 `domain_checklist` 里**每一项 `status=gap` 的域点**——逐条过一遍，确认它们都已被本步**采纳为** issue / blocker / risk / clarification 或**明确判定为不影响提测**。有没有遗漏的功能点 / 8 层里某层 / 某业务域 / 失败模式 / 角色 / 环境？
    > **铁律（gap 必上抛，不许只躺在网格里）**：1_3 每个 `status=gap` 的层格、1_4 每条 hole 与每个 `status=gap` 的域点，必须在本步 `issues / blockers / risks / clarifications` 中有对应条目（可合并同类、可按严重度降级为 risk 或 clarification，但**不得无声丢弃**）；若某 gap 经判断确实不适用本需求，须在对应条目写明「判定不适用的原因」，而不是直接省略。漏抛任一 gap 即视为定稿不合格、报告无效。
+   > **铁律（8 层全覆盖回查）**：内部复现的 1_3 `layer_grid` 必须**逐功能点 × 8 层全部有结论**——逐个功能点点名核对它的 `layers` 是不是 8 个键（business_logic / ui_framework / routing / feedback_states / data_presentation / permission_visibility / global_crosscut / non_functional）齐全、无整层跳过。把结果写进 `gap_uplift_audit.layer_coverage_audit`：`features_with_full_8_layers` 必须 = `features_checked`、`features_missing_layers` 必须为空、`skipped_layer_cells` 必须为 0。**任一不满足 → 说明 1_3 没扫满，定稿不合格——先在内部把缺的层补全再继续。**
 2. **证据回查**：每条 issue/blocker/risk 的 evidence 能否在材料或上游产出里定位（quote / 字段名 / 页面名 / HOLE-xx / F-xx:layer）？不能则删除或降级。
 3. **自洽回查**：结论之间是否自相矛盾？典型：既判 `通过` 又列了 blocking 的 blocker（矛盾）；verdict 与 gate_decision.action 不对应（矛盾）；说某用例已通过（本工具不可能）。
 4. **克制回查（报告求准）**：用例是否在凑数？issue 是否把同一问题（同一 HOLE 多次落地）重复计？去重、收敛——只留可证伪、打要害的真洞。
@@ -62,7 +63,7 @@ output_schema: step1_gate_finalization
 - `testability_verdict`：上面第二步的五维评估结果。
 - `clarifications`：汇总仍未解决、需求方需回答的问题（承接 1_4 的 consolidated_clarifications，去重）。每条带 `blocking` 与 `quote`。
 - `coverage_recap`：对前四步找洞网格的收口统计，体现「层层深入后的收敛」：模块数 / 功能点数 / 网格层格总数与 gap 数 / 洞总数 / 已上抛洞数 / 未决澄清数 / 阻塞数。
-- `gap_uplift_audit`：**gap 上抛审计**——证明铁律已执行。给 `grid_gaps_total`（1_3 层格 gap 数）、`holes_total`（1_4 洞数）、`domain_gaps_total`（1_4 域点 gap 数）、`uplifted`（已落地为 issue/risk/clarification 的去重后条数）、`ruled_not_applicable`（判定不适用并写明原因的条数）、`unaccounted`（理应为 0；若 >0 说明有漏抛，定稿不合格需补）。
+- `gap_uplift_audit`：**gap 上抛审计**——证明铁律已执行。给 `grid_gaps_total`（1_3 层格 gap 数）、`holes_total`（1_4 洞数）、`domain_gaps_total`（1_4 域点 gap 数）、`uplifted`（已落地为 issue/risk/clarification 的去重后条数）、`ruled_not_applicable`（判定不适用并写明原因的条数）、`unaccounted`（理应为 0；若 >0 说明有漏抛，定稿不合格需补）。**新增子审计 `layer_coverage_audit`**——证明 1_3 的「逐功能 × 8 层全覆盖」铁律没被破：逐功能点确认 8 层都有结论、没有任何层被整体跳过，给 `features_checked`（功能点数 n）、`features_with_full_8_layers`（8 层结论齐全的功能点数，应 = n）、`features_missing_layers`（缺层的功能点及缺哪几层，形如 `["F3 缺 feedback_states,permission_visibility"]`，应为空）、`skipped_layer_cells`（被整体跳过的层格总数，应为 0）。**`features_missing_layers` 非空 或 `skipped_layer_cells > 0` → 定稿不合格**（说明内部复现的 1_3 网格没填满，必须先把 8 层补全再定稿）。
 
 ## 输出格式
 仅输出**一个合法 JSON 对象**，前后不得有任何说明文字。顶层必须满足 meta.yaml 统一报告契约的全部硬要求（字段齐全、空数组写 `[]` 不省略、issues 按 severity×priority 排序、cases 按 priority 排序、verdict↔gate_decision 一致、type 不用 kind），并在其上附加本步特有字段。骨架如下（契约字段的完整枚举与含义以 meta.yaml 为准）：
@@ -86,6 +87,9 @@ output_schema: step1_gate_finalization
   },
   "clarifications": [{"id": "CLR-001", "question": "...", "blocking": true, "quote": "<原文或材料空白>"}],
   "coverage_recap": {"modules": 0, "features": 0, "grid_cells": 0, "grid_gaps": 0, "holes": 0, "holes_uplifted": 0, "open_clarifications": 0, "blockers": 0},
-  "gap_uplift_audit": {"grid_gaps_total": 0, "holes_total": 0, "domain_gaps_total": 0, "uplifted": 0, "ruled_not_applicable": 0, "unaccounted": 0}
+  "gap_uplift_audit": {
+    "grid_gaps_total": 0, "holes_total": 0, "domain_gaps_total": 0, "uplifted": 0, "ruled_not_applicable": 0, "unaccounted": 0,
+    "layer_coverage_audit": {"features_checked": 0, "features_with_full_8_layers": 0, "features_missing_layers": [], "skipped_layer_cells": 0}
+  }
 }
 ```

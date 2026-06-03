@@ -1,7 +1,7 @@
 ---
 id: step1.1
 name: 物料盘点与可测性基线
-version: 3.2.0
+version: 3.2.1
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000

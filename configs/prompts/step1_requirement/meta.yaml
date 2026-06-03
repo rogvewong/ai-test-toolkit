@@ -1,6 +1,6 @@
 step_id: step1
 name: 需求评审
-version: 3.2.0
+version: 3.2.1
 
 # 工具定性：分析型。只分析用户提供的 PRD / 原型 / UI 稿 / 交互文案 / 接口草案等文本，
 # 无真实系统交互、无线上数据、无代码可读。因此严禁断言材料未写明的客观事实
@@ -78,19 +78,19 @@ steps:
   - file: 1_3_flow_interaction.md
     name: 逐功能 × 8 层 完整性走查
     output_schema: step1_layer_grid
-    produces: 对 1_2 每个功能点，逐 8 设计层(业务逻辑/UI框架/跳转路由/系统反馈四态弱网/数据呈现一致性/权限可见性/全局横切/非功能)的每个关键点标 defined/gap/not_applicable + quote
-    feeds: layer_grid 是正向完整性扫的结果——为 1_4 提供「每格的 gap 清单」作为找洞起点；主流程与异常流并入①②③④层不丢
+    produces: 先建格(输出完整功能点清单 F1..Fn)再填格——对每个功能点的 layers(含且仅含 8 个键:business_logic/ui_framework/routing/feedback_states/data_presentation/permission_visibility/global_crosscut/non_functional)逐层产出 status+note+quote+逐 probe 点，含 not_applicable 带因；扫满前禁止收敛；顶层 coverage_audit(expected_cells=n×8/filled_cells/missing[])做硬门禁对账
+    feeds: layer_grid 是正向完整性扫的结果——为 1_4 提供「每格的 gap 清单」作为找洞起点；主流程与异常流并入 L1~L4 层不丢。漏扫任一格(coverage_audit 数字对不上)即报告无效需补齐重出
   - file: 1_4_gap_detection.md
     name: 找洞引擎（对抗深挖 + 17 域行规对照 + 6 类归档）
     output_schema: step1_gap_detection
-    produces: 在 1_3 网格上再用方法1/3/4/5(可测性反推/一致性交叉/对抗如果/边界极值/17域行规对照)挖更隐蔽的洞；汇总 1_3 的 gap + 本步新洞，按 6 类缺陷归档去重，每条可证伪
-    feeds: holes[] 是去重后的洞集——为 1_5 提供可直接采纳为 issue/blocker/clarification 的条目
+    produces: 在 1_3 网格上再用方法1/3/4/5(可测性反推/一致性交叉/对抗如果/边界极值/17域行规对照)挖更隐蔽的洞；汇总 1_3 的 gap + 本步新洞，按 6 类缺陷归档去重，每条可证伪。新增强制动作:可测性反推逐功能点产出 testability_probe[](每功能点一条 can_write_assertion/blocked_reason/linked_hole_id,写不出即记洞,不许跳过任一功能点)
+    feeds: holes[] 是去重后的洞集——为 1_5 提供可直接采纳为 issue/blocker/clarification 的条目；testability_probe 把「写不出可断言用例」的功能点逐一钉成洞
     note: 内置「分域标准核查清单」作为方法4(完整性对照)的行规对照表——一份覆盖常见产品功能全集的通用业务域库（共 17 个域：D-ACCT 账号与身份 / D-PAY 支付与交易 / D-SUB 订阅会员计费 / D-CONTENT 内容与媒体 / D-SEARCH 搜索筛选排序推荐 / D-LIST 列表Feed分页 / D-FILE 上传下载文件 / D-FORM 表单与CRUD / D-SOCIAL 社交互动 / D-MSG 消息与通知 / D-AUTHZ 权限角色越权 / D-MKT 营销与增长 / D-FLOW 流程审核工单 / D-PRIVACY 数据隐私合规 / D-I18N 国际化本地化 / D-INTEG 第三方集成 / D-GEN 通用质量）。框架：先判定材料涉及哪些域 → 对涉及域的每个点逐条核查 PRD 是否定义清楚，没定义即开洞（gap 必上抛）；与 step2 的 2_3/2_4 共用同一份域库（口径一致）；该清单是最低覆盖基线非上限，材料涉及但清单未列的子点/子域自行类比展开。每条洞必须可证伪：引原文(或「全文未见X，已通读全文」)+ 为什么是洞(哪个场景会崩/什么后果)+ 补什么才算补全。
   - file: 1_5_report_finalization.md
     name: 提测门禁定稿
     output_schema: step1_gate_finalization
     produces: 可测性裁决 + 门禁决策 + 用例种子 + 统一报告契约（唯一对外出口）
-    note: finalize 步，强制遵守下方「统一报告契约」；只引用契约不重抄完整 schema。严守「gap 必上抛」铁律——1_3 的每个 layer gap、1_4 的每个 domain/hole gap 都必须在最终 issues/risks/clarifications 有对应条目，不得无声丢弃。
+    note: finalize 步，强制遵守下方「统一报告契约」；只引用契约不重抄完整 schema。严守「gap 必上抛」铁律——1_3 的每个 layer gap、1_4 的每个 domain/hole gap 都必须在最终 issues/risks/clarifications 有对应条目，不得无声丢弃。gap_uplift_audit 新增 layer_coverage_audit(features_checked/features_with_full_8_layers/features_missing_layers[]/skipped_layer_cells)——逐功能点确认 8 层都有结论、无整层跳过;features_missing_layers 非空或 skipped_layer_cells>0 则定稿不合格。
 
 common_system_suffix: |
   通用规则（所有子步遵守）：
@@ -110,7 +110,20 @@ common_system_suffix: |
   - 出最终结论前强制自我复核：自问「8 层里漏扫了哪层？17 域里漏判了哪个域？还漏了哪些功能点 /
     分支 / 边界 / 失败模式 / 角色 / 环境？」逐项补全后再输出。宁可多挖一层，不可浅尝辄止。
 
-  【8 设计层（纵轴，全步统一口径）】每个功能点逐层问「PRD 定义了没」：
+  【完整扫描铁律（强制完整性 · 不扫满即作废）】需求评审的完整性是硬门禁，不是软建议：
+  - **逐功能点 × 8 层全覆盖**：必须先建格（输出完整功能点清单 F1..Fn）再填格（对每个功能点逐层
+    产出 8 个层格结论，含 not_applicable——且 not_applicable 必须写明「为何本功能不涉及该层」）。
+    漏任一功能点、漏任一层、某层缺键或空着，都视为漏扫。
+  - **扫满前禁止收敛**：在逐功能点 × 8 层全部产出结论之前，禁止收敛到任何「重点 / 结论 / summary /
+    哪些是洞」——先填满 n×8，再谈洞。
+  - **数字对账是抓手**：1_3 输出 `coverage_audit`（features_count / expected_cells=n×8 /
+    filled_cells / missing[]），filled_cells 必须 = expected_cells 且 missing 为空；
+    1_5 输出 `gap_uplift_audit.layer_coverage_audit`（features_checked /
+    features_with_full_8_layers / features_missing_layers[] / skipped_layer_cells），
+    features_with_full_8_layers 必须 = features_checked、features_missing_layers 为空、
+    skipped_layer_cells 为 0。**任一数字对不上 = 报告无效，必须补齐缺格后重新输出整份。**
+
+  【8 设计层（纵轴，全步统一口径）】每个功能点逐层问「PRD 定义了没」（层 key 固定 L1~L8）：
     ① 业务逻辑：触发 / 正常 / 各异常分支 / 状态机 / 领域规则。
     ② UI 框架与信息架构：全局导航 tab 浮窗弹窗在各页显隐、页面层级归属、组件一致性、
        布局自适应（折叠屏 / 横竖屏 / 系统字号 / 深色模式）。
