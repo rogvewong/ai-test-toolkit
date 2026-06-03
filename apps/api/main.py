@@ -1549,8 +1549,10 @@ async def _execute_apis_agentic(ctx: Any, state: dict[str, Any]) -> dict[str, An
             "ts": _time.time(), "event": "api.execute.skip", "reason": "材料里没有可调用的 URL,也无上传文件"})
         return None
     import httpx
+    import asyncio as _aio
     from packages.core.agent import agent_loop
 
+    # ── 通用动作:send_request(httpx 真发)—— 模式A 与 模式B 的重放/变形都用它 ──
     async def http_request(args: dict[str, Any]) -> str:
         method = (args.get("method") or "GET").upper()
         url = args.get("url")
@@ -1571,34 +1573,152 @@ async def _execute_apis_agentic(ctx: Any, state: dict[str, Any]) -> dict[str, An
         except Exception as exc:
             return f"请求失败: {type(exc).__name__}: {str(exc)[:200]}"
 
+    tools: dict[str, Any] = {"send_request": http_request}
+
+    # ── 模式B 能力:真驱动前端 + 抓包。材料给了前端就走前端;Playwright 不可用则降级为纯接口(模式A)──
+    captured: list[dict[str, Any]] = []
+    pw = browser = page = None
+    try:
+        from playwright.async_api import async_playwright
+        pw = await async_playwright().start()
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1440, "height": 900})
+
+        def _on_resp(resp: Any) -> None:
+            try:
+                req = resp.request
+                if req.resource_type in ("xhr", "fetch"):
+                    h = req.headers
+                    captured.append({
+                        "method": req.method, "url": req.url, "status": resp.status,
+                        "auth": "有" if (h.get("authorization") or h.get("cookie") or h.get("x-token") or h.get("token")) else "无",
+                        "ctype": h.get("content-type", ""), "post": (req.post_data or "")[:400]})
+            except Exception:
+                pass
+        page.on("response", _on_resp)
+
+        async def navigate(a: dict[str, Any]) -> str:
+            url = a.get("url")
+            if not url:
+                return "缺少 url"
+            try:
+                r = await page.goto(url, timeout=30000, wait_until="domcontentloaded")
+                await _aio.sleep(1.8)
+                return f"已打开前端 {page.url} | HTTP {r.status if r else '?'} | 标题: {await page.title()}"
+            except Exception as e:
+                return f"打开失败: {type(e).__name__}: {str(e)[:150]}"
+
+        async def click(a: dict[str, Any]) -> str:
+            try:
+                if a.get("text"):
+                    await page.get_by_text(a["text"], exact=False).first.click(timeout=8000)
+                elif a.get("selector"):
+                    await page.click(a["selector"], timeout=8000)
+                else:
+                    return "需提供 text 或 selector"
+                await _aio.sleep(1.6)
+                return f"已点击 | 当前 {page.url}"
+            except Exception as e:
+                return f"点击失败: {str(e)[:150]}"
+
+        async def form_input(a: dict[str, Any]) -> str:
+            try:
+                val = str(a.get("value", ""))
+                if a.get("placeholder"):
+                    await page.get_by_placeholder(a["placeholder"]).first.fill(val, timeout=8000)
+                    tgt = a["placeholder"]
+                elif a.get("selector"):
+                    await page.fill(a["selector"], val, timeout=8000)
+                    tgt = a["selector"]
+                else:
+                    return "需提供 selector 或 placeholder"
+                return f"已填写 {tgt} = {val[:40]}"
+            except Exception as e:
+                return f"填写失败: {str(e)[:150]}"
+
+        async def inspect(a: dict[str, Any]) -> str:
+            try:
+                sig = await page.evaluate(
+                    "() => ({title:document.title,"
+                    "bodyText:(document.body.innerText||'').slice(0,600),"
+                    "inputs:[...document.querySelectorAll('input,select,textarea')].map(e=>({name:e.name||e.id,ph:e.placeholder,type:e.type})).slice(0,20),"
+                    "buttons:[...document.querySelectorAll('button,a')].map(e=>(e.innerText||'').trim()).filter(Boolean).slice(0,24)})")
+                return _json.dumps(sig, ensure_ascii=False)[:1900]
+            except Exception as e:
+                return f"抽取失败: {str(e)[:150]}"
+
+        async def read_network(a: dict[str, Any]) -> str:
+            # 读出前端真实发出的接口请求(抓包)——模式B 的核心:看前端实际调了哪些接口、怎么调
+            if not captured:
+                return "暂无捕获到接口请求。先 navigate 前端页面,再 click/form_input 触发业务操作,前端才会发请求。"
+            seen: set = set()
+            out: list[dict[str, Any]] = []
+            for c in captured[-60:]:
+                k = (c["method"], c["url"].split("?")[0])
+                if k in seen:
+                    continue
+                seen.add(k)
+                out.append(c)
+            return f"前端真实发出的接口(去重后 {len(out)} 个):\n" + "\n".join(
+                f"- {c['method']} {c['url'][:130]} → {c['status']} | 鉴权:{c['auth']} | {c['ctype'][:30]} | body:{c['post'][:120]}" for c in out)
+
+        tools.update({"navigate": navigate, "click": click, "form_input": form_input,
+                      "inspect": inspect, "read_network": read_network})
+    except Exception as exc:
+        state.setdefault("logs", []).append({
+            "ts": _time.time(), "event": "api.browser.unavailable",
+            "reason": "Playwright 不可用,降级为纯接口模式A", "error": str(exc)[:150]})
+
     ex_md = Path(__file__).resolve().parent.parent.parent / "configs" / "prompts" / "step4_api" / "_execute.md"
     try:
         sysp = ex_md.read_text(encoding="utf-8")
     except Exception:
-        sysp = ("你真实测试 HTTP 接口。每轮输出 JSON {thought, tool:'http_request', "
-                "args:{method,url,headers,body}, finding, done}。真发请求看响应找 bug,覆盖正常/必填/边界/鉴权/契约。")
-    task = (f"接口资料如下,请真实调用并测试:\n\n{docs[:6000]}\n\n"
+        sysp = ("你真实测试 HTTP 接口(双模):材料含前端页面就先 navigate 前端 + click/form_input 触发、"
+                "read_network 抓前端真实请求,再 send_request 重放/变形深测;只有接口文档就直接 send_request。"
+                "每轮输出 JSON {thought, tool, args, finding, done}。覆盖正常/必填/边界/鉴权/越权/契约。")
+    has_browser = "navigate" in tools
+    task = (f"测试者提供的物料如下。{'材料里若有前端页面 URL → 走模式B(从真实前端发起请求);' if has_browser else ''}"
+            f"只有接口文档 → 走模式A(直接对接口真发请求)。\n\n{docs[:6000]}\n\n"
             f"现在开始,输出第一步动作的 JSON。")
-    state["progress"] = "AI 真实调用接口中…"
+    state["progress"] = "AI 接口测试中（双模）…"
     res = await agent_loop(
-        ctx.llm, sysp, task, {"send_request": http_request}, max_steps=18,
-        on_step=lambda r: state.update({"progress": f"接口测试 第{r.get('step')}步: {(r.get('args') or {}).get('method','')} {(r.get('args') or {}).get('url','')[:50]}"}),
-        files=getattr(ctx, "files", None),  # 上传的接口文档(PDF/文本)直传给规划 AI
+        ctx.llm, sysp, task, tools, max_steps=28,
+        on_step=lambda r: state.update({"progress": f"接口测试 第{r.get('step')}步: {r.get('tool','')} {((r.get('args') or {}).get('method','') or '')} {((r.get('args') or {}).get('url','') or (r.get('args') or {}).get('text','') or '')[:46]}"}),
+        files=getattr(ctx, "files", None),
     )
-    # 把真实调用记录注入 documents,供 5 个 substep 基于真实结果分析
-    lines = ["", "", "## 真实接口调用记录(AI 实测,以下结论须基于这些真实 req/resp)"]
+    try:
+        if browser:
+            await browser.close()
+        if pw:
+            await pw.stop()
+    except Exception:
+        pass
+
+    # 把真实记录(前端抓包 + agent 调用)注入 documents,供 5 个 substep 基于真实结果分析
+    lines = ["", "", "## 真实接口测试记录(AI 实测,以下结论须基于这些真实 req/resp)"]
+    if captured:
+        lines.append(f"### 模式B:从真实前端抓到的接口请求(共 {len({(c['method'], c['url'].split('?')[0]) for c in captured})} 个不同)")
+        seen2: set = set()
+        for c in captured:
+            k = (c["method"], c["url"].split("?")[0])
+            if k in seen2:
+                continue
+            seen2.add(k)
+            lines.append(f"- {c['method']} {c['url'][:130]} → {c['status']} | 鉴权:{c['auth']}")
+    lines.append("### AI 测试动作记录")
     for t in res.get("transcript", []):
         a = t.get("args") or {}
-        lines.append(f"- [{t.get('step')}] {(a.get('method') or '').upper()} {a.get('url','')} "
-                     f"→ {str(t.get('result',''))[:300]}")
+        ident = a.get("url", "") or a.get("text", "") or a.get("selector", "") or a.get("placeholder", "")
+        lines.append(f"- [{t.get('step')}] {t.get('tool','')} {(a.get('method') or '').upper()} {ident} "
+                     f"→ {str(t.get('result',''))[:260]}")
     if res.get("findings"):
         lines.append("\nAI 实测中已标记的问题:")
         for f in res["findings"]:
             lines.append(f"- {_json.dumps(f, ensure_ascii=False)[:300]}")
     ctx.inputs["documents"] = docs + "\n".join(lines)
     state.setdefault("logs", []).append({
-        "ts": _time.time(), "event": "api.execute",
-        "steps": res.get("steps"), "findings": len(res.get("findings") or [])})
+        "ts": _time.time(), "event": "api.execute", "mode": "B" if captured else ("AB" if has_browser else "A"),
+        "steps": res.get("steps"), "captured": len(captured), "findings": len(res.get("findings") or [])})
     return res
 
 

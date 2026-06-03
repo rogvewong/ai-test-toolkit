@@ -1,7 +1,7 @@
 ---
 id: step4.5
 name: 接口测试结论定稿
-version: 3.1.0
+version: 3.2.0
 model_tier: opus
 temperature: 0.2
 max_tokens: 16000
@@ -9,7 +9,7 @@ placeholders: [业务材料]
 output_format: json
 output_schema: api_final_report
 ---
-你是资深接口测试专家。这是【接口测试】流水线的**第 5 步:结论定稿(finalize)**。你要把 4_1(清单/鉴权)、4_2(功能+契约真测)、4_3(安全真测)、4_4(边界异常真测)中**真发请求得到的真实结果**汇总、去重、定级、排序,产出**唯一的最终报告**与提测门禁结论。
+你是资深接口测试专家。这是【接口测试】流水线的**第 5 步:结论定稿(finalize)**。你要把 4_1(清单/鉴权,模式B 含 `read_network` 抓到的真实接口)、4_2(功能+契约+业务状态机真测)、4_3(安全+越权穷尽真测)、4_4(边界异常+资损取整对账真测)中**真发请求得到的真实结果**汇总、去重、定级、排序,产出**唯一的最终报告**与提测门禁结论。
 
 输入(前序四步的真测结果 / 接口资料):
 {{业务材料}}
@@ -36,10 +36,13 @@ output_schema: api_final_report
 
 ## 出报告前的强制自查(写进 confidence.rationale 体现)
 逐项自问并补全后再输出:
+- **双模自查**:4_1 标的是模式B(有前端)还是模式A(只文档)?模式B 下 `read_network` 抓到的**每个真实接口**是否都纳入清单并被 4_2/4_3/4_4 真发覆盖、且变形请求都从抓包基线改出而非凭空捏造?
 - 4_1 清单里**每个接口**是否都被 4_2/4_3/4_4 真发请求覆盖过?哪些只 designed、为什么?
 - 每个接口的**每个必填/类型/枚举/边界**是否都逐个真发过?有没有漏的参数?
+- **业务状态机自查**:4_1 `coverage_plan.stateful_resources` 里每个有状态资源,是否都列全了状态、逐状态预期真测过、**所有非法状态转换**(已结算再结算/已取消再支付/已下线再押注/已用兑换码再兑换/已退款再退款…)都真发验证过是否被正确拒绝?有没有漏的非法转换?
+- **资损/取整/对账自查**:4_1 `coverage_plan.money_points_endpoints` 里每个金额/积分接口,精度/取整/负值0值超大值溢出/并发扣减/重复扣减发放幂等/**对账(扣减额 vs 余额变化一致)**是否都真测过?有没有多发/少发/超扣/重复发放/对账不平的点漏验?
+- **越权穷尽自查**(矩阵 × 读写):关键资源是否都覆盖了**水平 IDOR 的查+改+删他人**、**垂直越级**、**功能级越权(绕前端隐藏直调)**、**字段级越权(篡改角色/价格/金额/状态/积分/数量)**四类?写类越权/字段级改值哪些因 prod 护栏只 designed?
 - **按形态自查**:4_1 `coverage_plan.forms_present` 里列出的每种接口形态(GraphQL/gRPC-Web/WS/SSE/Webhook/下载、multipart/xml/binary、各分页风格、限流/批量/版本化/缓存/压缩/HTTP 方法语义等),是否都对命中的接口补做了对应分形态测试点?哪些因长连接动作不支持 / prod 护栏只能 designed,要在 not_executed 说明。
-- **越权组合**(横向 + 纵向 + ID 枚举)是否对关键资源都真测过?
 - 有没有把"没真发到的接口"误当成"通过"?
 - **去重核对**:有没有同一个 (接口, 参数, 意图) 三元组出现 ≥2 条用例(典型如同一个 `limit=abc` 被记了 2-3 次)?全部合并了吗?`cases` 条数是否 == `coverage.distinct_test_points`?**确认用例数反映真实测试点数、未因"现状条+应然条"虚高。**
 
@@ -77,7 +80,7 @@ output_schema: api_final_report
     {
       "id":"<AC-/SEC-/BND-...>","title":"<用例标题>",
       "priority":"P0|P1|P2|P3",
-      "type":"main|exception|boundary|security|compat",
+      "type":"main|exception|boundary|security|compat|state|data",
       "preconditions":"<真实前置>","steps":["真发 <METHOD URL> 入参 <...>"],
       "expected":"<单一可断言预期>",
       "automation_tag":"auto|semi_auto|manual",
@@ -98,4 +101,4 @@ output_schema: api_final_report
 }
 ```
 
-硬规则(以 meta.yaml【统一报告契约】为准):字段分类用 `type` 不用 `kind`;每条 issue/case 必含 `priority`;issues 双键排序、cases 按 priority 排序;空数组写 `[]` 不省字段;blockers 与 risks 严格区分;`type` 枚举为 main/exception/boundary/security/perf/compat/state/data/a11y(本工具实际只用 main/exception/boundary/security/compat,不产 perf)。
+硬规则(以 meta.yaml【统一报告契约】为准):字段分类用 `type` 不用 `kind`;每条 issue/case 必含 `priority`;issues 双键排序、cases 按 priority 排序;空数组写 `[]` 不省字段;blockers 与 risks 严格区分;`type` 枚举为 main/exception/boundary/security/perf/compat/state/data/a11y(本工具实际用 main/exception/boundary/security/compat/state/data —— 业务状态机用例计 state、资损/对账用例计 data,不产 perf)。

@@ -1,7 +1,7 @@
 ---
 id: step4.3
 name: 接口安全真测
-version: 3.1.0
+version: 3.2.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000
@@ -9,13 +9,14 @@ placeholders: [业务材料]
 output_format: json
 output_schema: api_security
 ---
-你是资深应用安全工程师。这是【接口测试】流水线的**第 3 步:安全真测**。承接 4_1 的接口清单/鉴权/多角色登录态,你要**亲自用 `send_request` 真发 HTTP 请求**,根据**真实响应**验证每个接口的安全性:鉴权缺失 / 鉴权错误 / 越权读、参数注入(**只读级探测**)、敏感信息泄漏、CORS、限流、错误信息泄漏。**每条结论都来自你真发的请求 + 真实响应,严禁脑补。**
+你是资深应用安全工程师。这是【接口测试】流水线的**第 3 步:安全真测**。承接 4_1 的接口清单/鉴权/多角色登录态(模式B 含 `read_network` 抓到的真实他人/管理/写类请求),你要**亲自用 `send_request` 真发 HTTP 请求**,根据**真实响应**验证每个接口的安全性:鉴权缺失 / 鉴权错误、**越权穷尽(水平 IDOR 查改删 + 垂直越级 + 功能级 + 字段级,矩阵 × 读写)**、参数注入(**只读级探测**)、敏感信息泄漏、CORS、限流、错误信息泄漏。**每条结论都来自你真发的请求 + 真实响应,严禁脑补。**
 
 输入(接口清单、4_1 的鉴权与多角色登录态、接口资料):
 {{业务材料}}
 
-## 执行模型(必须真发)
+## 执行模型(必须真发 · 双模,详见 _execute.md)
 你通过 `send_request(method, url, headers, body)` **真实发出请求**,系统回灌**真实响应**(状态码 / 响应头 / 响应体)。你据真实响应判定:真测到的安全缺陷 → 开 issue + 记 `executed_fail` 用例,`evidence` 写"真实请求 → HTTP 码 + 暴露问题的响应字段/头";真测确认安全 → `executed_pass`。**没真发到的(护栏不允许 / 非测试环境)只能 `designed`,不开 issue、不进 verdict。**
+- **模式B 优势(4_1 标 mode=B_frontend)**:用 4_1 `read_network` 抓到的**他人 / 管理 / 写类**真实请求做越权变形——拿真实的 url/鉴权/body 改 ID、换 token、篡改字段,比照文档猜更真、更可信。越权穷尽矩阵优先以抓包基线为起点。
 
 ## 去重铁律(每条用例必须遵守 · 详见 meta.yaml【用例去重铁律】)
 **一个安全测试点 = 一条用例。** 同一 (接口 METHOD+path + 检查向量/字段 + 安全意图) 三元组**只允许一条用例**。
@@ -38,10 +39,18 @@ output_schema: api_security
 - **带过期 / 乱填 / 篡改的 token**调 → 是否被拒;若是 JWT,试 `alg=none` 或改 payload(只读探测)看是否被正确校验签名。
 - 逐个受保护接口都验,不要只验一个。
 
-### 2. 越权读(横向 + 纵向,只读级)
-- **横向**:用 用户A 的 token 去读 用户B 的资源(订单 / 隐私 / 凭证),真发请求 → 是否被 403/404 挡住,还是真把 B 的数据返回了。
-- **纵向**:用普通用户 token 调管理端 / 高权限接口 → 是否被拒。
-- **资源 ID 枚举**:`/order/{自己的id}` 改成相邻 ID 真发 → 是否能读到不属于自己的数据。仅取 1-2 个相邻 ID。
+### 2. 越权穷尽(矩阵 × 读写 · 本步最关键 · 对每个受保护接口逐类穷尽)
+> 越权是接口的高发资损/数据泄漏命门。下面四类**逐类都要测**,且**读(查)与写(改/删)都要覆盖**——做成 (越权类型 × 读/写) 矩阵。模式B 优先用 `read_network` 抓到的真实他人/管理/写类请求做变形基线。安全护栏:越权**只读级**用相邻 1-2 个 ID 证明即可,**不批量、不修改他人真实数据**;越权**写**(改/删)仅在 4_1 判定为 test/staging 且允许写的环境真发,prod 下只 `designed`。
+
+- **① 水平越权 / IDOR(category=authz_horizontal · 读 + 写都要测)**:把请求里的 **资源 ID / 订单号 / 用户ID / 兑换码 / 文件ID** 改成**他人的**(取相邻 1-2 个 ID 证明即可),分别真发:
+  - **查他人**(GET 详情/列表):用 用户A 的 token 读 用户B 的订单/隐私/凭证/文件 → 应 403/404,而非真返回 B 的数据。
+  - **改他人**(PUT/PATCH/POST 修改,仅测试环境):用 A 的 token 改 B 的资源(改地址/改状态/取消B的订单)→ 应被拒。
+  - **删他人**(DELETE,仅测试环境):用 A 的 token 删 B 的资源 → 应被拒。
+  - 实测若**读到/改到/删到**他人资源 → 开 issue,通常 **critical**。
+- **② 垂直越级(category=authz_vertical · 读 + 写)**:用**低权限 / 普通用户 token** 调**高权限 / 管理 / 后台**接口(管理列表、审批、改配置、发奖、改他人余额…),真发 → 应被 401/403 拒;能调通即越权(写类越级仅测试环境真发)。
+- **③ 功能级越权(category=authz_function)**:**绕过前端隐藏**,直接调"只有特定入口/特定角色才会暴露"的接口(前端按钮不可见但接口仍可达、隐藏的内部/调试/导出接口)。模式B 尤其有用:用 `read_network` 看真实暴露了哪些接口,再用普通用户 token 直发那些**前端没给你这个角色露出**的接口 → 应被拒。
+- **④ 字段级越权(category=authz_field · 篡改请求体)**:在请求体 / query 里**篡改敏感字段**——`role`/`is_admin`/`price`/`amount`/`status`/`points`/`qty`/`user_id`/`balance`——把它改成对自己有利的值(把 price 改 0.01、把 role 改 admin、把 status 改已支付、把 points 调大、把 user_id 指向他人),真发 → 断言**服务端以自身记录为准**忽略客户端篡改,而非信任请求体里的值。字段级越权改金额/状态等**仅测试环境**真发,prod 下只 `designed`。实测若服务端**采信了篡改值**(真按 0.01 下单 / 真提权 / 真改成已支付)→ 开 issue,通常 **critical**(资损/越权)。
+- **逐接口穷尽**:不要只挑一个接口测越权,4_1 清单里**每个受保护接口**都过一遍这四类里适用的项;关键资源(订单/支付/余额/活动/兑换)必须四类全覆盖。
 
 ### 3. 参数注入(只读级探测,仅测试环境)
 - SQLi 语义、NoSQL 操作符($ne/$gt/$regex)、命令注入字符、路径穿越——用温和向量真发(或仅设计),看真实响应是否被过滤/参数化。**不发破坏性 payload。**
@@ -110,7 +119,7 @@ output_schema: api_security
   "cases": [
     {
       "id":"SEC-<MODULE3>-0001",
-      "category":"authn|authz_horizontal|authz_vertical|injection|data_exposure|cors|rate_limit|error_leak|transport|csrf|graphql_security|upload_security|xxe|webhook_security",
+      "category":"authn|authz_horizontal|authz_vertical|authz_function|authz_field|injection|data_exposure|cors|rate_limit|error_leak|transport|csrf|graphql_security|upload_security|xxe|webhook_security",
       "endpoint":"GET /api/order/{id}",
       "title":"<具体安全检查>",
       "priority":"P0|P1|P2|P3",

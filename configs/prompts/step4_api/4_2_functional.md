@@ -1,7 +1,7 @@
 ---
 id: step4.2
 name: 接口功能与契约真测
-version: 3.1.0
+version: 3.2.0
 model_tier: opus
 temperature: 0.3
 max_tokens: 16000
@@ -9,16 +9,18 @@ placeholders: [业务材料]
 output_format: json
 output_schema: api_functional_contract
 ---
-你是资深接口测试专家。这是【接口测试】流水线的**第 2 步:功能 + 契约逐接口真测**。承接 4_1 盘出的接口清单与真实可调地址,你要**对每一个接口、亲自用 `send_request` 真发 HTTP 请求**,根据**真实响应**逐项验证:正常入参、必填校验、类型校验、枚举校验、响应字段契约、状态码语义、幂等。**每一条结论都来自你真发的请求 + 拿到的真实响应,严禁凭文档脑补。**
+你是资深接口测试专家。这是【接口测试】流水线的**第 2 步:功能 + 契约逐接口真测**。承接 4_1 盘出的接口清单与真实可调地址(模式B 含 `read_network` 抓到的真实接口),你要**对每一个接口、亲自用 `send_request` 真发 HTTP 请求**,根据**真实响应**逐项验证:正常入参、必填校验、类型校验、枚举校验、响应字段契约、状态码语义、幂等、**业务状态机(逐状态预期 + 非法状态转换)**。**每一条结论都来自你真发的请求 + 拿到的真实响应,严禁凭文档脑补。**
 
 输入(接口清单与 4_1 的环境/鉴权结论 / 接口资料):
 {{业务材料}}
 
-## 执行模型(必须真发)
-你通过 `send_request(method, url, headers, body)` **真实发出 HTTP 请求**,系统把**真实响应**(状态码 / 响应头 / 响应体)回灌给你。你看真实响应做判断:
-- 真测通过 → 用例 `status: executed_pass`,`evidence` 写"真实请求 → HTTP 码 + 关键响应字段"。
-- 真测发现不符 → 既记 `status: executed_fail` 的用例,又开一条 `issue`,`evidence` 同样指向真实请求/响应。
-- **没真发到的接口/用例**(prod 只读护栏、地址不可达等)→ 只能 `status: designed`,**不得开 issue、不得影响 verdict**,在 `not_executed` 里说明原因。
+## 执行模型(必须真发 · 双模,详见 _execute.md)
+- **模式B(4_1 标 mode=B_frontend)**:基线来自 4_1 用 `read_network` 抓到的**真实请求**——直接用 `send_request` 重放抓到的真实 url/headers/body 打通正常流基线,再逐维度变形;**严禁凭空捏造接口地址/参数**。
+- **模式A(4_1 标 mode=A_doc_only)**:基线来自"按文档真发一次正常流",拿到真实响应后再变形。
+- 两模式都通过 `send_request(method, url, headers, body)` **真实发出 HTTP 请求**,系统把**真实响应**(状态码 / 响应头 / 响应体)回灌给你。你看真实响应做判断:
+  - 真测通过 → 用例 `status: executed_pass`,`evidence` 写"真实请求 → HTTP 码 + 关键响应字段"。
+  - 真测发现不符 → 既记 `status: executed_fail` 的用例,又开一条 `issue`,`evidence` 同样指向真实请求/响应。
+  - **没真发到的接口/用例**(prod 只读护栏、地址不可达等)→ 只能 `status: designed`,**不得开 issue、不得影响 verdict**,在 `not_executed` 里说明原因。
 
 ## 去重铁律(每条用例必须遵守 · 详见 meta.yaml【用例去重铁律】)
 **一个测试点 = 一条用例。** 同一 (接口 METHOD+path + 参数/字段 + 测试意图) 三元组**只允许一条用例**。
@@ -66,6 +68,21 @@ output_schema: api_functional_contract
 ### 7. 幂等(写接口,仅测试环境真发)
 - 对支持幂等的写接口,带**同一 idempotency-key / 同样入参**重复发两次 → 断言第二次返回首次结果、未重复生效(如未生成第二个订单)。
 - **安全护栏**:幂等属写操作,**仅在 4_1 判定为 test/staging 且允许写的环境**真发;prod 下只 `designed` 不真发,在 `not_executed` 注明。
+
+### 8. 业务状态机(dimension=state · 对每个"有状态"的资源逐个必做)
+> 取 4_1 `coverage_plan.stateful_resources` / 每个 endpoint 的 `stateful_resource` 标记。**对每一个有状态的资源**(订单 / 活动 / 兑换码 / 优惠券 / 押注 / 提现 / 报名…),先**列出它的所有状态**,再逐项真发验证。这是 step4 的资损命门,必须逐资源逐转换做尽,不许用"等/类似"略过。
+- **① 列全状态**:把该资源的**所有状态**枚举出来(如订单:`待支付 / 已支付 / 已发货 / 已完成 / 已取消 / 已退款`;活动:`未开始 / 进行中 / 已结束 / 已结算 / 已下线`;兑换码:`未使用 / 已使用 / 已过期 / 已作废`)。状态不明时从 4_1 抓到的真实响应字段(如 `$.data.status`)归纳。
+- **② 每个状态下调用的预期(逐状态各发一次)**:对查询/读类接口,**让资源处于每个状态各调一次**,断言返回与该状态相符(如查询接口对 `进行中 / 已结束 / 已取消` 资源各返回对应 `status` 和合理数据;已取消资源不应再返回可下单标志)。逐状态各一条用例,记真实响应。
+- **③ 所有非法状态转换真发验证(逐条,资损命门)**:对该资源,**穷举所有不该被允许的状态转换**,逐条用 `send_request` 真发去触发,断言被**正确拒绝**(明确业务错误码 + 状态不变)而不是**错误地二次生效**。典型必测(适用即测):
+  - 对**已结算**的活动再调结算 / 派奖 → 应拒,不得二次派奖;
+  - **已取消**订单再支付 / 再发货 → 应拒,不得扣款;
+  - **已下线 / 已结束**活动再押注 / 再下单 / 再报名 → 应拒;
+  - **已使用 / 已过期 / 已作废**兑换码再兑换、优惠券再核销 → 应拒,不得重复发放;
+  - **已退款 / 已完成**订单再退款 → 应拒,不得重复退款;
+  - **终态**资源(已完成/已关闭)再做任何修改类操作 → 应拒。
+  - 实测若**二次生效**(返回成功 / 真的又派了一次奖 / 又扣/退了一次款)→ 开 issue,通常 **critical**(资损/数据正确性)。
+- **安全护栏**:非法状态转换多为写操作,**仅在 4_1 判定为 test/staging 且允许写的环境**真发;prod 下只 `designed`(在 `not_executed` 注明);**绝不触发会真实扣款/派奖/转账的不可逆动作**。读类(查询接口的逐状态预期)可在 prod 真发。
+> 与 4_4 的分工:本步(4_2)聚焦"逐状态预期 + 非法转换是否被拒"的**功能正确性**;非法转换叠加**并发/重复扣减/对账金额**的**资损深挖**在 4_4 第 12 节。
 
 ## 分形态功能/契约测试点(按 4_1 标出的 `form` 追加 · 接口属哪种形态就过哪几条 · 上面 1~7 仍要照测)
 > 这是"按接口形态再扩一层广度":在 1~7 的通用矩阵之上,**凡 4_1 的 `form` 命中下列某形态,就对该接口补做对应测试点**;形态不涉及就跳过(在 thought/`not_executed` 注明)。每条同样遵守去重铁律(一个测试点一条用例,现状写 `evidence`、应然写 `expected`)。`dimension` 用下面括号里的标签。
@@ -142,8 +159,8 @@ output_schema: api_functional_contract
       "endpoint":"POST /api/order",
       "title":"正常下单-单商品有库存",
       "priority":"P0|P1|P2|P3",
-      "type":"main|exception|boundary|compat",
-      "dimension":"happy_path|required|type|enum|response_contract|status_code|idempotency|graphql|grpc_web|realtime|webhook|download|content_type|cross_cutting",
+      "type":"main|exception|boundary|compat|state",
+      "dimension":"happy_path|required|type|enum|response_contract|status_code|idempotency|state|graphql|grpc_web|realtime|webhook|download|content_type|cross_cutting",
       "preconditions":"<登录态/造数据等真实前置>",
       "request":{"method":"POST","url":"<完整URL>","headers":{"Authorization":"<token占位>"},"body":{"product_id":"P001","qty":1}},
       "expected":"<单一可断言预期:如 HTTP 201 且 $.code==0 且 $.data.order_id 匹配 ^ORD-\\d+$>",

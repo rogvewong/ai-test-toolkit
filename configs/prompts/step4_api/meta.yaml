@@ -1,31 +1,62 @@
 step_id: step4
 name: 接口测试
-version: 3.1.0
+version: 3.2.0
 tool_type: interactive
 description: |
-  交互型接口测试工具。Claude 通过 send_request(method,url,headers,body) **亲自真发 HTTP 请求**,
-  拿到真实响应(状态码/头/体)后据此找 bug。一切结论必须基于 Claude 自己发出的真实请求与真实响应,
-  严禁凭文档脑补。覆盖各类接口形态:协议(REST/GraphQL/gRPC-Web/WebSocket/SSE/Webhook/文件下载)、
+  交互型接口测试工具,**双模执行**:有前端就**从前端走真实请求**(模式B),只有接口文档就**直发接口**(模式A)。
+  执行循环(见 _execute.md)提供 6 个动作,Claude 每轮输出 {thought,tool,args,finding,done}:
+  send_request(真发 HTTP)、navigate(开前端页)、click(点元素)、form_input(填输入框)、inspect(读页面)、
+  read_network(抓前端真实发出的接口请求:method/url/鉴权/content-type/body)。
+  模式B:navigate 打开前端 → inspect 看页面 → click/form_input 真实操作触发业务动作 → read_network 抓真实接口做基线 →
+  send_request 重放+变形深测;严禁凭空捏造接口地址/参数。Playwright 不可用时自动降级为纯 send_request(模式A)。
+  一切结论必须基于真实请求/真实抓包/真实响应,严禁凭文档脑补。覆盖各类接口形态:协议(REST/GraphQL/gRPC-Web/WebSocket/SSE/Webhook/文件下载)、
   鉴权(无/Bearer-JWT/Cookie-Session/OAuth2/API-Key/HMAC/双向TLS)、内容类型(json/form/multipart/binary/xml)、
   分页(offset/page/cursor/scroll)与横切(限流/幂等/版本化/批量/缓存/压缩/CORS/HTTP方法语义);
-  4_1 逐接口识别形态,4_2~4_4 在通用矩阵之上按形态追加测试点,凡材料涉及即测。
-  真发请求的执行循环见 _execute.md。本工具不测性能(send_request 不返回耗时)。
+  4_1 逐接口识别形态,4_2~4_4 在通用矩阵之上按形态追加测试点,并深挖三块资损命门:
+  业务状态机(逐状态预期 + 非法状态转换)、资损/取整/对账/精度、越权穷尽(水平IDOR查改删/垂直/功能级/字段级 × 读写)。凡材料涉及即测。
+  本工具不测性能(send_request 不返回耗时)。
 order:
-  - 4_1_interface_list.md   # 接口清单 + 形态识别 + 鉴权前置:盘点接口/参数/鉴权,逐接口打 form 标签(协议/鉴权/内容类型/分页/横切),真发探活确认可调地址与登录态
-  - 4_2_functional.md       # 功能 + 契约逐接口真测:正常入参/必填/类型/枚举/响应字段契约/状态码语义/幂等 + 分形态(GraphQL/gRPC-Web/WS/SSE/Webhook/下载/multipart/版本化/批量/缓存/压缩/HTTP方法语义)
-  - 4_3_security.md         # 安全真测:鉴权缺失/错误/越权读、注入(只读级)、敏感泄漏、CORS、限流、错误信息泄漏 + 分形态(JWT/Cookie-CSRF/OAuth2/API-Key/HMAC/mTLS、GraphQL introspection/字段级权限、上传安全/路径穿越、XXE、Webhook 验签/重放)
-  - 4_4_boundary.md         # 边界/异常/容错真测:超长/空/极值/非法/并发/超时/重试 + 分形态(各分页风格首末超界、文件上传边界、批量部分成功/原子性、WS/SSE 连接边界、长轮询)
-  - 4_5_conclusion.md       # 结论定稿:汇总真测结果(含分形态覆盖),统一报告契约 + 提测门禁
+  - 4_1_interface_list.md   # 接口清单(双模:模式B 用 read_network 抓前端真实接口/模式A 从文档抽) + 形态识别 + 鉴权前置:盘点接口/参数/鉴权,逐接口打 form 标签(协议/鉴权/内容类型/分页/横切)、标 stateful_resource/money_or_points,真发探活确认可调地址与登录态
+  - 4_2_functional.md       # 功能 + 契约 + 业务状态机逐接口真测:正常入参/必填/类型/枚举/响应字段契约/状态码语义/幂等 + 业务状态机(逐状态预期 + 所有非法状态转换真发验证) + 分形态(GraphQL/gRPC-Web/WS/SSE/Webhook/下载/multipart/版本化/批量/缓存/压缩/HTTP方法语义)
+  - 4_3_security.md         # 安全真测:鉴权缺失/错误、**越权穷尽矩阵 × 读写**(水平IDOR查改删/垂直越级/功能级/字段级)、注入(只读级)、敏感泄漏、CORS、限流、错误信息泄漏 + 分形态(JWT/Cookie-CSRF/OAuth2/API-Key/HMAC/mTLS、GraphQL introspection/字段级权限、上传安全/路径穿越、XXE、Webhook 验签/重放)
+  - 4_4_boundary.md         # 边界/异常/容错/资损真测:超长/空/极值/非法/并发/超时/重试 + **资损/取整/对账/精度**(金额积分类必做:精度/取整/负值0值溢出/并发扣减/重复扣减发放幂等/对账) + 业务状态机非法转换并发资损深挖 + 分形态(各分页风格首末超界、文件上传边界、批量部分成功/原子性、WS/SSE 连接边界、长轮询)
+  - 4_5_conclusion.md       # 结论定稿:汇总真测结果(含双模/状态机/资损/越权穷尽/分形态覆盖),统一报告契约 + 提测门禁
 execute_script: _execute.md
 
 common_system_suffix: |
   通用规则:
   - 输出必须是合法 JSON,禁止任何前后说明文字。
-  - 本工具为**交互型**:Claude 通过 send_request 真发 HTTP 请求,结论只能基于真实请求与真实响应,严禁脑补。
-  - case_id:AC-{MODULE:3}-{SERIAL:0000}(功能+契约)/ SEC-{MODULE:3}-{SERIAL:0000}(安全)/ BND-{MODULE:3}-{SERIAL:0000}(边界异常)/ EP-{MODULE:3}-{SERIAL:0000}(接口清单条目)。
+  - 本工具为**交互型 · 双模**:有前端从前端走真实请求(模式B,用 read_network 抓真实接口做基线再 send_request 变形),只有文档则直发(模式A);结论只能基于真实请求/真实抓包/真实响应,严禁脑补、严禁凭空捏造接口地址。
+  - case_id:AC-{MODULE:3}-{SERIAL:0000}(功能+契约,含业务状态机用例)/ SEC-{MODULE:3}-{SERIAL:0000}(安全,含越权穷尽)/ BND-{MODULE:3}-{SERIAL:0000}(边界异常,含资损/取整/对账与状态机并发深挖)/ EP-{MODULE:3}-{SERIAL:0000}(接口清单条目)。
   - 本工具**不测性能/时延**:send_request 不返回耗时,禁止输出 p50/p95/p99、吞吐量、QPS、RPS、错误率百分比等任何性能数字。
   - 注入类安全用例只用温和、只读、不破坏的探测向量,且仅在材料明示的测试环境真发;严禁对真实目标发破坏性 payload。
   - confidence.score 在 [0,1]。
+
+  【双模执行 · 所有子步强制遵守 · 动作名严格对齐 _execute.md】
+  执行循环(_execute.md)提供 6 个动作,每轮输出 {thought,tool,args,finding,done};tool 字段只能填下面 6 个之一,**名称一字不差**(代码按名映射,写错调不到):
+  - send_request {method,url,headers,body} —— 真发 HTTP(模式A 直发 / 模式B 重放变形都用它)
+  - navigate {url} —— 打开前端页面
+  - click {text 或 selector} —— 点击前端元素
+  - form_input {selector 或 placeholder, value} —— 填前端输入框
+  - inspect {} —— 取当前前端页面的 标题/正文/输入框/按钮
+  - read_network {} —— 读出前端真实发出的接口请求(抓包):method/url/鉴权有无/content-type/body
+  模式判定:材料有「前端页面 URL / 前端地址 / 待测前端 / H5」→ 模式B;只有「接口文档/接口清单/Swagger/端点列表」无前端 → 模式A;既有前端又有文档优先模式B。
+  模式B 协议(有前端必须从前端走——铁律):① navigate 打开前端 → inspect 看页面操作/输入/按钮 → ② click/form_input 真实操作触发业务动作(登录/签到/押注/下单/兑换/抽奖)→ ③ read_network 抓前端真实发出的接口请求(真实 method/url/鉴权头/body)做基线 → ④ 基于真实请求用 send_request 重放+变形深测(改参数/删必填/错类型/越界/越权/注入/状态机/资损)。严禁凭空捏造接口地址/参数;越权与资损用抓到的真实他人/管理/写类请求做变形更真。
+  模式A 协议(只有文档):直接 send_request 真发文档里每个端点,逐接口逐维度真测(先打通正常流基线再变形)。
+  Playwright 不可用时前端动作不存在、自动降级为纯 send_request(模式A)。
+
+  【业务状态机 · 4_2 逐状态预期+非法转换、4_4 并发资损深挖 · 对每个有状态资源必做】
+  对每个"有状态"的资源(订单/活动/兑换码/优惠券/押注/提现…):① 列全所有状态;② 逐状态调用接口的预期各真发一次(如查询接口对 进行中/已结束/已取消 各返回什么);③ **所有非法状态转换**真发验证是否被正确拒绝还是错误地二次生效——已结算活动再结算/派奖、已取消订单再支付、已下线活动押注、已使用兑换码再兑换、已退款订单再退款等(**这是资损命门**,二次生效通常 critical)。非法转换多为写操作,仅测试环境真发,prod 只 designed。
+
+  【资损/取整/对账/精度 · 4_4 · 金额积分类接口必做】
+  对每个涉及金额/积分/余额变动的接口:精度(小数位/分)、取整规则(押注×赔率×加成非整数怎么入账)、负值/0值/超大值溢出、并发扣减(同账户并发是否超扣到负)、重复扣减/重复发放(同业务单号/幂等键只生效一次)、对账(真发前后读余额,断言 扣减后余额==扣减前-接口返回扣减额,即接口扣减额与余额变化一致)。多发/少发/超扣/重复发放/对账不平/溢出成负余额 通常 critical。写类仅测试环境真发,prod 只 designed,绝不触发不可逆扣款/派奖/转账。
+
+  【越权穷尽 · 4_3 · 矩阵 × 读写 · 对每个受保护接口逐类穷尽】
+  - 水平 IDOR(读+写):改 ID/订单号/用户ID/兑换码 去**查、改、删**他人资源(取相邻 1-2 个 ID 证明即可,不批量不破坏);
+  - 垂直越级:低权限/普通用户 token 调 高权限/管理/后台 接口;
+  - 功能级越权:绕过前端隐藏,直接调只有特定入口才暴露的接口;
+  - 字段级越权:请求体里篡改 角色/价格/金额/状态/积分/数量 字段,断言服务端以自身为准而非采信篡改值。
+  读到/改到/删到他人、或服务端采信篡改值 通常 critical。越权写/字段级改值仅测试环境真发,prod 只 designed。模式B 用 read_network 抓到的真实他人/管理/写类请求做越权变形更真。
 
   【用例去重铁律 · 所有子步(4_1~4_5)强制遵守】
   一个测试点 = 一条用例。**严禁把同一测试点拆成"实测现状条"+"应然预期条"两条用例。**
@@ -108,9 +139,9 @@ common_system_suffix: |
   - **blocker 严格定义**:只有满足以下任一才能进 blockers,其它一律归 risks 或 issues:
       ① 主流程/核心接口真测不可用 ② 严重安全/合规/数据正确性缺陷 ③ 必须先解决才能继续(核心接口无可调地址、账号未开通等硬阻塞)。
     "一般体验问题、可绕行的小 bug、改进建议" 一律 **不算 blocker**。
-  - **evidence 可追溯(交互型定义)**:`evidence` 必须指向 **Claude 真发的请求 + 拿到的真实响应**,写成
-    "真实请求(METHOD URL + 关键入参) → HTTP 状态码 + 触发问题的响应字段/头原值"。
-    **接口测试的 evidence 不使用"截图文件名"**;凡"文档提到…/需求说…"这类无真实响应支撑的泛指,视为无效证据。
+  - **evidence 可追溯(交互型定义)**:`evidence` 必须指向 **Claude 真发的请求 + 拿到的真实响应**(模式B 也可指向 read_network 抓到的真实接口事实 / navigate/inspect 的真实页面观察),写成
+    "真实请求(METHOD URL + 关键入参) → HTTP 状态码 + 触发问题的响应字段/头原值",或"read_network 抓到 <真实接口> → <鉴权/参数事实>"。
+    **接口测试的 evidence 不使用"截图文件名"**;凡"文档提到…/需求说…"这类无真实响应/抓包支撑的泛指,视为无效证据。
   - **未执行不得影响结论**:交互型工具中,cases.status 标 executed_pass/executed_fail 时,evidence 必须指向真实执行记录里的具体请求/响应;
     没真发到的接口/用例只能 status=designed,**不得进 issues、不得影响 verdict**,需在 coverage.not_executed 说明原因。
   - **字段命名统一**:用 `type` 而非 `kind` 标注 issue/case 分类(type 枚举:main/exception/boundary/security/perf/compat/state/data/a11y;本工具不产 perf)。
