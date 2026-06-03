@@ -2274,11 +2274,14 @@ async def api_report_export(run_id: str, fmt: str, request: Request) -> Any:
             headers={"Content-Disposition": f'attachment; filename="{fname_base}.md"'},
         )
     if fmt == "xlsx":
-        # 按工具分发到对应 Excel 生成器
-        if tool_id == "seo_audit":
+        # 按工具分发到对应 Excel 生成器。seo/network 已改纯 agentic,新报告无结构化采集数据
+        # → 走通用执行报告 Excel(issues/cases);仅历史报告(meta 仍带 seo_data/network_data)
+        # 才渲染原 10-sheet 富 Excel,保证旧报告打开不退化。
+        _rmeta = (report.get("meta") or {}) if isinstance(report, dict) else {}
+        if tool_id == "seo_audit" and _rmeta.get("seo_data"):
             xlsx_bytes = _build_seo_xlsx(r, tool, report)
             suffix = "_SEO深度审计报告"
-        elif tool_id == "network_resilience":
+        elif tool_id == "network_resilience" and _rmeta.get("network_data"):
             xlsx_bytes = _build_network_xlsx(r, tool, report)
             suffix = "_弱网断网测试报告"
         else:
@@ -3138,9 +3141,14 @@ async def _run_tool_async(
             "h5_adapt": H5AdaptOrchestrator,
         }[tool["id"]]
         # ── 各工具的「AI 真执行」前置阶段(全 agentic,把真实执行结果注入材料)──
+        # seo/network 已改为纯 agentic 提示词驱动(不走 Python 采集器):
+        #   seo  = Claude navigate+inspect+send_request 逐页真爬(给足步数)
+        #   net  = Claude navigate+set_network 逐档真切网真观察
         _browser_cfg = {
-            "h5_adapt":           {"prompt": "h5_adapt/_execute.md",           "http": False, "net": False},
-            "step6":              {"prompt": "step6_agent/_execute.md",        "http": True,  "net": False},
+            "h5_adapt":           {"prompt": "h5_adapt/_execute.md",           "http": False, "net": False, "steps": 16},
+            "step6":              {"prompt": "step6_agent/_execute.md",        "http": True,  "net": False, "steps": 16},
+            "seo_audit":          {"prompt": "seo_audit/_execute.md",          "http": True,  "net": False, "steps": 32},
+            "network_resilience": {"prompt": "network_resilience/_execute.md", "http": True,  "net": True,  "steps": 22},
         }
         # 用户上传的文件(PDF/图片/文本/Office):按 documents 里的 file_ref 标记
         # 加载真实文件 → ctx.files。先于 agentic 执行阶段加载,使 step4/浏览器
@@ -3165,29 +3173,15 @@ async def _run_tool_async(
             except Exception as exc:
                 state.setdefault("logs", []).append({
                     "ts": _time.time(), "event": "api.execute.failed", "error": str(exc)[:200]})
-        elif tool["id"] == "seo_audit":
-            # SEO:真实全站 BFS 爬取 + 逐页解析 + Core Web Vitals 实测(确定性采集),
-            # 采集摘要注入材料供 LLM 综合分析,原始数据存 state 供 Excel 渲染。
-            try:
-                await _seo_run_collect(ctx, state)
-            except Exception as exc:
-                state.setdefault("logs", []).append({
-                    "ts": _time.time(), "event": "seo.collect.failed", "error": str(exc)[:200]})
-        elif tool["id"] == "network_resilience":
-            # 弱网/断网:Playwright CDP 多档位真实限速/断网实测 → 数据存 state 供 Excel。
-            try:
-                await _network_run_collect(ctx, state)
-            except Exception as exc:
-                state.setdefault("logs", []).append({
-                    "ts": _time.time(), "event": "net.collect.failed", "error": str(exc)[:200]})
         elif tool["id"] in _browser_cfg:
-            # AI 真驱动浏览器(SEO 爬站 / H5 多视口 / step6 端到端 / 弱网容错)
+            # AI 真驱动浏览器(SEO 逐页爬站 / H5 多视口 / step6 端到端 / 弱网逐档切网)
+            # —— 纯 agentic 提示词驱动,真实导航/抽信号/发请求/切网络,真实证据注入材料供 substep 分析
             cfg = _browser_cfg[tool["id"]]
             try:
                 _bshots: list[dict[str, Any]] = []
                 await _run_browser_agent(
                     ctx, state, cfg["prompt"], f"{tool['id']}_{ctx.run_id[:8]}",
-                    _bshots, with_http=cfg["http"], with_network=cfg["net"], max_steps=16)
+                    _bshots, with_http=cfg["http"], with_network=cfg["net"], max_steps=cfg.get("steps", 16))
                 if _bshots:
                     state["screenshots"] = (state.get("screenshots") or []) + _bshots
                     ctx.screenshots = (getattr(ctx, "screenshots", None) or []) + _bshots
@@ -3219,13 +3213,9 @@ async def _run_tool_async(
                 ctx.inputs["documents"] = docs + "\n".join(lines)
 
         state["progress"] = "调用 Claude（本地客户端）…"
-        # SEO / 弱网:采集层已拿到全部事实,LLM 只需 1 次综合(替代 5 子步骤,大幅提速);
-        # 且不把采集截图喂给分析(截图仅留报告/Excel 展示)。其余工具走原 orchestrator。
-        if tool["id"] == "seo_audit":
-            report_dump = await _seo_synthesize(ctx, state)
-        elif tool["id"] == "network_resilience":
-            report_dump = await _network_synthesize(ctx, state)
-        elif tool["id"] == "step5":
+        # seo/network 已改纯 agentic:_execute 真驱动浏览器把真实证据注入材料后,
+        # 走 orchestrator 跑 seo_1~5 / net_1~5 逐子步深度分析定稿(与 step6/h5 一致)。
+        if tool["id"] == "step5":
             # step5:逐帧设计 vs 实拍比对,1 次多模态调用(替代 5 子步骤,~50min→几分钟)
             report_dump = await _step5_synthesize(ctx, state)
         else:
