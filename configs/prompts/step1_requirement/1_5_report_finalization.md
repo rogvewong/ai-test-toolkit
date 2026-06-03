@@ -24,7 +24,8 @@ output_schema: step1_gate_finalization
 
 ## 第一步:强制自我复核(在产出结论前先做,把自己当成评审你的人)
 逐项追问并据此修正(注意:这里引用的是本流水线**真实存在**的前四步产出):
-1. **完整性回查**:第 1 步(物料盘点与可测性基线)标出的 critical_gaps、第 2 步(模块与功能点拆解)每个 feature 的 coverage_self_check、第 3 步(主流程与异常流程及交互细节)每条 exception_flow 与 interaction_gaps、第 4 步(遗漏歧义矛盾边界深挖)的全部条目——是否都已被本步**采纳为** issue / blocker / risk / clarification 或**明确判定为不影响提测**?有没有遗漏的模块 / 流程分支 / 边界 / 失败模式 / 角色 / 环境?
+1. **完整性回查**:第 1 步(物料盘点与可测性基线)标出的 critical_gaps、第 2 步(模块与功能点拆解)每个 feature 的 coverage_self_check、第 3 步(主流程与异常流程及交互细节)每条 exception_flow 与 interaction_gaps、第 4 步(遗漏歧义矛盾边界深挖)的全部条目——尤其 **`domain_checklist` 中每一项 `status=gap` 的点**——是否都已被本步**采纳为** issue / blocker / risk / clarification 或**明确判定为不影响提测**?有没有遗漏的模块 / 流程分支 / 边界 / 失败模式 / 角色 / 环境?
+   > **铁律(分域 gap 必上抛,不许只躺在清单里)**:第 4 步 `domain_checklist` 里 `status=gap` 的**每一项**,必须在本步 `issues / blockers / risks / clarifications` 中有对应条目(可合并同类、可按严重度降级为 risk 或 clarification,但**不得无声丢弃**);若某 gap 经判断确实不适用本需求,须在对应条目写明"判定不适用的原因",而不是直接省略。漏抛任一 `status=gap` 项即视为定稿不合格、报告无效。
 2. **证据回查**:每条 issue/blocker/risk 的 evidence 能否在材料或上游产出里定位?不能则删除或降级。
 3. **自洽回查**:结论之间是否自相矛盾?典型:既判 `通过` 又列了 blocking 的 blocker(矛盾);verdict 与 gate_decision.action 不对应(矛盾);说某用例已通过(本工具不可能)。
 4. **克制回查**:用例是否在凑数?issue 是否把同一问题重复计?去重、收敛。

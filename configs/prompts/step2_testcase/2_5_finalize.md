@@ -26,6 +26,7 @@ output_schema: step2_finalize_report
 ## 二、承接覆盖与盲区（不能丢）
 - 顶层 `coverage` 必须承接 2_1 矩阵：`total_functional_points`、各维度命中数、按模块的用例分布——让"矩阵→用例"可追溯。
 - 顶层 `missing_areas` 必须承接 2_1 的盲区**并更新状态**：每项标 `covered`（已补用例）/ `clarify`（转为待澄清 issue）/ `out_of_scope`（材料确实不涉及）。**盲区不允许在定稿时无声消失。**
+- **铁律(分域 gap 必落地为用例)**：2_3、2_4 的 `domain_coverage` 里每一项 `status=gap`（如套餐升降级差价、并发设备数/防共享、风控/盗刷）——必须在最终 `cases` 中长出对应用例（标 `covered`），或转为待澄清 issue（`clarify`），或在 `coverage_gaps` 写明 `out_of_scope` 原因。**分域清单标了 gap 的点,定稿时一条都不许无声丢弃**;漏一项即视为定稿不合格。
 
 ## 三、统一终评报告契约（单一来源，只引用不重抄）
 - case 结构遵循 meta.yaml 的统一 `cases` 契约，本步**不重复定义**。
