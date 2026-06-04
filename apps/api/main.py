@@ -1293,10 +1293,14 @@ TOOL_CATALOG: list[dict[str, Any]] = [
         "endpoint": "/api/tools/network_resilience/run",
         "input": {
             "label": "业务材料",
-            "hint": "PRD / 接口文档 / 主流程描述 / 客户端实现资料 — 任意拼合",
+            "hint": "PRD / 接口文档 / 主流程描述 / 客户端实现资料 — 任意拼合；测视频弱网请把宿主机 net_video_collect.py 采的 evidence.md 一并粘进来",
             "primary_key": "documents",
             "format": "text",
         },
+        "run_options": [
+            {"key": "mode_page_api", "label": "页面/接口弱网（容器实测：各档位加载/操作/断网恢复/资损）", "default": True},
+            {"key": "mode_video", "label": "视频播放弱网（先用宿主机 net_video_collect.py 采视频证据并粘入材料）", "default": False},
+        ],
     },
     {
         "id": "h5_adapt",
@@ -3025,15 +3029,24 @@ async def _network_drive_agentic(ctx: Any, state: dict[str, Any], url: str) -> N
 
 async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
     """弱网/断网:基于真实多档位实测数据(Phase1 加载矩阵 + Phase2 操作级实测),产出结论。"""
-    nd = state.get("network_data") or {}
-    data_text = _netdata_to_prompt(nd)
+    # 用户在 UI 勾选测哪类弱网(run_options):页面/接口 与/或 视频播放,单选多选皆可
+    mode_page_api = bool((ctx.inputs or {}).get("mode_page_api", True))
+    mode_video = bool((ctx.inputs or {}).get("mode_video", False))
     _docs = ctx.inputs.get("documents") or ""
-    if "## 操作级弱网实测" in _docs:
+    nd = state.get("network_data") or {}
+    data_text = _netdata_to_prompt(nd) if mode_page_api else ""
+    if mode_page_api and "## 操作级弱网实测" in _docs:
         data_text += "\n\n" + _docs[_docs.index("## 操作级弱网实测"):][:6500]
-    # 视频弱网证据(宿主机 net_video_collect.py 真 Chrome 实测,作为 documents 喂入):本产品是视频站,这是重灾区
-    has_video = "# 视频播放弱网实测证据" in _docs
+    # 视频弱网证据(宿主机 net_video_collect.py 真 Chrome 实测,作为 documents 喂入):仅当用户勾选「视频弱网」才分析
+    video_present = "# 视频播放弱网实测证据" in _docs
+    has_video = mode_video and video_present
     if has_video:
         data_text += "\n\n" + _docs[_docs.index("# 视频播放弱网实测证据"):][:7500]
+    if mode_video and not video_present:
+        data_text += "\n\n[提示] 用户勾选了「视频播放弱网」但材料里没有『# 视频播放弱网实测证据』——请在 verdict_summary 提示:需先在宿主机运行 scripts/net_video_collect.py 采集视频证据并粘入材料。"
+    if not mode_page_api and not has_video:  # 容错:都没有效 → 退回页面/接口口径,不产空报告
+        mode_page_api = True
+        data_text = _netdata_to_prompt(nd)
     system = (
         "你是资深弱网 / 容错测试专家。下面是对某前端的【真实实测数据】,含两~三部分:"
         "① Phase1 多档位首页加载矩阵(Playwright CDP 真实限速/断网测得:各档 load_ms/fcp_ms/spinner/error_ui/timed_out + 断网恢复);"
@@ -3460,12 +3473,17 @@ async def _run_tool_async(
                 state.setdefault("logs", []).append({
                     "ts": _time.time(), "event": "seo.collect.failed", "error": str(exc)[:200]})
         elif tool["id"] == "network_resilience":
-            # 弱网/断网:Playwright CDP 多档位真实限速/断网实测 → 数据存 state 供 Excel。
-            try:
-                await _network_run_collect(ctx, state)
-            except Exception as exc:
+            # 弱网/断网:仅当用户勾选「页面/接口弱网」时才跑容器 Playwright CDP 多档位实测;
+            # 选纯「视频弱网」时跳过(视频证据由宿主机 net_video_collect.py 采集并喂入,容器不重复跑、不卡不可达URL)。
+            if bool((ctx.inputs or {}).get("mode_page_api", True)):
+                try:
+                    await _network_run_collect(ctx, state)
+                except Exception as exc:
+                    state.setdefault("logs", []).append({
+                        "ts": _time.time(), "event": "net.collect.failed", "error": str(exc)[:200]})
+            else:
                 state.setdefault("logs", []).append({
-                    "ts": _time.time(), "event": "net.collect.failed", "error": str(exc)[:200]})
+                    "ts": _time.time(), "event": "net.page_api.skipped", "reason": "用户未勾选页面/接口弱网,仅做视频弱网"})
         elif tool["id"] in _browser_cfg:
             # AI 真驱动浏览器(H5 多视口 / step6 端到端)
             cfg = _browser_cfg[tool["id"]]
