@@ -1,6 +1,12 @@
 step_id: seo_audit
 name: SEO 深度审计
-version: 3.0.0
+version: 4.0.0
+# v4.0.0：严格对齐 Google 现行 SEO 标准(Google Search Essentials / Search Central)。
+# 报告由 _seo_synthesize(main.py)按 Google 8 层逐层核:①可抓取与可索引(robots/sitemap/canonical/
+# noindex/死链/孤儿)②页面元信息 T/D(K=meta keywords Google 不计权,仅记录不开 issue)③内容与 E-E-A-T
+# (薄内容)④结构化数据(视频站 VideoObject 富结果命脉)⑤页面体验 CWV(LCP/CLS 实测;INP 需 CrUX/GSC 现场
+# 数据→needs_external_data;移动优先 viewport)⑥视频专项 ⑦安全协议 ⑧站外外链→needs_external_data。
+# 采集器 packages/core/seo/audit.py 新增逐页 viewport/noindex/word_count/VideoObject 信号。
 tool_type: interactive
 description: |
   纯 Claude 驱动的深度技术 SEO 审计。Claude 亲自用 navigate 逐页打开关键页面、

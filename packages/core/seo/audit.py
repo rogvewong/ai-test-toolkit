@@ -71,6 +71,11 @@ class PageAudit:
     jsonld_count: int = 0
     jsonld_types: list[str] = field(default_factory=list)
     title_cn_chars: int = 0             # EN 本地化:EN 页 title 里中文字符数
+    has_viewport: bool = False          # 移动端 viewport meta（Google 移动优先索引前提）
+    noindex: bool = False               # meta robots / googlebot noindex（页面被排除索引）
+    nofollow_meta: bool = False         # meta robots nofollow
+    word_count: int = 0                 # 正文内容量代理（CJK 字 + 英文词；薄内容判定）
+    has_video_jsonld: bool = False      # JSON-LD 含 VideoObject（视频站 Google 视频富结果前提）
     # 逐项判定
     pwf: dict[str, str] = field(default_factory=dict)  # 检查项 -> PASS/WARN/FAIL
 
@@ -142,6 +147,19 @@ class SeoAuditData:
             "en_title_cn": sum(1 for p in ok if p.is_en and p.title_cn_chars > 0),
             "h1_i18n_leak": sum(1 for p in ok if p.h1_has_i18n_placeholder),
             "jsonld_missing": sum(1 for p in ok if p.jsonld_count == 0),
+            # ── Google 现行标准补充统计 ──
+            "title_missing": sum(1 for p in ok if p.title_len == 0),
+            "title_long": sum(1 for p in ok if p.title_len > 60),          # SERP 截断风险
+            "title_short": sum(1 for p in ok if 0 < p.title_len < 10),
+            "desc_long": sum(1 for p in ok if p.desc_len > 160),           # SERP 摘要截断
+            "desc_dup": _dup_count([p.desc for p in ok if p.desc]),
+            "canonical_issue_pages": sum(1 for p in ok if p.canonical_issue in ("缺", "跨站", "跨语言", "跨频道")),
+            "pages_no_viewport": sum(1 for p in ok if not p.has_viewport),  # 移动优先索引
+            "pages_noindex": sum(1 for p in ok if p.noindex),              # 被排除索引
+            "noindex_urls": [p.url for p in ok if p.noindex][:20],
+            "pages_thin": sum(1 for p in ok if 0 < p.word_count < 100),    # 薄内容
+            "pages_with_video_jsonld": sum(1 for p in ok if p.has_video_jsonld),  # 视频富结果就绪
+            "pages_total_ok": len(ok),
         }
 
 
@@ -229,6 +247,14 @@ def audit_page(url: str, status: int, html_text: str, base_host: str) -> PageAud
             pa.has_og = True
         elif name.startswith("twitter:"):
             pa.has_twitter = True
+        elif name == "viewport":
+            pa.has_viewport = True
+        elif name in ("robots", "googlebot"):
+            cl = content.lower()
+            if "noindex" in cl:
+                pa.noindex = True
+            if "nofollow" in cl:
+                pa.nofollow_meta = True
     # headings
     levels = []
     for lvl in range(1, 7):
@@ -286,6 +312,10 @@ def audit_page(url: str, status: int, html_text: str, base_host: str) -> PageAud
         pa.jsonld_count += 1
         types.extend(_extract_jsonld_types(s.text_content() or ""))
     pa.jsonld_types = types
+    pa.has_video_jsonld = any("video" in (t or "").lower() for t in types)  # VideoObject / VideoGallery
+    # 正文内容量代理（主内容元素，避开 nav/脚本）：薄内容判定（CJK 字 + 英文词）
+    _main = " ".join(_txt(e) for e in doc.xpath("//p|//article|//li|//h1|//h2|//h3|//h4"))
+    pa.word_count = len(_CN_RE.findall(_main)) + len(re.findall(r"[A-Za-z]+", _main))
     # EN 本地化:EN 页 title 中文字符
     if pa.is_en:
         pa.title_cn_chars = len(_CN_RE.findall(pa.title))

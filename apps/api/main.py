@@ -2453,6 +2453,10 @@ def _seo_data_to_prompt(sd: dict[str, Any]) -> str:
     L.append(f"- 内链 {s.get('internal_links')} 条,通用/空锚文本 {s.get('generic_anchor_pct')}%")
     L.append(f"- 标题重复 {s.get('title_dup')} 页,描述<50字 {s.get('desc_short')} 页,描述缺失 {s.get('desc_missing')} 页")
     L.append(f"- 图片Alt<80% {s.get('alt_below80')} 页,H1 i18n占位符泄漏 {s.get('h1_i18n_leak')} 页,EN页title含中文 {s.get('en_title_cn')} 页,JSON-LD缺失 {s.get('jsonld_missing')} 页")
+    L.append(f"- 【Google·T】title缺失 {s.get('title_missing')} 页 / 过长>60字 {s.get('title_long')} 页 / 过短<10 {s.get('title_short')} 页(全站OK {s.get('pages_total_ok')} 页)")
+    L.append(f"- 【Google·D】description重复 {s.get('desc_dup')} 页 / 过长>160字 {s.get('desc_long')} 页(K=meta keywords 在 Google 不计权,仅记录)")
+    L.append(f"- 【Google·可索引】canonical异常 {s.get('canonical_issue_pages')} 页;noindex {s.get('pages_noindex')} 页" + (f"({', '.join((s.get('noindex_urls') or [])[:5])})" if s.get('pages_noindex') else ""))
+    L.append(f"- 【Google·移动优先】无viewport {s.get('pages_no_viewport')} 页;【薄内容】正文<100词 {s.get('pages_thin')} 页;【视频富结果】含VideoObject {s.get('pages_with_video_jsonld')} 页")
     L.append(f"- 技术SEO:HTTP {t.get('http_version')},HTTPS={t.get('https')},HSTS={'有' if t.get('hsts') else '缺'},CSP={'有' if t.get('csp') else '缺'},nosniff={'有' if t.get('x_content_type_options') else '缺'},压缩={t.get('content_encoding') or '无'}")
     L.append(f"- sitemap:HTTP {sm.get('index_status')},{sm.get('url_count')} URL,含lastmod {sm.get('with_lastmod')},爬取覆盖 {sm.get('crawl_coverage_pct')}%,robots中Sitemap协议 {sm.get('protocol_in_robots')}")
     cwv = sd.get("cwv", {}) or {}
@@ -2521,29 +2525,35 @@ async def _seo_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
     sd = state.get("seo_data") or {}
     data_text = _seo_data_to_prompt(sd)
     system = (
-        "你是资深 SEO 审计专家。下面是对某站点的【真实全站采集数据】"
-        "(确定性爬取 + 逐页解析真实测得,不是猜测)。只基于这些真实数据,**逐维度穷尽分析**,"
-        "产出一份可执行的审计结论(合法 JSON)。这是细节中的细节工作,必须挖到底。\n\n"
-        "【深度铁律 · 逐维度穷尽,禁止用『等/类似/若干』含糊带过,适用必列尽】\n"
-        "1) 技术 SEO:HTTPS 与 HTTP 版本;robots.txt(可达性 / 是否误封搜索引擎或 AI 爬虫 / 是否声明 sitemap);"
-        "sitemap(存在性 / URL 数 / lastmod 覆盖 / 声明数与实际可抓取覆盖率之差);canonical(缺失 / 自指错误 / 跨域 / 参数页未归一);"
-        "状态码与重定向(3xx 链路是否过长、死链 4xx/5xx 逐条列出 URL);孤儿页(无内链指入);索引可见性(noindex/nofollow 误用);"
-        "安全与可抓取响应头(CSP / HSTS / X-Frame-Options / X-Content-Type-Options / content-encoding)。\n"
-        "2) Meta 与国际化:逐页核 title(缺失 / 全站重复 / 过长>60 / 过短<10 / 英文标题混中文 en_title_cn);"
-        "description(缺失 / 重复 / 过短);h1(缺失 / 多个 / i18n 文案泄漏 h1_i18n_leak,如中文站漏英文占位);"
-        "lang 声明是否与内容语种一致;hreflang 互指是否完整对称;og / twitter 卡片字段完整性。\n"
-        "3) 内容与链接结构:图片 alt 覆盖率(逐模板列 <80% 的页面);标题层级是否跳级(h1→h3 漏 h2);"
-        "内链数量与深度分布(过深页面);锚文本质量(generic_anchor 占比,如『点击这里 / 更多 / read more』);"
-        "结构化数据 JSON-LD(类型分布 / 关键页缺失 / 语法或必填字段缺失)。\n"
-        "4) 性能(Core Web Vitals):**仅当采集数据里有真实 cwv 实测值才下结论并注明来源(实测/采集)**;"
-        "无实测值标 unknown,**绝不编造毫秒数或评级**。\n\n"
+        "你是资深 Google SEO 审计专家。下面是对某站点的【真实全站采集数据】"
+        "(确定性爬取 + 逐页解析真实测得 + CWV 实测,不是猜测)。**严格按 Google 现行 SEO 标准"
+        "(Google Search Essentials / Search Central)逐层穷尽分析**,产出可执行审计结论(合法 JSON)。"
+        "本产品是**视频站**,VideoObject 结构化数据 + 视频可索引 与 T/D 元信息**并重**。必须挖到底。\n\n"
+        "【Google 标准 · 8 层逐层核,禁止用『等/类似/若干』含糊带过,适用必列尽,每条引采集字段真值】\n"
+        "① 可抓取与可索引(前提,进不来=0 SEO):robots.txt 是否误封 Googlebot;sitemap 存在性/URL 数/lastmod/与实际爬取覆盖率差;"
+        "canonical(canonical_issue_pages:缺/跨站/跨语言/跨频道,参数页未归一);**noindex 页 pages_noindex(核心模板被 noindex=critical,逐条看 noindex_urls)**;"
+        "死链 4xx/5xx 逐条 URL;3xx 重定向链是否过长;孤儿页;HTTP 状态。\n"
+        "② 页面元信息 T / D(K 被 Google 忽略):"
+        "T(title):缺失 title_missing / 全站重复 title_dup / 过长 title_long(SERP≈600px,中文全角约 28-30 字截断)/ 过短 title_short;关键词前置、与页面内容一致(否则 Google 改写)。"
+        "D(description):重复 desc_dup / 过长 desc_long(SERP 摘要≈中文 70-80 字截断)/ 过短 desc_short / 缺失 desc_missing;非排名因素但决定 SERP 摘要→CTR。"
+        "★K(meta keywords):**Google 官方明确不用 meta keywords 作排名信号**——meta_keywords 仅记录现状,**绝不开成 issue、不作排名问题**;堆砌大量无关词最多 info 级。\n"
+        "③ 内容质量与 E-E-A-T:**薄内容 pages_thin(正文<100词)**——视频站尤其要有文字上下文(标题/简介/转写),否则 Google 读不到视频里讲了什么;"
+        "H1(缺失/多个/i18n 占位泄漏 h1_i18n_leak);标题层级跳级 heading_skip;原创性/满足搜索意图(数据有限处标需人工/外部,不臆断)。\n"
+        "④ 结构化数据(富结果·视频站命脉):**VideoObject 覆盖 pages_with_video_jsonld 对比视频详情模板页数——视频页若系统性无 VideoObject = 上不了 Google 视频富结果/视频标签页,视频站核心缺陷(high+)**;"
+        "JSON-LD 缺失 jsonld_missing;类型分布;关键字段(thumbnailUrl/uploadDate/contentUrl/duration/SeekToAction)采集只到类型层,字段级标『需 Rich Results Test 深验』。\n"
+        "⑤ 页面体验 Core Web Vitals(Google 排名信号):**仅当 cwv 有真实实测才下结论,无则 unknown 绝不编毫秒数**;阈值 LCP 好≤2500ms/需改进≤4000/差>4000,CLS 好≤0.1/≤0.25/差>0.25;"
+        "**INP(2024 起取代 FID):实验室爬取无法测真实 INP,需 CrUX/GSC 现场数据 → 标 needs_external_data,不臆造**;"
+        "**移动优先索引:无 viewport pages_no_viewport = 移动端不友好,Google 用移动版排名(high)**;HTTPS。\n"
+        "⑥ 视频专项(你是视频站):视频可被抓(不被 robots 封/不藏登录后)、VideoObject、视频 sitemap、缩略图唯一——综合 ④⑤,视频不可索引或无 VideoObject 是头号缺陷。\n"
+        "⑦ 安全与协议响应头:HTTPS/HSTS/CSP/X-Content-Type-Options/content-encoding(采集数据有的核)。\n"
+        "⑧ 站外(外链 backlinks / 真实收录量 / 关键词排名):**爬自己站测不到,一律标 needs_external_data 进 risks(需 Google Search Console / Ahrefs),绝不臆测排名或收录数字**。\n\n"
         "【接地气 · 零幻觉】只列采集数据真实体现的问题;每条 issue 的 current_behavior / evidence "
         "必须引用采集数据里的**具体字段名与值**(如 `summary.dead_links=3`、`pages[].title_len`);"
         "数据没覆盖到的(真实收录量 / 竞品对比 / 关键词排名 / 外链)一律不臆测,需要时标 unknown。\n"
         "【自我复核】出结论前自问:还有哪些页面 / 模板 / 技术维度 / i18n 泄漏没核到?逐项补全再输出。\n\n"
-        "【严重度与优先级判定】severity:critical=站点不可被收录或核心页不可索引 / 大面积死链;"
-        "high=重要 SEO 能力受损(title 大面积重复或缺失、canonical 错误、sitemap 与实际严重不符);"
-        "medium=次要优化(alt 覆盖偏低、锚文本通用);low/info=轻微提示。"
+        "【严重度与优先级判定 · Google 口径】severity:critical=核心模板被 noindex/不可索引 / 大面积死链 / 视频详情页系统性无 VideoObject 致视频不可被 Google 发现;"
+        "high=title 大面积重复或缺失、canonical 错误、移动端无 viewport(移动优先)、CWV 实测为差、大面积薄内容、视频站关键页缺结构化数据;"
+        "medium=次要优化(alt 覆盖偏低、锚文本通用、desc 过长截断);low/info=轻微提示(含 meta keywords 堆砌仅 info,因 Google 不计权)。"
         "priority 默认 critical→P0、high→P1、medium→P2、low/info→P3。"
         "verdict 与 gate_decision.action 一致映射:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。\n\n"
         "【输出 · 合法 JSON,以 { 开头,无前后缀、无 markdown 代码块,全部中文】\n"
@@ -2554,8 +2564,8 @@ async def _seo_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
         '  "confidence": {"score": 0.0, "rationale": "基于采集覆盖率的保守自评"},\n'
         '  "overview": {"评定":"2-4句总体评定", "核心问题":"最关键的1-3个问题", "后续动作":"按优先级的下一步动作"},\n'
         '  "risks": [{"id":"R-001","title":"...","impact":"对收录/排名的影响","why":"基于哪条采集数据","severity":"critical|high|medium|low"}],\n'
-        '  "issues": [{"issue_id":"SEO-AREA-0001","priority":"P0|P1|P2|P3","severity":"critical|high|medium|low|info",'
-        '"module":"领域(技术SEO/Meta/i18n/内容/链接/结构化数据/性能)",'
+        '  "issues": [{"issue_id":"SEO-AREA-0001(AREA∈IDX索引/META元信息/CONTENT内容/SCHEMA结构化/CWV体验/VIDEO视频/SEC安全)","priority":"P0|P1|P2|P3","severity":"critical|high|medium|low|info",'
+        '"module":"Google层(①可索引/②T-D元信息/③内容EEAT/④结构化数据/⑤页面体验CWV/⑥视频专项/⑦安全)",'
         '"title":"一句话问题","current_behavior":"实测现状(引采集字段与值)","expected_behavior":"应做到什么",'
         '"impact_scope":"对 SEO/收录/排名的影响","fix_suggestion":"具体怎么修(改哪个文件/标签/响应头/字段)",'
         '"evidence":"采集数据具体字段名:值"}],\n'
