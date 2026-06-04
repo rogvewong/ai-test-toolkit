@@ -1265,12 +1265,12 @@ TOOL_CATALOG: list[dict[str, Any]] = [
         "substeps_optional": True,
         "input": {
             "label": "执行材料",
-            "hint": "粘贴用例集 / 业务场景 / 环境信息 — 出主流程/异常/数据驱动/失败归因/覆盖率方案",
+            "hint": "粘贴用例集 / 业务场景 / 环境信息;或【拖入用例 Excel(.xlsx,自动智能识别列)】;也可直接用「用例设计」工具产出的用例 — 逐条真执行 + 判 pass/fail + 失败归因",
             "primary_key": "documents",
             "format": "text",
         },
         "run_options": [
-            {"key": "dry_run", "label": "Dry-run（不真实操作）", "default": True},
+            {"key": "dry_run", "label": "Dry-run（仅推演不真实操作）", "default": True},
         ],
     },
     {
@@ -1915,6 +1915,120 @@ def _load_uploaded_files(ctx: Any) -> list[dict[str, Any]]:
             "filename": meta.get("filename") or Path(p).name,
         })
     return out
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# 用例 Excel 智能解析(step6 输入):上传的 .xlsx 用例表 → 智能识别列 →
+# 与 step2 用例设计同一套 cases 结构(两路归一,下游执行/判定/归因统一)。
+# ───────────────────────────────────────────────────────────────────────────
+_CASE_COL_ALIASES = {
+    "id": ["用例编号", "用例id", "编号", "id", "caseid", "序号", "用例号", "case号"],
+    "title": ["用例标题", "用例名称", "标题", "名称", "title", "用例描述", "用例", "测试点", "case", "摘要"],
+    "preconditions": ["前置条件", "前提条件", "预置条件", "前提", "precondition", "preconditions", "前置"],
+    "steps": ["测试步骤", "操作步骤", "执行步骤", "步骤", "steps", "step", "操作", "用例步骤"],
+    "expected": ["预期结果", "预期", "期望结果", "预期输出", "expected", "结果", "期望", "验证点"],
+    "priority": ["优先级", "级别", "priority", "重要程度", "等级"],
+    "type": ["用例类型", "类型", "type", "分类", "category", "用例分类"],
+    "module": ["模块", "功能模块", "module", "所属模块", "功能点", "所属功能"],
+}
+
+def _norm_col(s: str) -> str:
+    return str(s or "").strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+
+def _norm_priority(p: str) -> str:
+    t = str(p or "").strip().upper()
+    for k in ("P0", "P1", "P2", "P3"):
+        if k in t:
+            return k
+    return {"高": "P0", "critical": "P0", "紧急": "P0", "1": "P0",
+            "中": "P1", "重要": "P1", "2": "P1",
+            "低": "P3", "次要": "P3", "3": "P2", "4": "P3"}.get(str(p or "").strip().lower(), "P2")
+
+def _parse_cases_from_excel(path: str) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """智能识别列名,把测试用例 Excel 解析成与 step2 同构的 cases。容忍非模板表格。"""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    cases: list[dict[str, Any]] = []
+    colmap: dict[str, int] = {}
+    for ws in wb.worksheets:
+        rows = [r for r in ws.iter_rows(values_only=True)]
+        if not rows:
+            continue
+        hi = next((i for i, r in enumerate(rows) if any(c for c in r)), 0)
+        header = [str(c or "").strip() for c in rows[hi]]
+        cm: dict[str, int] = {}
+        for f, al in _CASE_COL_ALIASES.items():
+            for ci, h in enumerate(header):
+                hn = _norm_col(h)
+                if hn and any(_norm_col(a) == hn or (len(_norm_col(a)) >= 2 and _norm_col(a) in hn) for a in al):
+                    cm[f] = ci
+                    break
+        if "title" not in cm and "id" not in cm:
+            continue  # 该 sheet 不像用例表
+        def g(r, f):
+            ci = cm.get(f)
+            return str(r[ci]).strip() if ci is not None and ci < len(r) and r[ci] is not None else ""
+        sheet_cases: list[dict[str, Any]] = []
+        for r in rows[hi + 1:]:
+            if not any(c for c in r):
+                continue
+            title = g(r, "title") or g(r, "id")
+            if not title:
+                continue
+            steps_raw = g(r, "steps")
+            steps = [s.strip() for s in _re.split(r"[\n;；]|[①②③④⑤⑥⑦⑧⑨⑩]|\d+\s*[.、)]\s*", steps_raw) if s.strip()]
+            sheet_cases.append({
+                "id": g(r, "id") or f"TC-{len(cases)+len(sheet_cases)+1:04d}",
+                "title": title, "module": g(r, "module"),
+                "preconditions": g(r, "preconditions"),
+                "steps": steps or ([steps_raw] if steps_raw else []),
+                "expected": g(r, "expected"),
+                "priority": _norm_priority(g(r, "priority")),
+                "type": g(r, "type") or "main",
+            })
+        if sheet_cases:
+            cases.extend(sheet_cases)
+            if not colmap:
+                colmap = cm
+    return cases, colmap
+
+def _inject_excel_cases(ctx: Any) -> int:
+    """扫描上传文件里的 .xlsx 用例表 → 解析成统一 cases → 注入 documents + test_case_report。返回用例数。"""
+    try:
+        files = _load_uploaded_files(ctx)
+    except Exception:
+        return 0
+    all_cases: list[dict[str, Any]] = []
+    for f in files:
+        name = (f.get("filename") or "").lower()
+        mime = (f.get("mime") or "").lower()
+        if name.endswith((".xlsx", ".xlsm")) or "spreadsheet" in mime:
+            try:
+                cases, _cm = _parse_cases_from_excel(f["path"])
+                all_cases.extend(cases)
+            except Exception:
+                pass
+    if not all_cases:
+        return 0
+    lines = ["", "", "## 待执行用例(从上传 Excel 智能解析,已转成与用例设计一致的统一结构)"]
+    for c in all_cases:
+        steps = " → ".join(c["steps"]) if c.get("steps") else "(未填)"
+        lines.append(f"- [{c['id']} | {c.get('priority')} | {c.get('type')}] {c['title']}"
+                     f"\n  模块:{c.get('module') or '-'} | 前置条件:{c.get('preconditions') or '-'}"
+                     f"\n  步骤:{steps}\n  预期结果:{c.get('expected') or '(未填)'}")
+    ctx.inputs["documents"] = (ctx.inputs.get("documents") or "") + "\n".join(lines)
+    p0 = [c for c in all_cases if c.get("priority") == "P0"]
+    p1 = [c for c in all_cases if c.get("priority") == "P1"]
+    p2 = [c for c in all_cases if c.get("priority") not in ("P0", "P1")]
+    tcr = ctx.inputs.get("test_case_report")
+    if not isinstance(tcr, dict):
+        tcr = {}
+    tcr["cases"] = (tcr.get("cases") or []) + all_cases
+    tcr["p0_cases"] = (tcr.get("p0_cases") or []) + p0
+    tcr["p1_cases"] = (tcr.get("p1_cases") or []) + p1
+    tcr["p2_cases"] = (tcr.get("p2_cases") or []) + p2
+    ctx.inputs["test_case_report"] = tcr
+    return len(all_cases)
 
 
 async def _capture_screenshots_for_tool(
@@ -3466,6 +3580,17 @@ async def _run_tool_async(
         except Exception as exc:
             state.setdefault("logs", []).append({
                 "ts": _time.time(), "event": "files.load.failed", "error": str(exc)[:200]})
+
+        # step6:上传的 Excel 用例表 → 智能识别列 → 统一 cases 注入(与 step2 用例设计两路归一)
+        if tool["id"] == "step6":
+            try:
+                _ncs = _inject_excel_cases(ctx)
+                if _ncs:
+                    state.setdefault("logs", []).append({
+                        "ts": _time.time(), "event": "step6.excel_cases.parsed", "count": _ncs})
+            except Exception as exc:
+                state.setdefault("logs", []).append({
+                    "ts": _time.time(), "event": "step6.excel.failed", "error": str(exc)[:200]})
 
         if tool["id"] == "step4":
             # AI 真发 HTTP 请求看真实响应

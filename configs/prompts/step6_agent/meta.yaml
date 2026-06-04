@@ -1,6 +1,12 @@
 step_id: step6
 name: Agent 自动化执行（真驱动浏览器/HTTP 跑用例）
-version: 3.1.0
+version: 3.2.0
+# v3.2.0：用例两路归一 —— ① 拖入用例 Excel(.xlsx) 由 main.py _parse_cases_from_excel 智能识别列
+# (用例ID/标题/前置/步骤/预期/优先级/类型,容忍非模板表头)→ 与 step2 用例设计同构的 cases;
+# ② 用例设计工具产出的用例(test_case_report)。下游统一吃。
+# _execute.md 升级为「用例驱动执行」：逐条按步骤真执行(navigate/click/form_input/send_request)→
+# 从『预期结果』抽可断言检查点逐个核 → 判 pass/fail/blocked(禁笼统"看起来通过")→ 每条发 finding(case_id+verdict+checkpoints)。
+# dry-run 推演 / --live 真执行 两档;6_5 汇成 cases.status + execution_stats + 失败归因。
 description: >
   本工具是【交互型】。Claude 通过 navigate/click/inspect/screenshot/send_request
   等 agentic 动作**亲自真实驱动浏览器与 HTTP** 执行测试用例,并**基于真实执行记录**
