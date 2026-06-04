@@ -313,8 +313,9 @@ def audit_page(url: str, status: int, html_text: str, base_host: str) -> PageAud
         types.extend(_extract_jsonld_types(s.text_content() or ""))
     pa.jsonld_types = types
     pa.has_video_jsonld = any("video" in (t or "").lower() for t in types)  # VideoObject / VideoGallery
-    # 正文内容量代理（主内容元素，避开 nav/脚本）：薄内容判定（CJK 字 + 英文词）
-    _main = " ".join(_txt(e) for e in doc.xpath("//p|//article|//li|//h1|//h2|//h3|//h4"))
+    # 正文内容量代理：body 全部可见文本（排除 script/style/noscript，非破坏性），薄内容判定（CJK 字 + 英文词）
+    _texts = doc.xpath("//body//text()[not(ancestor::script)][not(ancestor::style)][not(ancestor::noscript)]")
+    _main = " ".join(t.strip() for t in _texts if t and t.strip())
     pa.word_count = len(_CN_RE.findall(_main)) + len(re.findall(r"[A-Za-z]+", _main))
     # EN 本地化:EN 页 title 中文字符
     if pa.is_en:
