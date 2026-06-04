@@ -3030,10 +3030,15 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
     _docs = ctx.inputs.get("documents") or ""
     if "## 操作级弱网实测" in _docs:
         data_text += "\n\n" + _docs[_docs.index("## 操作级弱网实测"):][:6500]
+    # 视频弱网证据(宿主机 net_video_collect.py 真 Chrome 实测,作为 documents 喂入):本产品是视频站,这是重灾区
+    has_video = "# 视频播放弱网实测证据" in _docs
+    if has_video:
+        data_text += "\n\n" + _docs[_docs.index("# 视频播放弱网实测证据"):][:7500]
     system = (
-        "你是资深弱网 / 容错测试专家。下面是对某前端的【真实实测数据】,含两部分:"
+        "你是资深弱网 / 容错测试专家。下面是对某前端的【真实实测数据】,含两~三部分:"
         "① Phase1 多档位首页加载矩阵(Playwright CDP 真实限速/断网测得:各档 load_ms/fcp_ms/spinner/error_ui/timed_out + 断网恢复);"
-        "② Phase2 各档位下真驱动前端操作的记录(操作动作 + inspect 观察到的用户提示/弹窗文案/结果)。"
+        "② Phase2 各档位下真驱动前端操作的记录(操作动作 + inspect 观察到的用户提示/弹窗文案/结果);"
+        "③(若数据里含『# 视频播放弱网实测证据』)宿主机真 Chrome 对视频播放页各档位的弱网实测(标准 <video> 插桩 + CDN 分片网络,播放器无关:起播TTFF/卡顿waiting/自适应码率分辨率/seek/断网/恢复/分片失败)。\n"
         "只基于这些真实数据,**逐档位、逐操作、逐维度穷尽分析**,产出审计结论(合法 JSON)。弱网容错是细节中的细节,必须挖到底。\n\n"
         "【深度铁律 · 逐档位逐场景穷尽,禁止用『等/类似』含糊带过,适用必列尽】\n"
         "1) 逐网络档位(online / 4g / slow_3g / 2g / offline 凡实测到的)分别核:"
@@ -3054,8 +3059,21 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
         "⑩提示时机一致(不重复弹/不误报)⑪★避免静默失败(操作失败却无任何提示、用户以为成功——尤其支付/提交,弱网红线,最高严重度)。"
         "每条结论引 Phase2 里 inspect 观察到的具体提示文案/动作记录。\n"
         "8) 【操作/写/资损层 · 基于 Phase2】各档关键操作(搜索/详情/播放/登录/提交)能否完成;弱网超时后重试是否重复提交;"
-        "断网中操作的处理。能从 Phase2 真实观察到的(如点击无反馈、重复提交)真断言;后端幂等/真实扣款看不到的入 risks。\n\n"
-        "【接地气 · 零幻觉】只列实测数据真实体现的问题;每条 issue 的 current_behavior / evidence 必须引用"
+        "断网中操作的处理。能从 Phase2 真实观察到的(如点击无反馈、重复提交)真断言;后端幂等/真实扣款看不到的入 risks。\n"
+        + ("9) 【视频播放弱网层 · 数据含『# 视频播放弱网实测证据』必逐项穷尽核——本产品是视频站,这是弱网头号重灾区】"
+           "基于宿主机真 Chrome 实测(标准 <video> 插桩 + CDN 分片网络,播放器无关),逐视频页逐档位核 8 项,每条引"
+           "『视频页/档位/字段真值(tff/waiting/videoW×videoH/bufferAhead/segments.failed/_resumed/toasts)/截图名』:"
+           "①起播:online 起播 TTFF 是否可接受;慢档(slow_3g/2g)起播是否超时黑屏且无封面/loading 提示。"
+           "②弱网卡顿:各档 waiting(rebuffer)次数与缓冲余量 bufferAhead,越弱越卡是否在可接受范围、有无『缓冲中/网络不佳』提示(还是画面冻住无提示)。"
+           "③自适应码率 ABR:分辨率 videoW×H 是否随网络变差自动降档(如 1080p→480p→320p)、网络恢复是否升回;不降码率硬卡 = 问题;ABR 是否生效要据分辨率轨迹判。"
+           "④seek 续播:seek 到未缓冲位后弱网下能否续播(看其后 currentTime/buffered 与 waiting),还是卡死。"
+           "⑤★断网断流(视频站头号红线,最高严重度):offline 档是否给『网络断开/重试』明确提示,还是黑屏/卡死/静默失败(看 toasts 为空 + loadingEls=0 + errCode + 截图);静默失败=critical。"
+           "⑥恢复续播:recover 档是否自动续播且**断点续**(_resumed=true 且 currentTime 接续断网时位置),还是从头/卡死/需手动。"
+           "⑦CDN 分片失败:各档 segments.failed 与 fail_samples——弱网下分片超时(ERR_ABORTED)、token/防盗链 403、断网 ERR_INTERNET_DISCONNECTED,会致花屏/黑屏/起播失败,逐档点名。"
+           "⑧各档位综合劣化是否可接受 + 用户提示是否到位(贯穿 ⑤ 的避免静默失败)。"
+           "视频弱网 issue 用 issue_id NET-VID-NNNN。证据没覆盖的(iOS 原生 HLS AVPlayer、真机弱网手感、切网流量提醒、付费/DRM 视频)一律标 needs_real_device 入 risks,不写成 issue。\n\n"
+           if has_video else "")
+        + "【接地气 · 零幻觉】只列实测数据真实体现的问题;每条 issue 的 current_behavior / evidence 必须引用"
         "**具体档位与实测字段值**(如 `profiles[slow_3g].load_ms`、`recovery.offline_has_error_ui=false`);"
         "实测没覆盖的(后端幂等、真实弱网下用户主观感受、真机弱网)一律不臆测,标 unknown 或入 risks。\n"
         "【自我复核】出结论前自问:还有哪些档位 / 场景(断网中操作、恢复时机、重复提交)没核到?逐项补全再输出。\n\n"

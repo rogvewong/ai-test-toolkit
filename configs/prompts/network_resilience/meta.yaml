@@ -1,6 +1,11 @@
 step_id: network_resilience
 name: 弱网与断网测试
-version: 3.2.0
+version: 3.3.0
+# v3.3.0：新增「视频播放弱网」维度(本产品为视频站)。视频弱网由宿主机采集器
+# scripts/net_video_collect.py 在宿主机真 Google Chrome(有 H.264 编码,容器 Playwright 无)
+# 用 CDP 浏览器级限速(不碰宿主机网络)+ 标准 <video> 插桩(播放器无关)+ CDN 分片网络捕获,
+# 逐视频页各档位实测 起播TTFF/卡顿/自适应码率ABR/seek/断网断流(★避免静默失败)/恢复断点续播/分片失败,
+# 产出 evidence.md 喂入 → _network_synthesize 的「视频播放弱网层(维度9)」分析,issue 用 NET-VID 前缀。
 # 工具定性：交互型 · 双阶段真测。
 # Phase1(Python 采集器)：在 6 个网络档位(online/4g/fast_3g/slow_3g/2g/offline)+ 断网→恢复 load 首页，
 #   产出结构化加载矩阵(覆盖 A 网络环境 + B 加载层：加载耗时/FCP/白屏/资源数/控制台错误)。
