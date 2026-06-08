@@ -2786,9 +2786,37 @@ async def _seo_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
         "page_type_audits 必须覆盖采集到的每个页面类型;issues 按 (severity, priority) 双键排序;空数组写 []。"
     )
     state["progress"] = "AI 综合分析 SEO 采集结果…"
-    resp = await ctx.llm.complete(
-        system=system, messages=[{"role": "user", "content": data_text}],
-        max_tokens=16000, allow_degrade=False)
+    # 超时+重试保护:综合分析 LLM 调用偶发长时间卡住(>20min);每次最多 360s,失败重试一次,
+    # 两次都超时则回退最小报告(不挂死)。page_type_audits 输出较大 → max_tokens 提到 32000。
+    import asyncio as _aio
+    resp = None
+    for _att in range(2):
+        try:
+            resp = await _aio.wait_for(
+                ctx.llm.complete(
+                    system=system, messages=[{"role": "user", "content": data_text}],
+                    max_tokens=32000, allow_degrade=False),
+                timeout=360)
+            break
+        except _aio.TimeoutError:
+            state.setdefault("logs", []).append({
+                "ts": _time.time(), "event": "seo.synth.timeout", "attempt": _att})
+            state["progress"] = f"综合分析超时,重试({_att + 1}/2)…"
+        except Exception as _e:
+            state.setdefault("logs", []).append({
+                "ts": _time.time(), "event": "seo.synth.error", "error": str(_e)[:160]})
+            break
+    if resp is None:
+        # 兜底:两次超时/出错 → 返回基于采集数据的最小报告,保证 run 完成而非挂死
+        return {
+            "verdict": "有条件通过",
+            "verdict_summary": "综合分析 LLM 调用超时,本报告仅含采集事实摘要;请重跑以获取完整 Google 标准分析。",
+            "gate_decision": {"action": "proceed_with_warning", "reasons": ["synthesize 超时,未生成完整分析"]},
+            "confidence": {"score": 0.2, "rationale": "synthesize 超时,仅采集数据可用"},
+            "overview": {"评定": "采集完成但综合分析超时", "核心问题": "需重跑", "后续动作": "重跑 SEO 审计"},
+            "page_type_audits": [], "issues": [], "risks": [],
+            "cases": [], "strengths": _seo_strengths(sd), "meta": {},
+        }
     try:
         ctx.usage.merge(resp.usage)
     except Exception:
