@@ -2436,10 +2436,88 @@ _EXEC_CFG: dict[str, dict[str, Any]] = {
 }
 
 
+def _build_seo_template_xlsx(report: dict[str, Any], meta: dict[str, Any]) -> bytes:
+    """SEO 报告按用户 Lark 模板:单 sheet,全站总览 + 按页面类型分节(三段头 + 检查清单,状态色标)。"""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    wb = Workbook(); ws = wb.active; ws.title = "SEO相关测试"
+    for c, w in {"A": 16, "B": 22, "C": 52, "D": 10, "E": 52}.items():
+        ws.column_dimensions[c].width = w
+    thin = Side(style="thin", color="D9D9D9")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap = Alignment(wrap_text=True, vertical="top")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    HDR = PatternFill("solid", fgColor="D6E4FF"); SEC = PatternFill("solid", fgColor="EEF3FF")
+    STATUS = {"通过": ("107C10", "DFF6DD"), "警告": ("9A6700", "FFF4CE"), "不通过": ("C42B1C", "FDE7E9")}
+    bold = Font(bold=True)
+    row = 1
+    title = ws.cell(row=row, column=1, value=f"SEO 审计报告（Google 标准）· {meta.get('project_name') or ''} {meta.get('project_code') or ''}".strip())
+    title.font = Font(bold=True, size=13); row += 1
+    vmap = {"通过": "✅ 通过", "有条件通过": "⚠️ 有条件通过", "不通过": "❌ 不通过"}
+    vc = ws.cell(row=row, column=1, value=f"判定：{vmap.get(report.get('verdict'), report.get('verdict') or '')}　|　{report.get('verdict_summary') or ''}")
+    vc.alignment = wrap; ws.merge_cells(f"A{row}:E{row}"); ws.row_dimensions[row].height = 36; row += 2
+    # 全站总览
+    ov = report.get("overview") or {}
+    site = [f"综合评定：{ov.get('评定','')}" if ov.get("评定") else "",
+            f"核心问题：{ov.get('核心问题','')}" if ov.get("核心问题") else "",
+            f"后续动作：{ov.get('后续动作','')}" if ov.get("后续动作") else ""]
+    site = [x for x in site if x]
+    if site:
+        ws.merge_cells(f"A{row}:E{row}")
+        cell = ws.cell(row=row, column=1, value="【全站总览】\n" + "\n".join(site))
+        cell.alignment = wrap; cell.fill = HDR; cell.font = bold
+        ws.row_dimensions[row].height = 28 * (len(site) + 1); row += 2
+    # 逐页面类型
+    for pt in report.get("page_type_audits") or []:
+        ws.merge_cells(f"A{row}:E{row}")
+        sc = ws.cell(row=row, column=1, value=f"【{pt.get('page_type','页面')}】"
+                     + (f"　(样本 {pt.get('pages_sampled')} 页)" if pt.get("pages_sampled") else ""))
+        sc.font = Font(bold=True, size=12, color="1A5FB4"); sc.fill = SEC; row += 1
+        po = pt.get("overview") or {}
+        ovl = [f"{k}：{po[k]}" for k in ("综合评定", "核心优势", "改进空间") if po.get(k)]
+        if ovl:
+            ws.merge_cells(f"A{row}:E{row}")
+            oc = ws.cell(row=row, column=1, value="\n".join(ovl)); oc.alignment = wrap; oc.fill = SEC
+            ws.row_dimensions[row].height = 24 * (len(ovl) + 1); row += 1
+        for ci, h in enumerate(["检查维度", "检查项", "测试详情", "状态", "优化建议"], 1):
+            hc = ws.cell(row=row, column=ci, value=h); hc.font = bold; hc.fill = HDR
+            hc.alignment = center if ci == 4 else wrap; hc.border = border
+        row += 1
+        last_dim = None
+        for it in pt.get("checklist") or []:
+            dim = it.get("维度", "")
+            ws.cell(row=row, column=1, value=(dim if dim != last_dim else "")).alignment = wrap
+            if dim != last_dim:
+                ws.cell(row=row, column=1).font = bold
+            last_dim = dim
+            ws.cell(row=row, column=2, value=it.get("检查项", "")).alignment = wrap
+            ws.cell(row=row, column=2).font = bold
+            ws.cell(row=row, column=3, value=it.get("测试详情", "")).alignment = wrap
+            st = (it.get("状态") or "").strip()
+            stc = ws.cell(row=row, column=4, value=st); stc.alignment = center
+            if st in STATUS:
+                fg, bg = STATUS[st]; stc.font = Font(bold=True, color=fg); stc.fill = PatternFill("solid", fgColor=bg)
+            ws.cell(row=row, column=5, value=it.get("优化建议", "")).alignment = wrap
+            for ci in range(1, 6):
+                ws.cell(row=row, column=ci).border = border
+            row += 1
+        row += 1
+    # 站外/外链等需外部数据(risks)单列附后
+    rks = [rk for rk in (report.get("risks") or []) if rk.get("title")]
+    if rks:
+        ws.merge_cells(f"A{row}:E{row}")
+        ws.cell(row=row, column=1, value="【需外部数据补验（GSC / Ahrefs 等，本工具爬站测不到）】").font = bold
+        ws.cell(row=row, column=1).fill = SEC; row += 1
+        for rk in rks[:12]:
+            ws.cell(row=row, column=1, value=f"· {rk.get('title')}").alignment = wrap
+            ws.merge_cells(f"A{row}:E{row}"); row += 1
+    bio = io.BytesIO(); wb.save(bio); return bio.getvalue()
+
+
 def _build_exec_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, Any]) -> bytes:
-    """统一执行报告 Excel:概览 + 问题清单 + 风险 + 阻碍 + 用例 + 截图(+ 按工具特化表)。"""
-    from packages.reporting.exec_excel import build_exec_xlsx
-    summary = _build_executive_summary(report, tool)
+    """统一执行报告 Excel:概览 + 问题清单 + 风险 + 阻碍 + 用例 + 截图(+ 按工具特化表)。
+    seo_audit 且含 page_type_audits 时,走用户 Lark 模板的单 sheet 按页面类型检查清单格式。"""
     m = report.get("meta") or {}
     meta = {
         "run_id": r.get("run_id") or "",
@@ -2448,6 +2526,13 @@ def _build_exec_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, 
         "project_name": m.get("project_name") or "",
         "project_code": m.get("project_code") or "",
     }
+    if tool.get("id") == "seo_audit" and report.get("page_type_audits"):
+        try:
+            return _build_seo_template_xlsx(report, meta)
+        except Exception:
+            pass  # 渲染失败则回退通用格式
+    from packages.reporting.exec_excel import build_exec_xlsx
+    summary = _build_executive_summary(report, tool)
     return build_exec_xlsx(summary, report, tool, meta, _EXEC_CFG.get(tool.get("id"), {}))
 
 
@@ -2670,13 +2755,26 @@ async def _seo_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
         "medium=次要优化(alt 覆盖偏低、锚文本通用、desc 过长截断);low/info=轻微提示(含 meta keywords 堆砌仅 info,因 Google 不计权)。"
         "priority 默认 critical→P0、high→P1、medium→P2、low/info→P3。"
         "verdict 与 gate_decision.action 一致映射:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。\n\n"
+        "【★报告主体 = 按页面类型的检查清单 page_type_audits(务必产出,这是用户要的报告格式)】\n"
+        "按采集数据里的【模板分类 templates】(如 首页 / 视频详情页 / 分类页 / 标签页 / 列表页 等,**爬到几类就出几节**),"
+        "为每个页面类型产出:① overview(综合评定 2-3句该类页SEO总评、核心优势、改进空间按优先级);"
+        "② checklist 逐检查项给 状态(通过/警告/不通过)+ 测试详情(引该类页采集真值)+ 优化建议。检查项按维度组织,"
+        "以下为标准检查项集(适用该页面类型的必列;**模板原本没有但 Google 标准/视频站需要的 ★ 必须补上**):\n"
+        "  · 基础元数据:标题(Title)、关键词(Keywords·注 Google 不计权仅记录)、描述(Description)\n"
+        "  · 内容结构:H1标签、H2-H6标签、图片Alt属性、★页面原创性/内容充实度(薄内容 pages_thin)\n"
+        "  · ★结构化数据(模板缺·必补):VideoObject(视频页命脉,系统性缺=不通过)、面包屑BreadcrumbList、其它JSON-LD\n"
+        "  · 技术性能:HTTPS安全、移动端适配(viewport)、★Core Web Vitals(LCP/CLS实测给值+评级;INP需CrUX现场数据→unknown)、URL规范化\n"
+        "  · 爬虫友好与★可索引(模板缺·必补):Robots.txt、站点地图Sitemap、★canonical规范(canonical_issue_pages)、★noindex可索引(pages_noindex)、内链/标签系统\n"
+        "  · ★站外:外链/真实收录量/关键词排名 → 不在本工具范围,状态标 unknown 注『需 GSC/Ahrefs』\n"
+        "状态判定:该检查项该页类全OK=通过;部分问题/可优化=警告;硬性缺陷(视频页系统性缺VideoObject、核心页noindex、CWV实测差、title/desc大面积重复、Sitemap 404)=不通过。每条测试详情引采集真值(如『该模板120页仅5页含VideoObject』『LCP实测4184ms>4000差』)。\n\n"
         "【输出 · 合法 JSON,以 { 开头,无前后缀、无 markdown 代码块,全部中文】\n"
         "{\n"
         '  "verdict": "通过|有条件通过|不通过",\n'
         '  "verdict_summary": "≤120字一句话核心结论",\n'
         '  "gate_decision": {"action":"proceed|proceed_with_warning|reject_with_report","reasons":["..."]},\n'
         '  "confidence": {"score": 0.0, "rationale": "基于采集覆盖率的保守自评"},\n'
-        '  "overview": {"评定":"2-4句总体评定", "核心问题":"最关键的1-3个问题", "后续动作":"按优先级的下一步动作"},\n'
+        '  "overview": {"评定":"2-4句全站总体评定", "核心问题":"最关键的1-3个问题", "后续动作":"按优先级的下一步动作"},\n'
+        '  "page_type_audits": [{"page_type":"首页|视频详情页|分类页…(来自templates分类)","pages_sampled":0,"overview":{"综合评定":"...","核心优势":"...","改进空间":"..."},"checklist":[{"维度":"基础元数据","检查项":"标题(Title)","测试详情":"引该页类采集真值","状态":"通过|警告|不通过","优化建议":"..."}]}],\n'
         '  "risks": [{"id":"R-001","title":"...","impact":"对收录/排名的影响","why":"基于哪条采集数据","severity":"critical|high|medium|low"}],\n'
         '  "issues": [{"issue_id":"SEO-AREA-0001(AREA∈IDX索引/META元信息/CONTENT内容/SCHEMA结构化/CWV体验/VIDEO视频/SEC安全)","priority":"P0|P1|P2|P3","severity":"critical|high|medium|low|info",'
         '"module":"Google层(①可索引/②T-D元信息/③内容EEAT/④结构化数据/⑤页面体验CWV/⑥视频专项/⑦安全)",'
@@ -2685,7 +2783,7 @@ async def _seo_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
         '"evidence":"采集数据具体字段名:值"}],\n'
         '  "strengths": ["已验证的优点(基于通过项,引采集数据)"]\n'
         "}\n"
-        "issues 按 (severity, priority) 双键排序;空数组写 []。"
+        "page_type_audits 必须覆盖采集到的每个页面类型;issues 按 (severity, priority) 双键排序;空数组写 []。"
     )
     state["progress"] = "AI 综合分析 SEO 采集结果…"
     resp = await ctx.llm.complete(
@@ -2707,6 +2805,7 @@ async def _seo_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
         "gate_decision": parsed.get("gate_decision") or {"action": _verdict_to_gate(verdict), "reasons": []},
         "confidence": parsed.get("confidence") or {},
         "overview": parsed.get("overview") or {},
+        "page_type_audits": parsed.get("page_type_audits") or [],
         "issues": parsed.get("issues") or [],
         "risks": parsed.get("risks") or [],
         "cases": [],
