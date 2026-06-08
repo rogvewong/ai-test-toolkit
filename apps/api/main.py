@@ -2795,8 +2795,8 @@ async def _seo_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]:
             resp = await _aio.wait_for(
                 ctx.llm.complete(
                     system=system, messages=[{"role": "user", "content": data_text}],
-                    max_tokens=32000, allow_degrade=False),
-                timeout=360)
+                    max_tokens=20000, allow_degrade=(_att > 0)),
+                timeout=600)
             break
         except _aio.TimeoutError:
             state.setdefault("logs", []).append({
