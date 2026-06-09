@@ -6244,72 +6244,79 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
 </header>
 <div class="wrap">
   <h1>使用说明</h1>
-  <p class="sub">每个工具的用法 · 都支持单独运行,上一步产出可一键接力给下一步</p>
+  <p class="sub">每个工具的详细说明与操作方式 · 都支持单独运行,上一步产出可一键接力给下一步 · 报告统一为定制 Excel 表格(无 HTML)</p>
 
   <div class="g-tool">
     <div class="g-head"><span class="g-num">1</span><span class="g-icon">📋</span><h2>需求评审</h2></div>
     <dl>
-      <dt>用途</dt><dd>把 <b>PRD / 原型 / UI 稿</b>拆成可测结构,提前揪出需求遗漏、歧义与提测门禁。</dd>
-      <dt>怎么用</dt><dd>进入工具 → 把需求材料(PRD 文档、原型或 UI 链接/说明)<b>粘贴或上传</b>到输入框 → 选模型 → 点运行。</dd>
-      <dt>产出</dt><dd>《需求拆解报告》:模块拆解、主流程/异常流程、风险与遗漏清单、提测门禁。</dd>
-      <dt class="g-tip">提示</dt><dd class="g-tip">材料越完整(含验收标准、边界规则)拆得越准;产出可一键接力给「测试用例设计」。</dd>
+      <dt>测什么</dt><dd>把 <b>PRD / 原型 / UI 稿</b>拆成可测结构,识别<b>需求遗漏、逻辑歧义、边界缺失、异常流程未定义</b>,并给出提测门禁(哪些点必须先澄清才能提测)。</dd>
+      <dt>怎么操作</dt><dd>① 进入「需求评审」 → ② 把 PRD 文档 / 原型链接 / UI 稿说明 <b>粘贴或上传</b>到输入框(可多份) → ③ 选模型 → ④ 点运行。</dd>
+      <dt>需要准备</dt><dd>需求材料越完整越好——最好含<b>验收标准、字段规则、边界与异常约定</b>;缺这些时拆解会偏保守。</dd>
+      <dt>产出</dt><dd>《需求拆解报告》(规范测试报告 Excel):模块拆解、主流程/异常流程、风险与遗漏明细、提测门禁。面向 PM 用业务语言(现象/影响/待确认)。</dd>
+      <dt class="g-tip">提示</dt><dd class="g-tip">产出可一键接力给「测试用例设计」,直接生成用例。</dd>
     </dl>
   </div>
 
   <div class="g-tool">
     <div class="g-head"><span class="g-num">2</span><span class="g-icon">✏️</span><h2>测试用例设计</h2></div>
     <dl>
-      <dt>用途</dt><dd>基于需求,自动生成分优先级(<b>P0/P1/P2</b>)的测试用例集。</dd>
-      <dt>怎么用</dt><dd>粘贴<b>需求拆解报告 / 业务场景 / 接口清单</b> → 运行;也可直接接力上一步「需求评审」的产出。</dd>
-      <dt>产出</dt><dd>P0/P1/P2 用例表(步骤、预期、数据)+ <b>Excel 下载</b>。</dd>
-      <dt class="g-tip">提示</dt><dd class="g-tip">想覆盖异常/边界,材料里写清规则与约束。</dd>
+      <dt>测什么</dt><dd>基于需求自动生成分优先级(<b>P0/P1/P2</b>)的用例集,覆盖<b>正向 / 异常 / 边界 / 数据组合</b>。</dd>
+      <dt>怎么操作</dt><dd>① 粘贴<b>需求拆解报告 / 业务场景 / 接口清单</b>(或一键接力「需求评审」产出) → ② 运行。</dd>
+      <dt>需要准备</dt><dd>想覆盖异常/边界,材料里写清<b>规则、约束、状态机</b>。</dd>
+      <dt>产出</dt><dd>P0/P1/P2 用例表(用例标题、前置条件、步骤、预期结果、优先级、类型)+ <b>Excel 下载</b>;可导入禅道,或拖给「Agent 执行」直接跑。</dd>
     </dl>
   </div>
 
   <div class="g-tool">
     <div class="g-head"><span class="g-num">3</span><span class="g-icon">🔌</span><h2>接口测试</h2></div>
     <dl>
-      <dt>用途</dt><dd>对接口做<b>功能 / 安全 / 边界 / 契约</b>校验,给放量结论。AI 会<b>真发 HTTP 请求</b>看真实响应。</dd>
-      <dt>怎么用</dt><dd>粘贴 <b>API 文档 / OpenAPI / Postman 集合 / 接口清单</b> + 环境信息(base URL、鉴权)→ 运行。</dd>
-      <dt>产出</dt><dd>接口测试报告(功能/安全/边界/契约)+ 缺陷清单 + Excel。</dd>
-      <dt class="g-tip">提示</dt><dd class="g-tip">请求由真实客户端发起,需保证环境可达、鉴权有效。</dd>
+      <dt>测什么</dt><dd>对接口做<b>功能 / 安全 / 边界 / 契约</b>四维校验:安全含<b>越权(水平/垂直)穷尽矩阵、资损取整对账</b>;<b>真发 HTTP 请求</b>看真实响应,不伪造。</dd>
+      <dt>怎么操作</dt><dd>① 粘贴 <b>API 文档 / OpenAPI / Postman 集合 / 接口清单</b> → ② 填环境信息(base URL、鉴权 token/cookie) → ③ 运行。</dd>
+      <dt>需要准备</dt><dd>测试环境可达、鉴权有效;请求由<b>真实客户端发起、真实重放</b>。涉及写操作/资损接口,建议用专门的测试账号。</dd>
+      <dt>产出</dt><dd>接口测试报告(规范 Excel):缺陷明细(位置=接口/端点)+ 用例执行清单 + 风险与待验项。</dd>
     </dl>
   </div>
 
   <div class="g-tool">
     <div class="g-head"><span class="g-num">4</span><span class="g-icon">🤖</span><h2>Agent 自动化执行</h2></div>
     <dl>
-      <dt>用途</dt><dd>Agent 在<b>真机/模拟器</b>上跑 P0 + 关键 P1/P2,自动归因失败、列阻塞。</dd>
-      <dt>怎么用</dt><dd><b>上传 APK</b> + 提供用例/场景,确保 MuMu 模拟器已开机;默认 dry-run,要真跑手动开 <b>--live</b>。</dd>
-      <dt>产出</dt><dd>《Agent 自动化执行报告》:执行结果、失败归因(前端/后端/接口/数据/环境)、阻塞清单。</dd>
-      <dt class="g-tip">提示</dt><dd class="g-tip">真机执行需模拟器在线、APK 可安装。</dd>
+      <dt>测什么</dt><dd>Agent 在<b>真机/模拟器</b>上执行用例(P0 + 关键 P1/P2),逐条判定<b>通过 / 失败 / 阻塞</b>,自动归因失败(前端 / 后端 / 接口 / 数据 / 环境)。</dd>
+      <dt>怎么操作</dt><dd>① 提供用例:<b>拖入用例 Excel</b> 或一键接力「用例设计」产出 → ② <b>上传 APK</b> → ③ 确保 MuMu 模拟器已开机 → ④ 默认 <b>dry-run</b>(只演练不写库),要真跑勾选 <b>--live</b> → ⑤ 运行。</dd>
+      <dt>需要准备</dt><dd>模拟器在线、APK 可安装;用例的<b>「预期结果」写清楚</b>——Agent 据此抽取检查点判 pass/fail。</dd>
+      <dt>产出</dt><dd>《Agent 自动化执行报告》(规范 Excel):逐用例执行结果(位置=用例/模块)+ 失败归因 + 阻塞清单。</dd>
+      <dt class="g-tip">提示</dt><dd class="g-tip">先 dry-run 跑通流程,再开 --live 实跑。</dd>
     </dl>
   </div>
 
   <div class="g-tool">
     <div class="g-head"><span class="g-num">5</span><span class="g-icon">📶</span><h2>弱网/断网测试</h2></div>
     <dl>
-      <dt>用途</dt><dd>在 <b>WiFi / 4G / 3G / 弱网 / 2G / 断网</b> 各档下测页面表现 + 断网恢复能力。</dd>
-      <dt>怎么用</dt><dd>填<b>目标页面 URL</b> → 运行,工具自动逐档切换网络采集。</dd>
-      <dt>产出</dt><dd>弱网深度测试报告(各档表现 + 容错 + 退回判定)+ Excel。</dd>
+      <dt>测什么</dt><dd>各档(<b>WiFi / 4G / 3G / 弱网 / 2G / 断网</b>)下测页面表现(可达 / 加载时长 / FCP / 加载态提示 / 错误 UI / 超时)+ <b>断网恢复能力</b> + 写操作<b>资损</b>(重复提交、中途断网幂等)。视频站可加测<b>播放弱网</b>(首帧 TTFF / 卡顿 / 码率自适应 ABR / 断点续播 / 断网静默失败)。</dd>
+      <dt>怎么操作</dt><dd>① 填目标页面 URL(关键写操作页更佳) → ② 视频站勾选 <b>「视频弱网」</b>(默认关) → ③ 运行,工具自动逐档切换网络采集。</dd>
+      <dt>需要准备</dt><dd>仅让<b>浏览器/模拟器弱网,宿主机不断网</b>,测完自动清理网络配置;视频弱网需站点本身为视频站。</dd>
+      <dt>产出</dt><dd>弱网深度报告(定制表格):<b>档位加载矩阵</b>(CDP 实测、脚本直出恒在)+ 容错 checklist + 视频 checklist + 资损清单,状态色标。</dd>
     </dl>
   </div>
 
   <div class="g-tool">
     <div class="g-head"><span class="g-num">6</span><span class="g-icon">📱</span><h2>H5 适配初审</h2></div>
     <dl>
-      <dt>用途</dt><dd>检查 H5 在不同视口/浏览器的适配:<b>安全区、浏览器矩阵、交互、性能</b>。</dd>
-      <dt>怎么用</dt><dd>填 <b>H5 页面 URL</b> +(可选)figma 设计稿链接 → 运行。</dd>
-      <dt>产出</dt><dd>H5 适配报告(页面盘点 + 视口/安全区/浏览器矩阵 + 性能)。</dd>
+      <dt>测什么</dt><dd>H5 在<b>多端真机/多视口</b>的适配:<b>安全区</b>(刘海/底部)、<b>浏览器矩阵</b>、横向溢出、点击热区、字号、input 行为、<b>Core Web Vitals</b>。</dd>
+      <dt>怎么操作</dt><dd>① 填 <b>H5 页面 URL</b> → ②(可选)贴 figma 设计稿链接做像素比对 → ③ 运行。工具在<b>宿主真实浏览器/真机三端</b>采集证据(截图 + 实测度量)。</dd>
+      <dt>需要准备</dt><dd>页面公网可达;有门禁/弹窗的站点工具会自行<b>进站到多页</b>看真实展示。</dd>
+      <dt>产出</dt><dd>H5 适配报告(规范 Excel):缺陷明细(位置=端/视口/页面)+ 用例执行 + 风险项,附<b>三端截图证据</b>。</dd>
+      <dt class="g-tip">提示</dt><dd class="g-tip">三端采集在宿主侧完成,容器缺 H.264 时也能测视频页。</dd>
     </dl>
   </div>
 
   <div class="g-tool">
     <div class="g-head"><span class="g-num">7</span><span class="g-icon">🔍</span><h2>SEO 深度审计</h2></div>
     <dl>
-      <dt>用途</dt><dd><b>全站抓取 + 元数据 + 内容 + Core Web Vitals</b> 四维深度审计。</dd>
-      <dt>怎么用</dt><dd>填<b>站点 URL</b> → 运行,工具自动 BFS 爬取 + 逐页解析 + 实测 CWV。</dd>
-      <dt>产出</dt><dd>SEO 深度审计报告(10 个 sheet 的 Excel)。</dd>
+      <dt>测什么</dt><dd>100% 按 <b>Google 标准的 8 层审计</b>:可索引性(robots/sitemap/canonical/noindex)、<b>TDK 元数据</b>(标题/描述/长度/重复)、内容(字数/薄页/结构化数据 VideoObject)、<b>Core Web Vitals 实测</b>(LCP/CLS/INP)、移动友好(viewport)、死链、站点结构。</dd>
+      <dt>怎么操作</dt><dd>① 填<b>站点 URL</b> → ② 运行。工具自动 BFS 爬取(最多 300 页)+ 逐页解析 + 实测 CWV + 按<b>页面类型</b>(首页/列表页/详情页/播放页…)汇总。</dd>
+      <dt>需要准备</dt><dd>站点公网可达;站点越大爬取越久(几百页约数分钟)。</dd>
+      <dt>产出</dt><dd>SEO 深度审计报告(定制表格,<b>按页面类型分节</b>):每类页面 = 综合评定 + checklist(检查维度|检查项|测试详情|状态色标|优化建议)+ 需外部介入的风险项。</dd>
+      <dt class="g-tip">提示</dt><dd class="g-tip">确定性事实(TDK 长度/重复、CWV 值)脚本直出;状态评级与优化建议由 AI 综合判断。</dd>
     </dl>
   </div>
 
