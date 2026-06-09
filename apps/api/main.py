@@ -3286,6 +3286,24 @@ def _netdata_to_prompt(nd: dict[str, Any]) -> str:
     return "\n".join(L)
 
 
+def _net_matrix_from_nd(nd: dict[str, Any]) -> list[dict[str, Any]]:
+    """弱网档位加载矩阵 = 纯脚本(基于 Phase1 CDP 真实实测,不依赖 LLM)。"""
+    rows = []
+    for p in nd.get("profiles", []) or []:
+        reached = p.get("reached")
+        rows.append({
+            "档位": p.get("profile"),
+            "可达": "是" if reached else "否",
+            "加载ms": p.get("load_ms") if p.get("load_ms") is not None else "-",
+            "FCP": p.get("fcp_ms") if p.get("fcp_ms") is not None else "-",
+            "加载态": "有" if p.get("has_spinner") else ("-" if not reached else "无"),
+            "错误UI": "有" if p.get("has_error_ui") else ("-" if reached else "无"),
+            "超时": "是" if p.get("timed_out") else "否",
+            "控制台错误": p.get("console_errors", 0),
+        })
+    return rows
+
+
 async def _network_run_collect(ctx: Any, state: dict[str, Any]) -> None:
     """弱网/断网:Playwright CDP 多档位真实限速/断网实测 → ctx/state。"""
     docs = (ctx.inputs or {}).get("documents") or ""
@@ -3561,7 +3579,7 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
         "gate_decision": parsed.get("gate_decision") or {"action": _verdict_to_gate(verdict), "reasons": []},
         "confidence": parsed.get("confidence") or {},
         "overview": parsed.get("overview") or {},
-        "profile_matrix": parsed.get("profile_matrix") or [],
+        "profile_matrix": _net_matrix_from_nd(nd) or parsed.get("profile_matrix") or [],  # 矩阵=脚本(实测),不靠LLM
         "fault_checklist": parsed.get("fault_checklist") or [],
         "video_checklist": parsed.get("video_checklist") or [],
         "issues": parsed.get("issues") or [],
