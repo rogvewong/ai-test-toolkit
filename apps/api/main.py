@@ -2701,8 +2701,8 @@ def _build_exec_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, 
             return _build_network_template_xlsx(report, meta)
         except Exception:
             pass
-    # 编排器型测试工具:统一走符合测试报告/用例规范的单 sheet(测试结论+缺陷明细+用例执行+风险待验)
-    if tool.get("id") in {"h5_adapt", "step4", "step6", "step1", "step2"}:
+    # 编排器型测试工具 + SEO 兜底(LLM 超时没出 page_type_audits 时):统一走符合测试报告/用例规范的单 sheet
+    if tool.get("id") in {"h5_adapt", "step4", "step6", "step1", "step2", "seo_audit", "network_resilience"}:
         try:
             return _build_testreport_xlsx(report, meta, tool)
         except Exception:
