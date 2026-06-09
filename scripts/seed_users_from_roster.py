@@ -32,7 +32,7 @@ def main() -> int:
     exists: list[str] = []
     failed: list[tuple[str, str]] = []
     for s in seed:
-        uname = (s.get("username") or "").strip().lower()
+        uname = (s.get("username") or "").strip()  # 保留大小写(工号 DN2612 原样)
         if not uname:
             continue
         try:

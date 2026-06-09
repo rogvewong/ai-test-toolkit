@@ -147,12 +147,22 @@ class UserStore:
                 )
             except sqlite3.OperationalError:
                 pass
+            # 用户名大小写不敏感唯一:工号 DN2612 原样存储,但 dn2612/DN2612 视为同一账号
+            try:
+                c.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uname_ci "
+                    "ON users(username COLLATE NOCASE)"
+                )
+            except sqlite3.OperationalError:
+                pass  # 历史已有大小写重名时跳过,退回精确唯一约束
 
     # ----- users -----
 
     @staticmethod
     def _normalize_username(s: str) -> str:
-        return (s or "").strip().lower()
+        # 仅去首尾空白,保留大小写(工号如 DN2612 原样存储);
+        # 登录匹配与唯一性走 COLLATE NOCASE,大小写不敏感。
+        return (s or "").strip()
 
     @staticmethod
     def _validate_username(s: str) -> None:
@@ -211,7 +221,7 @@ class UserStore:
         with self._lock, self._conn() as c:
             row = c.execute(
                 "SELECT id, username, display_name, role, created_at, last_login_at, must_change_password "
-                "FROM users WHERE username=?", (username,)
+                "FROM users WHERE username=? COLLATE NOCASE", (username,)
             ).fetchone()
             return self._row_to_user(row) if row else None
 
@@ -220,7 +230,7 @@ class UserStore:
         with self._lock, self._conn() as c:
             row = c.execute(
                 "SELECT id, username, password_hash, display_name, role, created_at, last_login_at, must_change_password "
-                "FROM users WHERE username=?", (username,)
+                "FROM users WHERE username=? COLLATE NOCASE", (username,)
             ).fetchone()
             if not row:
                 return None
