@@ -2515,6 +2515,85 @@ def _build_seo_template_xlsx(report: dict[str, Any], meta: dict[str, Any]) -> by
     bio = io.BytesIO(); wb.save(bio); return bio.getvalue()
 
 
+def _build_network_template_xlsx(report: dict[str, Any], meta: dict[str, Any]) -> bytes:
+    """弱网/断网报告(按工具性质:档位×指标矩阵 + 容错checklist + 视频弱网checklist + 资损问题)。"""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    wb = Workbook(); ws = wb.active; ws.title = "弱网断网测试"
+    thin = Side(style="thin", color="D9D9D9"); bd = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap = Alignment(wrap_text=True, vertical="top"); ctr = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    HDR = PatternFill("solid", fgColor="D6E4FF"); SEC = PatternFill("solid", fgColor="EEF3FF")
+    STA = {"通过": ("107C10", "DFF6DD"), "警告": ("9A6700", "FFF4CE"), "不通过": ("C42B1C", "FDE7E9")}
+    bold = Font(bold=True)
+    for c, w in {"A": 16, "B": 14, "C": 40, "D": 11, "E": 46, "F": 12, "G": 11, "H": 14}.items():
+        ws.column_dimensions[c].width = w
+    row = [1]
+    def sec(t):
+        ws.merge_cells(f"A{row[0]}:E{row[0]}"); s = ws.cell(row=row[0], column=1, value=t)
+        s.font = Font(bold=True, size=12, color="1A5FB4"); s.fill = SEC; row[0] += 1
+    def checklist(items):
+        for ci, h in enumerate(["维度", "检查项", "测试详情", "状态", "优化建议"], 1):
+            hc = ws.cell(row=row[0], column=ci, value=h); hc.font = bold; hc.fill = HDR
+            hc.alignment = ctr if ci == 4 else wrap; hc.border = bd
+        row[0] += 1
+        last = None
+        for it in items:
+            d = it.get("维度", "")
+            c1 = ws.cell(row=row[0], column=1, value=(d if d != last else "")); c1.alignment = wrap
+            if d != last: c1.font = bold
+            last = d
+            ws.cell(row=row[0], column=2, value=it.get("检查项", "")).alignment = wrap
+            ws.cell(row=row[0], column=2).font = bold
+            ws.cell(row=row[0], column=3, value=it.get("测试详情", "")).alignment = wrap
+            st = (it.get("状态") or "").strip(); sc = ws.cell(row=row[0], column=4, value=st); sc.alignment = ctr
+            if st in STA: fg, bg = STA[st]; sc.font = Font(bold=True, color=fg); sc.fill = PatternFill("solid", fgColor=bg)
+            ws.cell(row=row[0], column=5, value=it.get("优化建议", "")).alignment = wrap
+            for ci in range(1, 6): ws.cell(row=row[0], column=ci).border = bd
+            row[0] += 1
+        row[0] += 1
+    ws.cell(row=row[0], column=1, value=f"弱网 / 断网容错报告 · {meta.get('project_name') or ''}".strip()).font = Font(bold=True, size=13); row[0] += 1
+    vmap = {"通过": "✅ 通过", "有条件通过": "⚠️ 有条件通过", "不通过": "❌ 不通过"}
+    vc = ws.cell(row=row[0], column=1, value=f"判定：{vmap.get(report.get('verdict'), report.get('verdict') or '')}　|　{report.get('verdict_summary') or ''}")
+    vc.alignment = wrap; ws.merge_cells(f"A{row[0]}:E{row[0]}"); ws.row_dimensions[row[0]].height = 36; row[0] += 2
+    ov = report.get("overview") or {}
+    site = [f"{k}：{ov[k]}" for k in ("评定", "核心问题", "后续动作") if ov.get(k)]
+    if site:
+        ws.merge_cells(f"A{row[0]}:E{row[0]}"); c = ws.cell(row=row[0], column=1, value="【总览】\n" + "\n".join(site))
+        c.alignment = wrap; c.fill = HDR; c.font = bold; ws.row_dimensions[row[0]].height = 26 * (len(site) + 1); row[0] += 2
+    pm = report.get("profile_matrix") or []
+    if pm:
+        sec("① 弱网档位加载矩阵(各档位真实实测)")
+        cols = ["档位", "可达", "加载ms", "首屏FCP", "加载态", "错误UI", "超时", "控制台错误"]
+        for ci, h in enumerate(cols, 1):
+            hc = ws.cell(row=row[0], column=ci, value=h); hc.font = bold; hc.fill = HDR; hc.alignment = ctr; hc.border = bd
+        row[0] += 1
+        for m in pm:
+            for ci, k in enumerate(["档位", "可达", "加载ms", "FCP", "加载态", "错误UI", "超时", "控制台错误"], 1):
+                cc = ws.cell(row=row[0], column=ci, value=m.get(k)); cc.alignment = (wrap if ci == 1 else ctr); cc.border = bd
+            row[0] += 1
+        row[0] += 1
+    if report.get("fault_checklist"):
+        sec("② 容错与用户提示 checklist(★含避免静默失败)"); checklist(report["fault_checklist"])
+    if report.get("video_checklist"):
+        sec("③ 视频播放弱网 checklist(起播/卡顿/ABR/断网/续播/CDN分片)"); checklist(report["video_checklist"])
+    iss = report.get("issues") or []
+    if iss:
+        sec("④ 操作 / 写 / 资损 问题清单")
+        for ci, h in enumerate(["编号", "严重度", "问题", "现状 / 影响", "修复建议"], 1):
+            hc = ws.cell(row=row[0], column=ci, value=h); hc.font = bold; hc.fill = HDR; hc.alignment = ctr if ci in (1, 2) else wrap; hc.border = bd
+        row[0] += 1
+        for it in iss[:40]:
+            ws.cell(row=row[0], column=1, value=it.get("issue_id", "")).alignment = ctr
+            ws.cell(row=row[0], column=2, value=it.get("severity", "")).alignment = ctr
+            ws.cell(row=row[0], column=3, value=it.get("title", "")).alignment = wrap
+            ws.cell(row=row[0], column=4, value=((it.get("current_behavior") or "") + " / " + (it.get("impact_scope") or "")).strip(" /")).alignment = wrap
+            ws.cell(row=row[0], column=5, value=it.get("fix_suggestion", "")).alignment = wrap
+            for ci in range(1, 6): ws.cell(row=row[0], column=ci).border = bd
+            row[0] += 1
+    bio = io.BytesIO(); wb.save(bio); return bio.getvalue()
+
+
 def _build_exec_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, Any]) -> bytes:
     """统一执行报告 Excel:概览 + 问题清单 + 风险 + 阻碍 + 用例 + 截图(+ 按工具特化表)。
     seo_audit 且含 page_type_audits 时,走用户 Lark 模板的单 sheet 按页面类型检查清单格式。"""
@@ -2531,6 +2610,12 @@ def _build_exec_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, 
             return _build_seo_template_xlsx(report, meta)
         except Exception:
             pass  # 渲染失败则回退通用格式
+    if tool.get("id") == "network_resilience" and (
+            report.get("profile_matrix") or report.get("fault_checklist") or report.get("video_checklist")):
+        try:
+            return _build_network_template_xlsx(report, meta)
+        except Exception:
+            pass
     from packages.reporting.exec_excel import build_exec_xlsx
     summary = _build_executive_summary(report, tool)
     return build_exec_xlsx(summary, report, tool, meta, _EXEC_CFG.get(tool.get("id"), {}))
@@ -3351,6 +3436,10 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
         '  "verdict_summary": "≤120字核心结论",\n'
         '  "gate_decision": {"action":"proceed|proceed_with_warning|reject_with_report","reasons":["..."]},\n'
         '  "confidence": {"score": 0.0, "rationale": "基于实测档位覆盖的保守自评"},\n'
+        '  "overview": {"评定":"2-4句总体评定","核心问题":"最关键1-3个","后续动作":"按优先级下一步"},\n'
+        '  "profile_matrix": [{"档位":"online|4g|fast_3g|slow_3g|2g|offline","可达":"是|否","加载ms":0,"FCP":0,"加载态":"有|无(长白屏)","错误UI":"有|无|-","超时":"是|否","控制台错误":0}],\n'
+        '  "fault_checklist": [{"维度":"加载态|断网|恢复|超时|重试|提示","检查项":"如 慢网加载提示/断网提示/恢复提示/★避免静默失败","测试详情":"引档位实测真值","状态":"通过|警告|不通过","优化建议":"..."}],\n'
+        '  "video_checklist": [{"维度":"起播|卡顿|ABR|seek|断网|恢复|CDN","检查项":"如 起播TTFF/弱网卡顿/ABR降码率/断网断流(静默失败)/断点续播/CDN分片失败","测试详情":"引视频实测真值","状态":"通过|警告|不通过","优化建议":"..."}],\n'
         '  "risks": [{"id":"R-001","title":"...","impact":"对用户/数据的影响","why":"基于哪条实测或为何需后端确认","severity":"critical|high|medium|low"}],\n'
         '  "issues": [{"issue_id":"NET-AREA-0001","priority":"P0|P1|P2|P3","severity":"critical|high|medium|low|info",'
         '"module":"档位/场景(如 断网态/弱网加载/恢复)",'
@@ -3358,7 +3447,8 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
         '"impact_scope":"对用户的影响","fix_suggestion":"具体怎么修(如接 Service Worker/骨架屏/超时重试/离线提示)",'
         '"evidence":"档位:字段名:值"}]\n'
         "}\n"
-        "issues 按 (severity, priority) 双键排序;空数组写 []。"
+        "profile_matrix 覆盖每个实测到的档位;fault_checklist 覆盖用户提示各点(★避免静默失败必列);"
+        "video_checklist 仅当数据含视频弱网证据时填,否则 []。issues 按 (severity, priority) 双键排序;空数组写 []。"
     )
     state["progress"] = "AI 综合分析弱网/断网实测结果…"
     resp = await ctx.llm.complete(
@@ -3379,6 +3469,10 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
         "verdict_summary": parsed.get("verdict_summary") or "(见各 sheet 明细)",
         "gate_decision": parsed.get("gate_decision") or {"action": _verdict_to_gate(verdict), "reasons": []},
         "confidence": parsed.get("confidence") or {},
+        "overview": parsed.get("overview") or {},
+        "profile_matrix": parsed.get("profile_matrix") or [],
+        "fault_checklist": parsed.get("fault_checklist") or [],
+        "video_checklist": parsed.get("video_checklist") or [],
         "issues": parsed.get("issues") or [],
         "risks": parsed.get("risks") or [],
         "cases": [],
