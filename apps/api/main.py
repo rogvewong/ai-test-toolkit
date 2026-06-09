@@ -2594,6 +2594,91 @@ def _build_network_template_xlsx(report: dict[str, Any], meta: dict[str, Any]) -
     bio = io.BytesIO(); wb.save(bio); return bio.getvalue()
 
 
+def _build_testreport_xlsx(report: dict[str, Any], meta: dict[str, Any], tool: dict[str, Any]) -> bytes:
+    """通用测试报告(符合软件测试报告/用例规范):测试结论 + 缺陷明细清单 + 用例执行清单 + 风险待验。
+    供编排器型工具(h5/step4/step6 等)用;按工具贴标题与缺陷『位置』列名。"""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    name = tool.get("name") or tool.get("id") or "测试"
+    loc_label = {"h5_adapt": "端 / 视口 / 页面", "step4": "接口 / 端点", "step6": "用例 / 模块"}.get(tool.get("id"), "模块 / 位置")
+    wb = Workbook(); ws = wb.active; ws.title = (name[:28] or "测试报告")
+    thin = Side(style="thin", color="D9D9D9"); bd = Border(left=thin, right=thin, top=thin, bottom=thin)
+    wrap = Alignment(wrap_text=True, vertical="top"); ctr = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    HDR = PatternFill("solid", fgColor="D6E4FF"); SEC = PatternFill("solid", fgColor="EEF3FF")
+    SEV = {"critical": ("C42B1C", "FDE7E9"), "high": ("9A6700", "FFF4CE"), "medium": ("1A5FB4", "EAF1FF"),
+           "low": ("107C10", "DFF6DD"), "info": ("616161", "F0F0F0")}
+    CST = {"executed_pass": ("107C10", "DFF6DD"), "executed_fail": ("C42B1C", "FDE7E9"),
+           "blocked": ("9A6700", "FFF4CE"), "designed": ("616161", "F0F0F0"), "skipped": ("616161", "F0F0F0")}
+    bold = Font(bold=True)
+    for c, w in {"A": 16, "B": 12, "C": 30, "D": 44, "E": 44, "F": 30}.items():
+        ws.column_dimensions[c].width = w
+    row = [1]
+    def sec(t):
+        ws.merge_cells(f"A{row[0]}:F{row[0]}"); s = ws.cell(row=row[0], column=1, value=t)
+        s.font = Font(bold=True, size=12, color="1A5FB4"); s.fill = SEC; row[0] += 1
+    def hdr(cols):
+        for ci, h in enumerate(cols, 1):
+            hc = ws.cell(row=row[0], column=ci, value=h); hc.font = bold; hc.fill = HDR
+            hc.alignment = ctr if ci <= 2 else wrap; hc.border = bd
+        row[0] += 1
+    ws.cell(row=row[0], column=1, value=f"{name} · 测试报告　{meta.get('project_name') or ''} {meta.get('project_code') or ''}".strip()).font = Font(bold=True, size=13); row[0] += 1
+    vmap = {"通过": "✅ 通过", "有条件通过": "⚠️ 有条件通过", "不通过": "❌ 不通过"}
+    vc = ws.cell(row=row[0], column=1, value=f"测试结论：{vmap.get(report.get('verdict'), report.get('verdict') or '')}　|　{report.get('verdict_summary') or ''}")
+    vc.alignment = wrap; ws.merge_cells(f"A{row[0]}:F{row[0]}"); ws.row_dimensions[row[0]].height = 40; row[0] += 1
+    iss = report.get("issues") or []
+    cnt = {}
+    for it in iss: cnt[it.get("severity", "info")] = cnt.get(it.get("severity", "info"), 0) + 1
+    cases = report.get("cases") or []
+    cpass = sum(1 for c in cases if c.get("status") == "executed_pass")
+    cfail = sum(1 for c in cases if c.get("status") == "executed_fail")
+    ws.merge_cells(f"A{row[0]}:F{row[0]}")
+    stat = ws.cell(row=row[0], column=1, value=f"缺陷统计：致命 {cnt.get('critical',0)} · 高 {cnt.get('high',0)} · 中 {cnt.get('medium',0)} · 低 {cnt.get('low',0)}　|　用例：共 {len(cases)},通过 {cpass},失败 {cfail}")
+    stat.alignment = wrap; stat.fill = SEC; row[0] += 2
+    if iss:
+        sec("一、缺陷明细清单")
+        hdr(["缺陷编号", "严重度", loc_label, "问题描述 / 现状", "修复建议", "证据"])
+        for it in iss[:120]:
+            ws.cell(row=row[0], column=1, value=it.get("issue_id", "")).alignment = ctr
+            sv = (it.get("severity") or "info"); sc = ws.cell(row=row[0], column=2, value=sv); sc.alignment = ctr
+            if sv in SEV: fg, bg = SEV[sv]; sc.font = Font(bold=True, color=fg); sc.fill = PatternFill("solid", fgColor=bg)
+            ws.cell(row=row[0], column=3, value=it.get("module", "")).alignment = wrap
+            ws.cell(row=row[0], column=4, value=((it.get("title") or "") + "\n" + (it.get("current_behavior") or "")).strip()).alignment = wrap
+            ws.cell(row=row[0], column=5, value=it.get("fix_suggestion", "")).alignment = wrap
+            ws.cell(row=row[0], column=6, value=it.get("evidence", "")).alignment = wrap
+            for ci in range(1, 7): ws.cell(row=row[0], column=ci).border = bd
+            row[0] += 1
+        row[0] += 1
+    if cases:
+        sec("二、测试用例执行清单")
+        hdr(["用例编号", "优先级", "标题", "预期 / 步骤", "实际 / 证据", "状态"])
+        for c in cases[:200]:
+            ws.cell(row=row[0], column=1, value=c.get("id", "")).alignment = ctr
+            ws.cell(row=row[0], column=2, value=c.get("priority", "")).alignment = ctr
+            ws.cell(row=row[0], column=3, value=c.get("title", "")).alignment = wrap
+            steps = c.get("steps"); steps = " → ".join(steps) if isinstance(steps, list) else (steps or "")
+            ws.cell(row=row[0], column=4, value=((c.get("expected") or "") + ("\n步骤:" + steps if steps else "")).strip()).alignment = wrap
+            ws.cell(row=row[0], column=5, value=c.get("evidence", "")).alignment = wrap
+            stt = c.get("status", ""); sc = ws.cell(row=row[0], column=6, value=stt); sc.alignment = ctr
+            if stt in CST: fg, bg = CST[stt]; sc.font = Font(bold=True, color=fg); sc.fill = PatternFill("solid", fgColor=bg)
+            for ci in range(1, 7): ws.cell(row=row[0], column=ci).border = bd
+            row[0] += 1
+        row[0] += 1
+    rks = report.get("risks") or []
+    if rks:
+        sec("三、风险与待验项(含真机/外部数据需补验)")
+        hdr(["编号", "严重度", "风险", "影响", "说明 / 为何需补验", ""])
+        for rk in rks[:40]:
+            ws.cell(row=row[0], column=1, value=rk.get("id", "")).alignment = ctr
+            ws.cell(row=row[0], column=2, value=rk.get("severity", "")).alignment = ctr
+            ws.cell(row=row[0], column=3, value=rk.get("title", "")).alignment = wrap
+            ws.cell(row=row[0], column=4, value=rk.get("impact", "")).alignment = wrap
+            ws.cell(row=row[0], column=5, value=rk.get("why", "")).alignment = wrap
+            for ci in range(1, 6): ws.cell(row=row[0], column=ci).border = bd
+            row[0] += 1
+    bio = io.BytesIO(); wb.save(bio); return bio.getvalue()
+
+
 def _build_exec_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, Any]) -> bytes:
     """统一执行报告 Excel:概览 + 问题清单 + 风险 + 阻碍 + 用例 + 截图(+ 按工具特化表)。
     seo_audit 且含 page_type_audits 时,走用户 Lark 模板的单 sheet 按页面类型检查清单格式。"""
@@ -2614,6 +2699,12 @@ def _build_exec_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, 
             report.get("profile_matrix") or report.get("fault_checklist") or report.get("video_checklist")):
         try:
             return _build_network_template_xlsx(report, meta)
+        except Exception:
+            pass
+    # 编排器型测试工具:统一走符合测试报告/用例规范的单 sheet(测试结论+缺陷明细+用例执行+风险待验)
+    if tool.get("id") in {"h5_adapt", "step4", "step6", "step1", "step2"}:
+        try:
+            return _build_testreport_xlsx(report, meta, tool)
         except Exception:
             pass
     from packages.reporting.exec_excel import build_exec_xlsx
