@@ -146,6 +146,24 @@ def _is_auth_exempt(path: str) -> bool:
     return any(path.startswith(p) for p in _AUTH_EXEMPT_PREFIXES)
 
 
+# 强制改密放行清单:must_change_password=1 的用户只能访问这些路径,其余一律挡回改密页
+_FORCE_CHANGE_ALLOW: frozenset = frozenset({
+    "/force-change-password",
+    "/api/auth/force_change_password",
+    "/api/auth/logout",
+    "/api/auth/me",
+    "/healthz",
+    "/favicon.ico",
+})
+_FORCE_CHANGE_ALLOW_PREFIXES: tuple[str, ...] = ("/static/", "/api/static/", "/api/healthz")
+
+
+def _is_force_change_allowed(path: str) -> bool:
+    if path in _FORCE_CHANGE_ALLOW:
+        return True
+    return any(path.startswith(p) for p in _FORCE_CHANGE_ALLOW_PREFIXES)
+
+
 @app.middleware("http")
 async def session_guard(request: Request, call_next):
     """全局 session 闸:未登录 + 访问非白名单路径 → 网页 302 到 /login,
@@ -168,6 +186,14 @@ async def session_guard(request: Request, call_next):
         if path.startswith("/api/"):
             return JSONResponse({"error": "unauthorized", "detail": "请先登录"}, status_code=401)
         return RedirectResponse(f"/login?next={path}", status_code=302)
+    # 强制改密闸:已登录但 must_change_password=1 → 除改密相关路径外一律拦回改密页
+    if user is not None and user.must_change_password and not _is_force_change_allowed(path):
+        if path.startswith("/api/"):
+            return JSONResponse(
+                {"error": "must_change_password", "detail": "首次登录,请先修改初始密码"},
+                status_code=403,
+            )
+        return RedirectResponse("/force-change-password", status_code=302)
     response = await call_next(request)
     return response
 
@@ -294,6 +320,129 @@ async def api_auth_change_password(req: ChangePasswordReq, request: Request) -> 
     except ValueError as exc:
         raise HTTPException(400, str(exc))
     return {"ok": True, "msg": "密码已更新,所有现有 session 已撤销,请重新登录"}
+
+
+class ForceChangePasswordReq(BaseModel):
+    new_password: str
+
+
+@app.post("/api/auth/force_change_password")
+async def api_auth_force_change_password(
+    req: ForceChangePasswordReq, request: Request,
+) -> JSONResponse:
+    """首次登录强制改密 — 不验旧密码(session 已证明身份),仅 must_change_password=1 时可用。
+    改密后清除强制标记、撤销旧会话,并重新签发会话让用户保持登录。
+    """
+    user = require_user(request)
+    if not user.must_change_password:
+        raise HTTPException(400, "当前账号无需强制改密")
+    new_pwd = (req.new_password or "").strip()
+    if new_pwd == "123456":
+        raise HTTPException(400, "新密码不能与初始密码相同,请另设一个密码")
+    try:
+        user_store.change_password(user.id, new_pwd)  # 清标记 + 撤销所有会话
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    # 重新签发会话,让用户改密后保持登录、直接进工具页
+    ua = request.headers.get("user-agent", "")[:240]
+    sess = user_store.create_session(user.id, user_agent=ua)
+    resp = JSONResponse({"ok": True, "msg": "密码已更新"})
+    _set_session_cookie(resp, sess.token)
+    return resp
+
+
+FORCE_CHANGE_HTML = """<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>首次登录 · 修改密码 — 天枢·裁决</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;500;600&family=Noto+Sans+SC:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#fff;--paper-2:#f4f3f1;--ink:#0a0a0a;--ink-2:#3a3a3a;--ink-3:#6e6e6e;--ink-4:#8a8a8a;--line:#dcdad6;--accent:#a8401f}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--paper-2);color:var(--ink);font-family:'Noto Sans SC',-apple-system,BlinkMacSystemFont,sans-serif}
+.card{width:380px;max-width:92vw;background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:34px 32px 26px;box-shadow:0 12px 40px rgba(0,0,0,.06)}
+.brand{font-family:'Noto Serif SC',serif;font-size:17px;font-weight:600;letter-spacing:.16em;text-align:center;margin-bottom:4px}
+.brand .sep{color:var(--accent);margin:0 5px}
+h1{font-family:'Noto Serif SC',serif;font-size:20px;font-weight:500;margin:18px 0 6px;text-align:center}
+.sub{color:var(--ink-3);font-size:12.5px;line-height:1.7;text-align:center;margin:0 0 22px}
+.field{margin-bottom:15px}
+.field label{display:block;font-size:12.5px;color:var(--ink-2);margin-bottom:6px}
+.field input{width:100%;padding:11px 13px;border:1px solid var(--line);border-radius:9px;font-size:14px;font-family:inherit;outline:none;transition:.14s}
+.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(168,64,31,.10)}
+.hint{font-size:11px;color:var(--ink-4);margin-top:5px}
+.submit{width:100%;padding:12px;margin-top:6px;border:none;border-radius:9px;background:var(--accent);color:#fff;font-size:14px;font-weight:500;font-family:inherit;cursor:pointer;letter-spacing:.05em;transition:.14s}
+.submit:hover{filter:brightness(1.06)}
+.submit:disabled{opacity:.55;cursor:default}
+.err{display:none;margin-top:14px;padding:10px 12px;border-radius:8px;background:#fbeae6;color:#a8401f;font-size:12.5px;line-height:1.55}
+.err.show{display:block}
+.ok{display:none;margin-top:14px;padding:10px 12px;border-radius:8px;background:#e9f5ec;color:#1f7a3d;font-size:12.5px}
+.ok.show{display:block}
+.foot{margin-top:18px;text-align:center;font-size:11px;color:var(--ink-4);letter-spacing:.04em}
+.foot a{color:var(--ink-3);text-decoration:none}
+.foot a:hover{color:var(--accent)}
+</style></head>
+<body>
+  <div class="card">
+    <div class="brand">天枢<span class="sep">·</span>裁决</div>
+    <h1>首次登录,请修改密码</h1>
+    <p class="sub">为保障账号安全,初始密码仅用于首次登录。<br>请设置一个新密码后再继续使用。</p>
+    <form id="fc-form" autocomplete="off">
+      <div class="field">
+        <label for="np">新密码</label>
+        <input id="np" name="np" type="password" required placeholder="至少 6 位,且不能再用初始密码">
+        <div class="hint">不能与初始密码 123456 相同</div>
+      </div>
+      <div class="field">
+        <label for="np2">确认新密码</label>
+        <input id="np2" name="np2" type="password" required placeholder="再输入一次">
+      </div>
+      <button class="submit" id="btn" type="submit">确认修改并进入</button>
+    </form>
+    <div class="err" id="err"></div>
+    <div class="ok" id="ok"></div>
+    <div class="foot">SECURE · BCRYPT · LOCAL ONLY · <a href="#" id="logout">退出登录</a></div>
+  </div>
+<script>
+const err=document.getElementById('err'), ok=document.getElementById('ok');
+function showErr(m){err.textContent=m;err.classList.add('show');ok.classList.remove('show');}
+function showOk(m){ok.textContent=m;ok.classList.add('show');err.classList.remove('show');}
+document.getElementById('fc-form').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const np=document.getElementById('np').value, np2=document.getElementById('np2').value;
+  const btn=document.getElementById('btn');
+  if(np.length<6){showErr('新密码至少 6 位');return;}
+  if(np==='123456'){showErr('新密码不能与初始密码相同');return;}
+  if(np!==np2){showErr('两次输入的密码不一致');return;}
+  btn.disabled=true;btn.textContent='处 理 中...';
+  try{
+    const r=await fetch('/api/auth/force_change_password',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({new_password:np}),
+    });
+    if(!r.ok){const d=await r.json().catch(()=>({}));showErr(d.detail||'修改失败');btn.disabled=false;btn.textContent='确认修改并进入';return;}
+    showOk('密码已更新,正在进入…');
+    setTimeout(()=>{location.href='/tools';},700);
+  }catch(ex){showErr('网络错误:'+ex.message);btn.disabled=false;btn.textContent='确认修改并进入';}
+});
+document.getElementById('logout').addEventListener('click', async (e)=>{
+  e.preventDefault();
+  await fetch('/api/auth/logout',{method:'POST'}).catch(()=>{});
+  location.href='/login';
+});
+</script>
+</body></html>"""
+
+
+@app.get("/force-change-password", response_class=HTMLResponse)
+async def force_change_password_page(request: Request):
+    """首次登录强制改密页。非强制用户直接进工具页;未登录由 session 闸拦到 /login。"""
+    user = getattr(request.state, "current_user", None)
+    if user is None:
+        return RedirectResponse("/login?next=/force-change-password", status_code=302)
+    if not user.must_change_password:
+        return RedirectResponse("/tools", status_code=302)
+    return HTMLResponse(FORCE_CHANGE_HTML)
 
 
 # ---------- admin-only user management ----------
@@ -6082,6 +6231,11 @@ async function doSubmit(e){{
       const d = await r.json().catch(()=>({{}}));
       showErr(d.detail || (FORM_KIND === 'login' ? '登录失败' : '创建失败'));
       btn.disabled = false; btn.textContent = '{submit_label}';
+      return;
+    }}
+    const ok = await r.json().catch(()=>({{}}));
+    if (FORM_KIND === 'login' && ok.user && ok.user.must_change_password) {{
+      location.href = '/force-change-password';
       return;
     }}
     const params = new URLSearchParams(location.search);

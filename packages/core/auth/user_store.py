@@ -71,6 +71,7 @@ class UserRecord:
     role: str
     created_at: float
     last_login_at: float | None
+    must_change_password: bool = False
 
     def is_admin(self) -> bool:
         # 管理员或超级管理员都算 admin(用于「用户管理」类门禁)
@@ -87,6 +88,7 @@ class UserRecord:
             "role": self.role,
             "created_at": self.created_at,
             "last_login_at": self.last_login_at,
+            "must_change_password": self.must_change_password,
         }
 
 
@@ -125,7 +127,8 @@ class UserStore:
                 display_name TEXT NOT NULL DEFAULT '',
                 role TEXT NOT NULL DEFAULT 'user',
                 created_at REAL NOT NULL,
-                last_login_at REAL
+                last_login_at REAL,
+                must_change_password INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS sessions (
                 token TEXT PRIMARY KEY,
@@ -137,6 +140,13 @@ class UserStore:
             CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires_at);
             """)
+            # 迁移:给老库补 must_change_password 列(幂等;列已存在则忽略)
+            try:
+                c.execute(
+                    "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0"
+                )
+            except sqlite3.OperationalError:
+                pass
 
     # ----- users -----
 
@@ -162,8 +172,11 @@ class UserStore:
         password: str,
         display_name: str = "",
         role: str | None = None,
+        must_change: bool = False,
     ) -> UserRecord:
-        """创建用户。第一个创建的自动成为超级管理员。"""
+        """创建用户。第一个创建的自动成为超级管理员。
+        must_change=True → 该用户首次登录后被强制修改密码(用于批量发初始密码)。
+        """
         username = self._normalize_username(username)
         self._validate_username(username)
         if len(password) < 6:
@@ -176,9 +189,9 @@ class UserStore:
         with self._lock, self._conn() as c:
             try:
                 cur = c.execute(
-                    "INSERT INTO users(username, password_hash, display_name, role, created_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (username, pwd_hash, display_name or username, actual_role, now),
+                    "INSERT INTO users(username, password_hash, display_name, role, created_at, must_change_password) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (username, pwd_hash, display_name or username, actual_role, now, 1 if must_change else 0),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("该用户名已存在") from exc
@@ -188,7 +201,7 @@ class UserStore:
     def get_user(self, user_id: int) -> UserRecord | None:
         with self._lock, self._conn() as c:
             row = c.execute(
-                "SELECT id, username, display_name, role, created_at, last_login_at "
+                "SELECT id, username, display_name, role, created_at, last_login_at, must_change_password "
                 "FROM users WHERE id=?", (user_id,)
             ).fetchone()
             return self._row_to_user(row) if row else None
@@ -197,7 +210,7 @@ class UserStore:
         username = self._normalize_username(username)
         with self._lock, self._conn() as c:
             row = c.execute(
-                "SELECT id, username, display_name, role, created_at, last_login_at "
+                "SELECT id, username, display_name, role, created_at, last_login_at, must_change_password "
                 "FROM users WHERE username=?", (username,)
             ).fetchone()
             return self._row_to_user(row) if row else None
@@ -206,7 +219,7 @@ class UserStore:
         username = self._normalize_username(username)
         with self._lock, self._conn() as c:
             row = c.execute(
-                "SELECT id, username, password_hash, display_name, role, created_at, last_login_at "
+                "SELECT id, username, password_hash, display_name, role, created_at, last_login_at, must_change_password "
                 "FROM users WHERE username=?", (username,)
             ).fetchone()
             if not row:
@@ -225,7 +238,11 @@ class UserStore:
             raise ValueError("密码至少 6 位")
         h = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         with self._lock, self._conn() as c:
-            c.execute("UPDATE users SET password_hash=? WHERE id=?", (h, user_id))
+            # 改密同时清除「强制改密」标记
+            c.execute(
+                "UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?",
+                (h, user_id),
+            )
             # 撤销该用户所有现有 session — 改密后必须重新登录
             c.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
 
@@ -257,12 +274,14 @@ class UserStore:
     def list_users(self) -> list[UserRecord]:
         with self._lock, self._conn() as c:
             rows = c.execute(
-                "SELECT id, username, display_name, role, created_at, last_login_at "
+                "SELECT id, username, display_name, role, created_at, last_login_at, must_change_password "
                 "FROM users ORDER BY id"
             ).fetchall()
             return [self._row_to_user(r) for r in rows]
 
     def _row_to_user(self, row: sqlite3.Row) -> UserRecord:
+        keys = row.keys()
+        mcp = bool(row["must_change_password"]) if "must_change_password" in keys else False
         return UserRecord(
             id=int(row["id"]),
             username=str(row["username"]),
@@ -270,6 +289,7 @@ class UserStore:
             role=str(row["role"] or "user"),
             created_at=float(row["created_at"]),
             last_login_at=float(row["last_login_at"]) if row["last_login_at"] is not None else None,
+            must_change_password=mcp,
         )
 
     # ----- sessions -----
@@ -293,7 +313,7 @@ class UserStore:
         with self._lock, self._conn() as c:
             row = c.execute(
                 "SELECT s.expires_at, u.id, u.username, u.display_name, u.role, "
-                "       u.created_at, u.last_login_at "
+                "       u.created_at, u.last_login_at, u.must_change_password "
                 "FROM sessions s JOIN users u ON s.user_id = u.id "
                 "WHERE s.token = ?",
                 (token,),
@@ -310,6 +330,7 @@ class UserStore:
                 role=str(row["role"] or "user"),
                 created_at=float(row["created_at"]),
                 last_login_at=float(row["last_login_at"]) if row["last_login_at"] is not None else None,
+                must_change_password=bool(row["must_change_password"]),
             )
 
     def delete_session(self, token: str) -> None:
