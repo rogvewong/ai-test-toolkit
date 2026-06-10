@@ -6381,7 +6381,11 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
 .g-tool dd{margin:0;font-size:14px;line-height:1.78;color:var(--ink-2)}
 .g-tool dd b{color:var(--ink);font-weight:500}
 .g-tip{color:var(--accent)!important}
-@media(max-width:600px){.wrap{padding:28px 18px 60px}.g-tool dl{grid-template-columns:1fr;gap:4px}.g-tool dt{padding-top:8px}}
+.g-roles{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+.g-role{font-size:11.5px;padding:2px 10px;border-radius:20px;background:#f5ece9;color:var(--accent);border:1px solid #ecdcd6;white-space:nowrap}
+.g-who{margin:0}
+.g-who .r{color:var(--ink);font-weight:600}
+@media(max-width:600px){.wrap{padding:28px 18px 60px}.g-tool dl{grid-template-columns:1fr;gap:4px}.g-tool dt{padding-top:8px}.g-roles{width:100%;margin:8px 0 0}}
 </style></head>
 <body>
 <header class="topbar">
@@ -6398,11 +6402,12 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
 </header>
 <div class="wrap">
   <h1>使用说明</h1>
-  <p class="sub">每个工具的详细说明与操作方式 · 都支持单独运行,上一步产出可一键接力给下一步 · 报告统一为定制 Excel 表格(无 HTML)</p>
+  <p class="sub">每个工具:适合岗位 · 详细说明 · 操作方式 · 产出 —— 都支持单独运行,上一步产出可一键接力下一步;报告统一为定制 Excel 表格(无 HTML)</p>
 
   <div class="g-tool">
-    <div class="g-head"><span class="g-num">1</span><span class="g-icon">📋</span><h2>需求评审</h2></div>
+    <div class="g-head"><span class="g-num">1</span><span class="g-icon">📋</span><h2>需求评审</h2><div class="g-roles"><span class="g-role">产品</span><span class="g-role">测试</span><span class="g-role">项目主管</span></div></div>
     <dl>
+      <dt>适合岗位</dt><dd class="g-who"><span class="r">产品</span> — 提测前自查需求是否完整,补齐验收标准与边界;<br><span class="r">测试</span> — 吃透需求、划定测试范围与提测门禁,判断能否提测;<br><span class="r">项目主管</span> — 评估需求就绪度,排期前盘点风险与遗漏。</dd>
       <dt>测什么</dt><dd>把 <b>PRD / 原型 / UI 稿</b>拆成可测结构,识别<b>需求遗漏、逻辑歧义、边界缺失、异常流程未定义</b>,并给出提测门禁(哪些点必须先澄清才能提测)。</dd>
       <dt>怎么操作</dt><dd>① 进入「需求评审」 → ② 把 PRD 文档 / 原型链接 / UI 稿说明 <b>粘贴或上传</b>到输入框(可多份) → ③ 选模型 → ④ 点运行。</dd>
       <dt>需要准备</dt><dd>需求材料越完整越好——最好含<b>验收标准、字段规则、边界与异常约定</b>;缺这些时拆解会偏保守。</dd>
@@ -6412,8 +6417,9 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
   </div>
 
   <div class="g-tool">
-    <div class="g-head"><span class="g-num">2</span><span class="g-icon">✏️</span><h2>测试用例设计</h2></div>
+    <div class="g-head"><span class="g-num">2</span><span class="g-icon">✏️</span><h2>测试用例设计</h2><div class="g-roles"><span class="g-role">测试</span><span class="g-role">产品</span><span class="g-role">开发</span></div></div>
     <dl>
+      <dt>适合岗位</dt><dd class="g-who"><span class="r">测试</span> — 一键生成 P0/P1/P2 用例基线,补异常/边界,省去手写;<br><span class="r">产品</span> — 对照用例确认需求覆盖度与验收口径;<br><span class="r">开发</span> — 自测时照用例自查,减少漏测。</dd>
       <dt>测什么</dt><dd>基于需求自动生成分优先级(<b>P0/P1/P2</b>)的用例集,覆盖<b>正向 / 异常 / 边界 / 数据组合</b>。</dd>
       <dt>怎么操作</dt><dd>① 粘贴<b>需求拆解报告 / 业务场景 / 接口清单</b>(或一键接力「需求评审」产出) → ② 运行。</dd>
       <dt>需要准备</dt><dd>想覆盖异常/边界,材料里写清<b>规则、约束、状态机</b>。</dd>
@@ -6422,8 +6428,9 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
   </div>
 
   <div class="g-tool">
-    <div class="g-head"><span class="g-num">3</span><span class="g-icon">🔌</span><h2>接口测试</h2></div>
+    <div class="g-head"><span class="g-num">3</span><span class="g-icon">🔌</span><h2>接口测试</h2><div class="g-roles"><span class="g-role">后端</span><span class="g-role">前端</span><span class="g-role">测试</span></div></div>
     <dl>
+      <dt>适合岗位</dt><dd class="g-who"><span class="r">后端开发</span> — 接口自测、契约校验、上线前回归;<br><span class="r">前端开发</span> — 前后端联调,确认接口行为、字段与返回契约;<br><span class="r">测试</span> — 接口功能 / 安全(越权)/ 边界 / 资损测试,给放量结论。</dd>
       <dt>测什么</dt><dd>对接口做<b>功能 / 安全 / 边界 / 契约</b>四维校验:安全含<b>越权(水平/垂直)穷尽矩阵、资损取整对账</b>;<b>真发 HTTP 请求</b>看真实响应,不伪造。</dd>
       <dt>怎么操作</dt><dd>① 粘贴 <b>API 文档 / OpenAPI / Postman 集合 / 接口清单</b> → ② 填环境信息(base URL、鉴权 token/cookie) → ③ 运行。</dd>
       <dt>需要准备</dt><dd>测试环境可达、鉴权有效;请求由<b>真实客户端发起、真实重放</b>。涉及写操作/资损接口,建议用专门的测试账号。</dd>
@@ -6432,8 +6439,9 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
   </div>
 
   <div class="g-tool">
-    <div class="g-head"><span class="g-num">4</span><span class="g-icon">🤖</span><h2>Agent 自动化执行</h2></div>
+    <div class="g-head"><span class="g-num">4</span><span class="g-icon">🤖</span><h2>Agent 自动化执行</h2><div class="g-roles"><span class="g-role">测试</span><span class="g-role">自动化测试</span><span class="g-role">项目主管</span></div></div>
     <dl>
+      <dt>适合岗位</dt><dd class="g-who"><span class="r">测试</span> — 回归/冒烟批量执行,省人力跑 P0;<br><span class="r">自动化测试</span> — 用例驱动真机执行 + 失败自动归因;<br><span class="r">项目主管</span> — 发版前快速拿到一份回归结论。</dd>
       <dt>测什么</dt><dd>Agent 在<b>真机/模拟器</b>上执行用例(P0 + 关键 P1/P2),逐条判定<b>通过 / 失败 / 阻塞</b>,自动归因失败(前端 / 后端 / 接口 / 数据 / 环境)。</dd>
       <dt>怎么操作</dt><dd>① 提供用例:<b>拖入用例 Excel</b> 或一键接力「用例设计」产出 → ② <b>上传 APK</b> → ③ 确保 MuMu 模拟器已开机 → ④ 默认 <b>dry-run</b>(只演练不写库),要真跑勾选 <b>--live</b> → ⑤ 运行。</dd>
       <dt>需要准备</dt><dd>模拟器在线、APK 可安装;用例的<b>「预期结果」写清楚</b>——Agent 据此抽取检查点判 pass/fail。</dd>
@@ -6443,8 +6451,9 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
   </div>
 
   <div class="g-tool">
-    <div class="g-head"><span class="g-num">5</span><span class="g-icon">📶</span><h2>弱网/断网测试</h2></div>
+    <div class="g-head"><span class="g-num">5</span><span class="g-icon">📶</span><h2>弱网/断网测试</h2><div class="g-roles"><span class="g-role">测试</span><span class="g-role">前端</span><span class="g-role">产品</span></div></div>
     <dl>
+      <dt>适合岗位</dt><dd class="g-who"><span class="r">测试</span> — 弱网/断网专项测试 + 写操作资损排查;<br><span class="r">前端开发</span> — 验证加载态、错误态、重试与幂等是否做对;<br><span class="r">产品</span> — 确认弱网下的用户体验与提示文案是否到位。</dd>
       <dt>测什么</dt><dd>各档(<b>WiFi / 4G / 3G / 弱网 / 2G / 断网</b>)下测页面表现(可达 / 加载时长 / FCP / 加载态提示 / 错误 UI / 超时)+ <b>断网恢复能力</b> + 写操作<b>资损</b>(重复提交、中途断网幂等)。视频站可加测<b>播放弱网</b>(首帧 TTFF / 卡顿 / 码率自适应 ABR / 断点续播 / 断网静默失败)。</dd>
       <dt>怎么操作</dt><dd>① 填目标页面 URL(关键写操作页更佳) → ② 视频站勾选 <b>「视频弱网」</b>(默认关) → ③ 运行,工具自动逐档切换网络采集。</dd>
       <dt>需要准备</dt><dd>仅让<b>浏览器/模拟器弱网,宿主机不断网</b>,测完自动清理网络配置;视频弱网需站点本身为视频站。</dd>
@@ -6453,8 +6462,9 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
   </div>
 
   <div class="g-tool">
-    <div class="g-head"><span class="g-num">6</span><span class="g-icon">📱</span><h2>H5 适配初审</h2></div>
+    <div class="g-head"><span class="g-num">6</span><span class="g-icon">📱</span><h2>H5 适配初审</h2><div class="g-roles"><span class="g-role">前端</span><span class="g-role">测试</span><span class="g-role">UI设计</span></div></div>
     <dl>
+      <dt>适合岗位</dt><dd class="g-who"><span class="r">前端开发</span> — 多端/多视口自查:安全区、横向溢出、字号、input;<br><span class="r">测试</span> — H5 兼容性 / 适配测试;<br><span class="r">UI/设计</span> — 实现还原度核对、与 figma 设计稿像素比对。</dd>
       <dt>测什么</dt><dd>H5 在<b>多端真机/多视口</b>的适配:<b>安全区</b>(刘海/底部)、<b>浏览器矩阵</b>、横向溢出、点击热区、字号、input 行为、<b>Core Web Vitals</b>。</dd>
       <dt>怎么操作</dt><dd>① 填 <b>H5 页面 URL</b> → ②(可选)贴 figma 设计稿链接做像素比对 → ③ 运行。工具在<b>宿主真实浏览器/真机三端</b>采集证据(截图 + 实测度量)。</dd>
       <dt>需要准备</dt><dd>页面公网可达;有门禁/弹窗的站点工具会自行<b>进站到多页</b>看真实展示。</dd>
@@ -6464,8 +6474,9 @@ header.topbar nav a.active{color:var(--ink);background:var(--paper-2);font-weigh
   </div>
 
   <div class="g-tool">
-    <div class="g-head"><span class="g-num">7</span><span class="g-icon">🔍</span><h2>SEO 深度审计</h2></div>
+    <div class="g-head"><span class="g-num">7</span><span class="g-icon">🔍</span><h2>SEO 深度审计</h2><div class="g-roles"><span class="g-role">运营/SEO</span><span class="g-role">前端</span><span class="g-role">产品</span></div></div>
     <dl>
+      <dt>适合岗位</dt><dd class="g-who"><span class="r">运营/SEO</span> — 站点 SEO 体检,拿到分页面类型的优化项清单;<br><span class="r">前端开发</span> — 技术 SEO 修复:TDK、结构化数据、CWV、死链;<br><span class="r">产品</span> — 看站点健康度与自然流量增长抓手。</dd>
       <dt>测什么</dt><dd>100% 按 <b>Google 标准的 8 层审计</b>:可索引性(robots/sitemap/canonical/noindex)、<b>TDK 元数据</b>(标题/描述/长度/重复)、内容(字数/薄页/结构化数据 VideoObject)、<b>Core Web Vitals 实测</b>(LCP/CLS/INP)、移动友好(viewport)、死链、站点结构。</dd>
       <dt>怎么操作</dt><dd>① 填<b>站点 URL</b> → ② 运行。工具自动 BFS 爬取(最多 300 页)+ 逐页解析 + 实测 CWV + 按<b>页面类型</b>(首页/列表页/详情页/播放页…)汇总。</dd>
       <dt>需要准备</dt><dd>站点公网可达;站点越大爬取越久(几百页约数分钟)。</dd>
