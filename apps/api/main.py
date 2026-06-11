@@ -1447,8 +1447,8 @@ TOOL_CATALOG: list[dict[str, Any]] = [
             "format": "text",
         },
         "run_options": [
+            {"key": "mode_video", "label": "视频播放弱网（★最关键 · 视频站头号红线：起播/卡顿/ABR/断网静默失败/断点续播；先用宿主机 net_video_collect.py 采视频证据并粘入材料）", "default": True},
             {"key": "mode_page_api", "label": "页面/接口弱网（容器实测：各档位加载/操作/断网恢复/资损）", "default": True},
-            {"key": "mode_video", "label": "视频播放弱网（先用宿主机 net_video_collect.py 采视频证据并粘入材料）", "default": False},
         ],
     },
     {
@@ -2710,9 +2710,39 @@ def _build_network_template_xlsx(report: dict[str, Any], meta: dict[str, Any]) -
     if site:
         ws.merge_cells(f"A{row[0]}:E{row[0]}"); c = ws.cell(row=row[0], column=1, value="【总览】\n" + "\n".join(site))
         c.alignment = wrap; c.fill = HDR; c.font = bold; ws.row_dimensions[row[0]].height = 26 * (len(site) + 1); row[0] += 2
+    # ① 自然语言问题综述(现象 → 影响 → 场景 → 建议;视频弱网已脚本排最前)— 报告头条,说人话
+    nar = report.get("problem_narrative") or []
+    if nar:
+        sec("① 弱网问题综述(现象 → 影响 → 场景 → 建议;★视频弱网最关键,排最前)")
+        SEVZH = {"critical": "致命", "high": "高", "medium": "中", "low": "低", "info": "提示"}
+        SEVC = {"critical": ("C42B1C", "FDE7E9"), "high": ("9A6700", "FFF4CE"),
+                "medium": ("1A5FB4", "EAF1FF"), "low": ("107C10", "DFF6DD"), "info": ("616161", "F0F0F0")}
+        for p in nar[:30]:
+            sv = (p.get("severity") or "info"); fg, bg = SEVC.get(sv, ("000000", "FFFFFF"))
+            ws.merge_cells(f"A{row[0]}:H{row[0]}")
+            hc = ws.cell(row=row[0], column=1, value=f"【{SEVZH.get(sv, sv)}】{p.get('area', '')}")
+            hc.font = Font(bold=True, color=fg); hc.fill = PatternFill("solid", fgColor=bg); hc.border = bd; row[0] += 1
+            body = "\n".join(x for x in [
+                ("现象：" + p["现象"]) if p.get("现象") else "",
+                ("影响：" + p["影响"]) if p.get("影响") else "",
+                ("场景：" + p["场景"]) if p.get("场景") else "",
+                ("建议：" + p["建议"]) if p.get("建议") else "",
+            ] if x)
+            ws.merge_cells(f"A{row[0]}:H{row[0]}")
+            bc = ws.cell(row=row[0], column=1, value=body); bc.alignment = wrap; bc.border = bd
+            ws.row_dimensions[row[0]].height = 15 * max(2, body.count("\n") + 1); row[0] += 1
+        row[0] += 1
+    # ② 视频播放弱网 checklist(★最关键)
+    if report.get("video_checklist"):
+        sec("② 视频播放弱网 checklist(★最关键:起播/卡顿/ABR/断网静默失败/断点续播/CDN分片)")
+        checklist(report["video_checklist"])
+    # ③ 容错与用户提示 checklist
+    if report.get("fault_checklist"):
+        sec("③ 容错与用户提示 checklist(★含避免静默失败)"); checklist(report["fault_checklist"])
+    # ④ 弱网档位加载矩阵(各档位真实实测,支撑证据)
     pm = report.get("profile_matrix") or []
     if pm:
-        sec("① 弱网档位加载矩阵(各档位真实实测)")
+        sec("④ 弱网档位加载矩阵(各档位真实实测)")
         cols = ["档位", "可达", "加载ms", "首屏FCP", "加载态", "错误UI", "超时", "控制台错误"]
         for ci, h in enumerate(cols, 1):
             hc = ws.cell(row=row[0], column=ci, value=h); hc.font = bold; hc.fill = HDR; hc.alignment = ctr; hc.border = bd
@@ -2722,13 +2752,10 @@ def _build_network_template_xlsx(report: dict[str, Any], meta: dict[str, Any]) -
                 cc = ws.cell(row=row[0], column=ci, value=m.get(k)); cc.alignment = (wrap if ci == 1 else ctr); cc.border = bd
             row[0] += 1
         row[0] += 1
-    if report.get("fault_checklist"):
-        sec("② 容错与用户提示 checklist(★含避免静默失败)"); checklist(report["fault_checklist"])
-    if report.get("video_checklist"):
-        sec("③ 视频播放弱网 checklist(起播/卡顿/ABR/断网/续播/CDN分片)"); checklist(report["video_checklist"])
+    # ⑤ 操作 / 写 / 资损 问题清单(结构化,与综述同源)
     iss = report.get("issues") or []
     if iss:
-        sec("④ 操作 / 写 / 资损 问题清单")
+        sec("⑤ 操作 / 写 / 资损 问题清单")
         for ci, h in enumerate(["编号", "严重度", "问题", "现状 / 影响", "修复建议"], 1):
             hc = ws.cell(row=row[0], column=ci, value=h); hc.font = bold; hc.fill = HDR; hc.alignment = ctr if ci in (1, 2) else wrap; hc.border = bd
         row[0] += 1
@@ -2845,7 +2872,8 @@ def _build_exec_xlsx(r: dict[str, Any], tool: dict[str, Any], report: dict[str, 
         except Exception:
             pass  # 渲染失败则回退通用格式
     if tool.get("id") == "network_resilience" and (
-            report.get("profile_matrix") or report.get("fault_checklist") or report.get("video_checklist")):
+            report.get("problem_narrative") or report.get("profile_matrix")
+            or report.get("fault_checklist") or report.get("video_checklist")):
         try:
             return _build_network_template_xlsx(report, meta)
         except Exception:
@@ -3688,6 +3716,12 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
         "high=弱网下长时间无加载反馈或超时无错误提示但可恢复;medium=次要体验(无骨架屏、文案不友好);low/info=轻微提示。"
         "priority 默认 critical→P0、high→P1、medium→P2、low/info→P3。"
         "verdict 与 gate_decision.action 一致映射:通过↔proceed、有条件通过↔proceed_with_warning、不通过↔reject_with_report。\n\n"
+        "【★自然语言问题综述 problem_narrative — 本报告最重要的部分,务必写好】把发现的问题用**自然语言、让非技术同学(产品/运营)也一看就懂**地逐条描述,"
+        "每条严格按【现象 → 影响 → 用户场景 → 建议】四段展开:现象=用大白话讲弱网下实际发生了什么(可引实测档位与数值佐证,但别堆术语),"
+        "影响=对用户体验/业务(留存/流失/投诉)的后果,场景=用户在什么真实场景会撞上(如 地铁信号弱、电梯进出断网、4G切WiFi、跨运营商),建议=怎么改。"
+        "**视频弱网问题必须排最前、写最透**——本产品是视频站,视频弱网是头号体验红线:"
+        "断网时画面冻住却无『网络断开』提示(静默失败)、慢网起播长时间黑屏无封面/loading、不降码率硬卡到底、断网恢复后不能断点续播——这几类逐条说清现象与影响。"
+        "按 severity 从高到低排;problem_narrative 与结构化 issues 同源但用人话复述,二者都要有。\n\n"
         "【输出 · 合法 JSON,以 { 开头,无前后缀、无 markdown 代码块,全部中文】\n"
         "{\n"
         '  "verdict": "通过|有条件通过|不通过",\n'
@@ -3695,6 +3729,7 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
         '  "gate_decision": {"action":"proceed|proceed_with_warning|reject_with_report","reasons":["..."]},\n'
         '  "confidence": {"score": 0.0, "rationale": "基于实测档位覆盖的保守自评"},\n'
         '  "overview": {"评定":"2-4句总体评定","核心问题":"最关键1-3个","后续动作":"按优先级下一步"},\n'
+        '  "problem_narrative": [{"area":"视频-起播|视频-卡顿|视频-ABR|视频-断网|视频-续播|视频-CDN分片|页面加载|断网恢复|写操作资损","severity":"critical|high|medium|low","现象":"用大白话讲弱网下实际发生了什么(可引实测档位/数值)","影响":"对用户体验/业务的后果,说人话","场景":"用户在什么真实场景会撞上(如 地铁信号弱/电梯进出断网/4G切WiFi)","建议":"怎么改"}],\n'
         '  "profile_matrix": [{"档位":"online|4g|fast_3g|slow_3g|2g|offline","可达":"是|否","加载ms":0,"FCP":0,"加载态":"有|无(长白屏)","错误UI":"有|无|-","超时":"是|否","控制台错误":0}],\n'
         '  "fault_checklist": [{"维度":"加载态|断网|恢复|超时|重试|提示","检查项":"如 慢网加载提示/断网提示/恢复提示/★避免静默失败","测试详情":"引档位实测真值","状态":"通过|警告|不通过","优化建议":"..."}],\n'
         '  "video_checklist": [{"维度":"起播|卡顿|ABR|seek|断网|恢复|CDN","检查项":"如 起播TTFF/弱网卡顿/ABR降码率/断网断流(静默失败)/断点续播/CDN分片失败","测试详情":"引视频实测真值","状态":"通过|警告|不通过","优化建议":"..."}],\n'
@@ -3708,10 +3743,31 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
         "profile_matrix 覆盖每个实测到的档位;fault_checklist 覆盖用户提示各点(★避免静默失败必列);"
         "video_checklist 仅当数据含视频弱网证据时填,否则 []。issues 按 (severity, priority) 双键排序;空数组写 []。"
     )
-    state["progress"] = "AI 综合分析弱网/断网实测结果…"
-    resp = await ctx.llm.complete(
-        system=system, messages=[{"role": "user", "content": data_text}],
-        max_tokens=16000, allow_degrade=False)
+    state["progress"] = "AI 综合分析弱网/断网实测结果(视频弱网优先)…"
+    import asyncio as _aio2
+    resp = None
+    for _att in range(2):
+        try:
+            resp = await _aio2.wait_for(
+                ctx.llm.complete(
+                    system=system, messages=[{"role": "user", "content": data_text}],
+                    max_tokens=18000, allow_degrade=(_att > 0)),
+                timeout=600)
+            break
+        except Exception:
+            state["progress"] = "综合分析超时,重试(1/2)…" if _att == 0 else "综合分析两次超时,降级出矩阵…"
+            resp = None
+    if resp is None:
+        # LLM 两次都超时/失败 → 降级:仅用脚本实测矩阵出最小报告,不让整个 run 失败
+        return {
+            "verdict": "有条件通过",
+            "verdict_summary": "AI 综合分析两次超时,已降级:仅含各档位实测加载矩阵;自然语言问题综述与 checklist 待 AI 恢复后重跑。",
+            "gate_decision": {"action": "proceed_with_warning", "reasons": ["AI 分析超时,降级出矩阵"]},
+            "confidence": {"score": 0.2, "rationale": "仅脚本实测矩阵,未含 AI 综合判断"},
+            "overview": {}, "problem_narrative": [],
+            "profile_matrix": _net_matrix_from_nd(nd),
+            "fault_checklist": [], "video_checklist": [], "issues": [], "risks": [], "cases": [], "meta": {},
+        }
     try:
         ctx.usage.merge(resp.usage)
     except Exception:
@@ -3722,12 +3778,20 @@ async def _network_synthesize(ctx: Any, state: dict[str, Any]) -> dict[str, Any]
     except Exception:
         parsed = {}
     verdict = parsed.get("verdict") or "有条件通过"
+    # 强制视频弱网问题排最前(视频站头号红线),其次按严重度——不靠 LLM 自觉
+    _sev_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+    _narrative = parsed.get("problem_narrative") or []
+    if isinstance(_narrative, list):
+        _narrative.sort(key=lambda p: (
+            0 if str(p.get("area", "")).startswith("视频") else 1,
+            _sev_rank.get(p.get("severity", "info"), 5)))
     return {
         "verdict": verdict,
         "verdict_summary": parsed.get("verdict_summary") or "(见各 sheet 明细)",
         "gate_decision": parsed.get("gate_decision") or {"action": _verdict_to_gate(verdict), "reasons": []},
         "confidence": parsed.get("confidence") or {},
         "overview": parsed.get("overview") or {},
+        "problem_narrative": _narrative,
         "profile_matrix": _net_matrix_from_nd(nd) or parsed.get("profile_matrix") or [],  # 矩阵=脚本(实测),不靠LLM
         "fault_checklist": parsed.get("fault_checklist") or [],
         "video_checklist": parsed.get("video_checklist") or [],
