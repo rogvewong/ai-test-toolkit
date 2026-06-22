@@ -7558,8 +7558,9 @@ async def api_settings_ready() -> dict[str, Any]:
 
 
 @app.get("/api/settings/tools")
-async def api_settings_tools() -> dict[str, Any]:
+async def api_settings_tools(request: Request) -> dict[str, Any]:
     """每个工具的环境需求 + 当前安装状态。"""
+    require_superadmin(request)
     out = []
     for tool in TOOL_CATALOG:
         reqs = TOOL_ENV_REQUIREMENTS.get(tool["id"], [])
@@ -7581,8 +7582,9 @@ async def api_settings_tools() -> dict[str, Any]:
 
 
 @app.get("/api/settings/overrides")
-async def api_settings_overrides() -> dict[str, Any]:
+async def api_settings_overrides(request: Request) -> dict[str, Any]:
     """已激活的提示词覆盖列表。"""
+    require_superadmin(request)
     from packages.core.prompts import list_prompt_overrides
     return {"overrides": list_prompt_overrides()}
 
@@ -7601,8 +7603,9 @@ _PLAYWRIGHT_BROWSER_INSTALL = "playwright_browsers"  # special token
 
 
 @app.get("/api/settings/system")
-async def api_settings_system() -> dict[str, Any]:
+async def api_settings_system(request: Request) -> dict[str, Any]:
     """检测当前系统 + venv，给一键安装路径。"""
+    require_superadmin(request)
     venv = _sys.prefix if hasattr(_sys, "real_prefix") or _sys.base_prefix != _sys.prefix else None
     return {
         "os": _platform.system(),
@@ -7624,7 +7627,7 @@ class AuthModeReq(BaseModel):
 
 
 @app.get("/api/settings/auth")
-async def api_settings_auth() -> dict[str, Any]:
+async def api_settings_auth(request: Request) -> dict[str, Any]:
     """返回当前认证模式 + 两种模式的就绪状态。
 
     UI 渲染 2 张模式卡时使用：
@@ -7633,7 +7636,11 @@ async def api_settings_auth() -> dict[str, Any]:
 
     注意：本端点完全不再读 ~/.claude/ 的任何文件 — OAuth 凭据由 toolkit
     自己通过 web OAuth flow 拿到并存进 auth.json。
+
+    权限：仅超级管理员可读 — 否则会把管理员的 Claude 账号信息
+    （organization_name 含邮箱）泄露给任意已注册的普通用户。
     """
+    require_superadmin(request)
     try:
         from packages.core.auth_config import (
             get_api_key, get_auth_mode, get_oauth_access_token,
